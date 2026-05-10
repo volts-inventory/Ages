@@ -1,0 +1,6 @@
+/target
+/runs
+*.swp
+.DS_Store
+.claude-history/
+/events.ndjson

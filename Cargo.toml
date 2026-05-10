@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+    "protocol",
+    "sim/arith",
+    "sim/core",
+    "sim/events",
+    "sim/physics",
+    "sim/world",
+    "sim/recognition",
+    "sim/species",
+    "sim/civ",
+    "sim/population",
+    "sim/report",
+    "ages",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+fixed = "1"
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+rand = "0.8"
+rand_chacha = "0.3"
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+ages = { path = "ages" }
+protocol = { path = "protocol" }
+sim-arith = { path = "sim/arith" }
+sim-core = { path = "sim/core" }
+sim-events = { path = "sim/events" }
+sim-physics = { path = "sim/physics" }
+sim-world = { path = "sim/world" }
+sim-recognition = { path = "sim/recognition" }
+sim-species = { path = "sim/species" }
+sim-civ = { path = "sim/civ" }
+sim-population = { path = "sim/population" }
+sim-report = { path = "sim/report" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"

@@ -1,0 +1,23 @@
+[package]
+name = "sim-core"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+protocol.workspace = true
+sim-arith.workspace = true
+sim-civ.workspace = true
+sim-events.workspace = true
+sim-physics.workspace = true
+sim-recognition.workspace = true
+sim-report.workspace = true
+sim-species.workspace = true
+sim-world.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true

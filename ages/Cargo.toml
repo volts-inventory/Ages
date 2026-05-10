@@ -1,0 +1,26 @@
+[package]
+name = "ages"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ages"
+path = "src/main.rs"
+
+[[bin]]
+name = "ages-report"
+path = "src/bin/ages-report.rs"
+
+[dependencies]
+anyhow.workspace = true
+protocol.workspace = true
+sim-core.workspace = true
+sim-events.workspace = true
+sim-report.workspace = true
+sim-world.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "sim-recognition"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+protocol.workspace = true
+sim-arith.workspace = true
+sim-physics.workspace = true
