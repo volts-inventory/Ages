@@ -116,9 +116,7 @@ direction shifts and a concrete consumer surfaces:
 
 ## Historical
 
-For substantive PRs landed via Claude in chronological order
-see [CLAUDE_HISTORY.md](CLAUDE_HISTORY.md). For the design-
-decision log (Q-record archive), see
-[docs/decisions/INDEX.md](docs/decisions/INDEX.md). Neither is
+For the design-decision log (Q-record archive), see
+[docs/decisions/INDEX.md](docs/decisions/INDEX.md). It is not
 a source of truth for current behavior — the per-feature docs
 in `docs/*.md` are.

@@ -18,7 +18,6 @@ docs your task explicitly cites.
 |------|--------------|
 | `README.md` | Public-facing entry: how to run it + brief framing. Read once for orientation. |
 | `docs/PROJECT.md` | Vision principles tabulated against shipped features. Read when you need the "where does the project stand vs its ambition?" view, or when adding a feature whose vision-tracing isn't obvious. |
-| `CLAUDE_HISTORY.md` | Chronological log of substantive PRs landed via Claude. Read when reconstructing why a given mechanic exists. |
 
 ## On-demand: cross-crate architecture
 
