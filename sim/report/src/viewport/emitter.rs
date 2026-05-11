@@ -126,6 +126,13 @@ pub struct ViewportEmitter<W: Write> {
     /// Surfaces on the civ panel header line so the reader can
     /// see "Karnan · t3" at a glance.
     civ_tech_tier: BTreeMap<u32, u8>,
+    /// Per-civ set of tool names unlocked. Sized by `len()` to
+    /// surface "23 tools" on the civ panel identity line so the
+    /// reader can see breadth-of-tech-tree alongside the peak-tier
+    /// indicator. Set-keyed (rather than a bare counter) so any
+    /// double-emit of `TechUnlocked` for the same tool doesn't
+    /// inflate the count.
+    civ_tools_unlocked: BTreeMap<u32, BTreeSet<String>>,
     /// Per-civ latest cohesion in `[0.0, 1.0]` from
     /// `CohesionShifted`. Sidebar surfaces this so the reader can
     /// tell which civs are near civil-war / breakaway thresholds
@@ -174,6 +181,7 @@ impl<W: Write> ViewportEmitter<W> {
             transmissions_logged: BTreeSet::new(),
             wars_active: BTreeSet::new(),
             civ_tech_tier: BTreeMap::new(),
+            civ_tools_unlocked: BTreeMap::new(),
             civ_cohesion: BTreeMap::new(),
             civ_life_expectancy_months: BTreeMap::new(),
             relation_template_names: BTreeMap::new(),
@@ -865,6 +873,7 @@ impl<W: Write> ViewportEmitter<W> {
                 self.civ_cosmology.remove(&c.civ_id);
                 self.civ_religion.remove(&c.civ_id);
                 self.civ_tech_tier.remove(&c.civ_id);
+                self.civ_tools_unlocked.remove(&c.civ_id);
                 self.civ_cohesion.remove(&c.civ_id);
                 self.civ_life_expectancy_months.remove(&c.civ_id);
                 // Drop any war pairs touching this civ so a
@@ -901,6 +910,10 @@ impl<W: Write> ViewportEmitter<W> {
                 if t.tier > *entry {
                     *entry = t.tier;
                 }
+                self.civ_tools_unlocked
+                    .entry(t.civ_id)
+                    .or_default()
+                    .insert(t.tool_name.clone());
             }
             Event::CohesionShifted(c) => {
                 use crate::q32::q32_to_f64;
@@ -1096,22 +1109,28 @@ impl<W: Write> ViewportEmitter<W> {
             // one row. Tier defaults to 0 until the first
             // `TechUnlocked` event arrives.
             let tier = self.civ_tech_tier.get(civ_id).copied().unwrap_or(0);
+            let tool_count = self
+                .civ_tools_unlocked
+                .get(civ_id)
+                .map_or(0, BTreeSet::len);
             // Identity line: capital letter (still A..Z by civ_id)
             // is the on-map marker for this civ's centroid; the
             // `0-9` is a colored swatch standing in for the
             // pop-scaled digits the civ's territory cells render
             // as. In monochrome mode there's no colour, so fall
             // back to the legacy `{letter}=cap · {digit}=civ` line.
+            // Tier + tool count surface era + breadth-of-tech-tree
+            // in one row alongside the cap/pop swatch.
             let identity = if self.cfg.use_color {
                 format!(
-                    "{open}{cap}{close}=cap · {open}0-9{close}=pop · t{tier}",
+                    "{open}{cap}{close}=cap · {open}0-9{close}=pop · t{tier} · {tool_count} tools",
                     open = open,
                     close = close,
                     cap = centroid_symbol(*civ_id),
                 )
             } else {
                 format!(
-                    "{}=cap · {}=civ · t{tier}",
+                    "{}=cap · {}=civ · t{tier} · {tool_count} tools",
                     centroid_symbol(*civ_id),
                     claim_symbol(*civ_id),
                 )
