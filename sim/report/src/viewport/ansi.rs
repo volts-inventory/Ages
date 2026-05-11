@@ -128,6 +128,29 @@ pub(super) fn pad_to(line: &str, width: usize) -> String {
     s
 }
 
+/// Center `line` within `width` by splitting padding left + right.
+/// Visible-width aware so ANSI-colored lines center on visible cols.
+/// Used by the planet card so each line of stats sits in the middle
+/// of the left zone instead of left-aligned against the divider.
+pub(super) fn center_to(line: &str, width: usize) -> String {
+    let vis = visible_width(line);
+    if vis >= width {
+        return line.to_string();
+    }
+    let total_pad = width - vis;
+    let left = total_pad / 2;
+    let right = total_pad - left;
+    let mut s = String::with_capacity(line.len() + total_pad);
+    for _ in 0..left {
+        s.push(' ');
+    }
+    s.push_str(line);
+    for _ in 0..right {
+        s.push(' ');
+    }
+    s
+}
+
 /// Count the *visible* columns a line occupies, ignoring
 /// ANSI escape sequences. The naive `chars().count()` counts
 /// every Rust char including the bytes inside escape

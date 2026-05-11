@@ -290,7 +290,7 @@ fn log_tail_captures_significant_events_only() {
     // in `------ log ------`).
     assert!(s.contains("-- log --"));
     assert!(s.contains("civ 1 founded"));
-    assert!(s.contains("catastrophe: volcanic"));
+    assert!(s.contains("hit by volcanic catastrophe"));
 }
 
 #[test]
