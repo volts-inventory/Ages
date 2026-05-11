@@ -154,14 +154,7 @@ simulation.
 
 ## Frame cadence
 
-`--frame-every-ticks` controls how often a frame paints. When the
-flag is omitted, the default auto-scales with the total tick count
-so a long run doesn't drown the viewport: the formula targets
-~1200 frames across the run, with a floor of 50 ticks/frame. A
-5000-year monthly-tick run keeps the snappy 50-tick cadence; a
-50,000-year run paints every ~500 ticks. Pass an explicit value to
-override.
-
-`--tick-rate-ms` adds a real-time delay between ticks for
-watchability — both knobs are decorative and don't affect the
-NDJSON.
+`--frame-every-ticks` controls how often a frame paints. Default
+50 ticks. `--tick-rate-ms` adds a real-time delay between ticks
+for watchability — both knobs are decorative and don't affect
+the NDJSON.
