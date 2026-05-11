@@ -119,6 +119,18 @@ pub fn is_tool_emergence_tick(tick: u64) -> bool {
     tick > 0 && tick.is_multiple_of(TOOL_EMERGENCE_CHECK_PERIOD_TICKS)
 }
 
+/// Substrate-aware variant: stretches the check period by the inverse
+/// of the planet's metabolism so slow-substrate worlds run the same
+/// number of tool-emergence checks per generation as fast ones.
+#[must_use]
+pub fn is_tool_emergence_tick_for_metabolism(tick: u64, metabolism: sim_arith::Real) -> bool {
+    let period = crate::demographics::streak_ticks_for_metabolism(
+        TOOL_EMERGENCE_CHECK_PERIOD_TICKS,
+        metabolism,
+    );
+    tick > 0 && tick.is_multiple_of(period)
+}
+
 /// Map a measurement channel to a recognition-side `ChannelKind`
 /// for the dynamic tool's `channel_focus`. The pairing is rough —
 /// a confirmed relation on `Channel::Temperature` usually was

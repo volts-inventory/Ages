@@ -41,8 +41,14 @@ exceeds its total-population fraction.
 MONTHS_PER_YEAR`). After firing, the cell can't fire volcanic
 again until cooldown elapses.
 
-`Disease` cooldown: 500 baseline-years per (civ, region) pair.
-Prevents back-to-back devastation.
+`Disease` cooldown: 500 baseline-years per (civ, region) pair,
+stretched by the substrate-metabolism factor — a silicate civ
+sees plagues at a 5× longer absolute cadence than an aqueous one,
+so per-generation hit rate stays constant across substrates. The
+civ-age floor for disease (300 baseline-years post-founding) is
+likewise stretched. The other four kinds are physics-driven
+(stellar / orbital / geological) and keep raw tick cooldowns
+regardless of substrate.
 
 Asteroid, solar flare, ice age have their own per-cell cooldowns
 sized to be rare events on the run timescale.

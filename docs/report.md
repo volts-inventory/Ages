@@ -52,8 +52,10 @@ from events.
 
 ### Spatial timeline (paired keyframes)
 
-Every ~6 keyframes across the run, the report renders **both** an
-ownership map and a density map of the same moment:
+Every ~6 keyframes across the run (proportional, snapped to clean
+500-year boundaries; scales correctly for runs > 5000 years), the
+report renders **both** an ownership map and a density map of the
+same moment:
 
 - **Ownership** — `A`/`B`/`C` capital letters mark each civ's
   centroid; cells claimed by exactly one civ render as that civ's

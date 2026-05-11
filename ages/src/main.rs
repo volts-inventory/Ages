@@ -194,7 +194,11 @@ fn parse_args() -> Result<Args> {
     let mut out: String = "events.ndjson".to_string();
     let mut cli = CliVerbosity::All;
     let mut tick_rate_ms: u64 = 0;
-    let mut frame_every_ticks: u64 = 50;
+    // `None` until the user passes --frame-every-ticks; left as
+    // `None` after parsing so the post-parse step can auto-scale
+    // against total run length for long runs (a 50,000-year run
+    // would otherwise emit ~600k frames at the legacy fixed 50).
+    let mut frame_every_ticks: Option<u64> = None;
     let mut no_color: bool = false;
     let mut viewport_planet_card: bool = true;
     let mut viewport_log_lines: usize = 5;
@@ -251,12 +255,13 @@ fn parse_args() -> Result<Args> {
             }
             "--frame-every-ticks" => {
                 let v = iter.next().context("--frame-every-ticks needs a value")?;
-                frame_every_ticks = v
+                let parsed: u64 = v
                     .parse()
                     .context("--frame-every-ticks must be a positive integer")?;
-                if frame_every_ticks == 0 {
+                if parsed == 0 {
                     anyhow::bail!("--frame-every-ticks must be > 0");
                 }
+                frame_every_ticks = Some(parsed);
             }
             "--no-color" => {
                 no_color = true;
@@ -323,13 +328,24 @@ fn parse_args() -> Result<Args> {
         let period = u64::from(planet.orbital_period_months.max(1));
         ticks = Some(years.saturating_mul(period));
     }
+    let resolved_ticks = ticks.context("--ticks or --years required")?;
+    // Auto-scale frame cadence on long runs when the user didn't
+    // override. Baseline target ~1200 frames across the run (the
+    // count a 5000-year monthly-tick run at `frame_every=50`
+    // produces). Long runs (e.g. 50,000 years) otherwise drown the
+    // viewport in frames; short runs keep the fast 50-tick cadence
+    // for snappy live feedback.
+    let resolved_frame_every = frame_every_ticks.unwrap_or_else(|| {
+        const BASELINE_FRAMES: u64 = 1200;
+        (resolved_ticks / BASELINE_FRAMES).max(50)
+    });
     Ok(Args {
         seed: resolved_seed,
-        ticks: ticks.context("--ticks or --years required")?,
+        ticks: resolved_ticks,
         out,
         cli,
         tick_rate_ms,
-        frame_every_ticks,
+        frame_every_ticks: resolved_frame_every,
         no_color,
         viewport_planet_card,
         viewport_log_lines,

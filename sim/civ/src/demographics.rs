@@ -81,16 +81,14 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Re
 /// unit fuel-density). Lush biospheres + high-cognition species push
 /// the scale up; sparse / low-cognition push it down. High-gravity
 /// worlds cost more per individual; low-gravity worlds save energy.
-/// Earth-equivalent (Lush, g≈9.81, cog≈1) recovers ~500/unit. Each
-/// 36×30 grid cell represents a continent-scale region (~470,000
-/// km² on an Earth-sized world), so a per-cell ceiling on the order
-/// of hundreds rather than tens reads as "regional population" not
-/// "village headcount" while keeping the food-security ratio
-/// (`demand / capacity`) and migration-pressure ratio
-/// (`pop / cell_capacity`) scale-invariant — both still trigger at
-/// the same fractional thresholds. Sparse worlds dip only ~5% below
-/// Earth so marginal habitability holds; the substrate signal stays
-/// meaningful at this width without destabilising habitability.
+/// Earth-equivalent (Lush, g≈9.81, cog≈1) recovers ~2500/unit — a
+/// 5× lift over the prior 500 so a regional cell can house tens of
+/// thousands rather than ~hundreds-to-low-thousands. The intent is
+/// that a 200k-population civ occupies ~20 dense cells with a core +
+/// frontier shape, not ~120 uniformly-claimed cells. The food-
+/// security ratio (`demand / capacity`) and migration-pressure ratio
+/// (`pop / cell_capacity`) stay scale-invariant — both still trigger
+/// at the same fractional thresholds.
 #[must_use]
 pub fn carrying_capacity_per_unit(
     biosphere: BiosphereClass,
@@ -116,24 +114,30 @@ pub fn carrying_capacity_per_unit(
     // species don't compound a capacity hit on top of the existing
     // attempt-period and stress-factor cognition penalties.
     let cognition_factor = Real::from_ratio(95, 100) + Real::from_ratio(5, 100) * cog;
-    Real::from_int(500) * biosphere_factor * g_factor * cognition_factor
+    Real::from_int(2500) * biosphere_factor * g_factor * cognition_factor
 }
 
 /// Substrate-derived migration pressure threshold. Solitary
-/// species flee crowding earlier (0.75); cooperative species
-/// tolerate it longer (0.95). Replaces flat 0.85. Range tightened
-/// around the prior calibration so the substrate signal is real
-/// without destabilising marginal civs.
+/// species flee crowding earlier (0.55); cooperative species
+/// tolerate it longer (0.75). Lowered from the prior 0.75–0.95 band
+/// to keep claim activity going at the new 5× cell cap — at the old
+/// threshold a civ would densify to ~tens of thousands per cell
+/// before any spillover, never claiming neighbouring land within a
+/// human-recognisable timeframe. The new band gives a dense core
+/// (cells at 55–75% of cap) plus continued frontier expansion.
 #[must_use]
 pub fn migration_pressure_threshold(sociality: Real) -> Real {
     let s = sociality.max(Real::ZERO).min(Real::ONE);
-    Real::from_ratio(75, 100) + Real::from_ratio(2, 10) * s
+    Real::from_ratio(55, 100) + Real::from_ratio(2, 10) * s
 }
 
 /// Derive figure-hypothesizer `attempt_period` from
 /// `species.cognition`. High-cognition species cycle through
 /// hypothesis attempts faster (~3× more often than low-cognition);
-/// low-cognition species are slower.
+/// low-cognition species are slower. Returns the Aqueous-baseline
+/// period; slow-substrate worlds further stretch this via
+/// [`scale_attempt_period_for_metabolism`], applied by
+/// [`crate::Civ::configure_substrate`] once the planet is known.
 #[must_use]
 pub fn attempt_period_for_cognition(cognition: Real) -> u64 {
     let cog = cognition.max(Real::ZERO).min(Real::ONE);
@@ -144,14 +148,46 @@ pub fn attempt_period_for_cognition(cognition: Real) -> u64 {
     u64::try_from(clamped).unwrap_or(20)
 }
 
+/// Scale a baseline `attempt_period` by the planet's metabolism so
+/// slow-substrate worlds stretch the hypothesis-attempt cadence to
+/// match their stretched biological time. Inverse relationship:
+/// metabolism = 0.2 (Silicate) gives a 5× longer period.
+#[must_use]
+pub fn scale_attempt_period_for_metabolism(period: u64, metabolism: Real) -> u64 {
+    let m = metabolism.max(Real::from_ratio(1, 100));
+    let raw: i64 = (Real::from_int(i64::try_from(period).unwrap_or(i64::MAX)) / m)
+        .raw()
+        .to_num();
+    let clamped = raw.max(5);
+    u64::try_from(clamped).unwrap_or(period)
+}
+
+/// Stretch a baseline streak / cooldown / window measured in ticks by
+/// the planet's substrate metabolism so that "75 baseline-years of
+/// civil-war pressure" lasts the same number of substrate-internal
+/// generations on every substrate. Slow metabolism (Silicate ≈ 0.2)
+/// gives a 5× longer window in absolute ticks. Returns the baseline
+/// when metabolism is Aqueous (1.0). Guarded against zero metabolism.
+#[must_use]
+pub fn streak_ticks_for_metabolism(base: u64, metabolism: Real) -> u64 {
+    let m = metabolism.max(Real::from_ratio(1, 100));
+    let raw: i64 = (Real::from_int(i64::try_from(base).unwrap_or(i64::MAX)) / m)
+        .raw()
+        .to_num();
+    u64::try_from(raw.max(1)).unwrap_or(base)
+}
+
 /// Derive `PopulationDynamics` for a given species + planet.
 /// The species's `PopulationBiology` (`clutch_size`, bracket
 /// fractions, per-bracket survivals) drives the per-tick rates;
 /// the planet's biosphere/tilt/luminosity then multiplies the
 /// resulting birth rate so a sparse / high-tilt / dim-luminosity
 /// world reproduces less successfully than a lush / low-tilt /
-/// Earth-luminosity one. Per-bracket survival rates are unaffected
-/// by the planet — they're intrinsic to the species's biology.
+/// Earth-luminosity one. The planet's metabolic substrate further
+/// multiplies the birth rate — slow chemistries unfold over
+/// geological time, so a silicate population grows ~5× slower than
+/// an aqueous one. Per-bracket survival rates are unaffected by the
+/// planet — they're intrinsic to the species's biology.
 #[must_use]
 pub fn dynamics_for(species: &sim_species::Species, planet: &Planet) -> PopulationDynamics {
     let mut d = PopulationDynamics::for_species(
@@ -161,7 +197,8 @@ pub fn dynamics_for(species: &sim_species::Species, planet: &Planet) -> Populati
         species.sociality,
     );
     let bio_factor = biosphere_birth_factor_for_planet(planet);
-    d.birth_rate = d.birth_rate * bio_factor;
+    let metabolism = planet.metabolic_substrate.metabolism();
+    d.birth_rate = d.birth_rate * bio_factor * metabolism;
     d
 }
 
@@ -185,7 +222,8 @@ pub fn dynamics_for_civ(
         civ.effective_sociality(species),
     );
     let bio_factor = biosphere_birth_factor_for_planet(planet);
-    d.birth_rate = d.birth_rate * bio_factor;
+    let metabolism = planet.metabolic_substrate.metabolism();
+    d.birth_rate = d.birth_rate * bio_factor * metabolism;
     // Per-bracket tech mortality reduction from currently-unlocked
     // tools — folded in here (rather than at step time) so a single
     // re-derivation each tick captures the full tech state, including
@@ -202,13 +240,13 @@ mod tests {
     use super::*;
 
     /// Calibration regression test. Pins the per-fuel-unit
-    /// carrying capacity to ±10% of the 500 base for the *typical*
+    /// carrying capacity to ±10% of the 2500 base for the *typical*
     /// habitable seed (Sparse–Lush–Hyper biospheres at Earth gravity
-    /// and median cognition). The implementation pass landed
-    /// substrate-derived demographics; the regional-scale rescale
-    /// (50 → 500) preserves the same fractional habitability
-    /// envelope, just with cells reading as continent-sized regional
-    /// caps rather than village-sized ones. Sparse-world floor stays
+    /// and median cognition). The 5× lift over the prior 500 base is
+    /// part of the pacing retune — it lets civs densify spatially
+    /// rather than only spreading outward, so a 200k-population civ
+    /// occupies ~20 cells with a dense core + frontier shape rather
+    /// than uniformly claiming ~120 cells. Sparse-world floor stays
     /// within 10% of Earth-equivalent so marginal seeds don't tip
     /// into `food_crisis` from the substrate factor alone.
     #[test]
@@ -218,13 +256,13 @@ mod tests {
         let lush = carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE);
         let sparse = carrying_capacity_per_unit(BiosphereClass::Sparse, earth_g, median_cog);
         let hyper = carrying_capacity_per_unit(BiosphereClass::HyperBiodiverse, earth_g, Real::ONE);
-        // Earth-equivalent (Lush + Earth-g + max-cog) recovers ~500.
-        assert!(lush >= Real::from_int(450) && lush <= Real::from_int(550));
+        // Earth-equivalent (Lush + Earth-g + max-cog) recovers ~2500.
+        assert!(lush >= Real::from_int(2250) && lush <= Real::from_int(2750));
         // Sparse + median-cog stays within 10% of Earth-equivalent
         // so marginal habitability holds.
-        assert!(sparse >= Real::from_int(450));
+        assert!(sparse >= Real::from_int(2250));
         // Hyper bonus is real but bounded — no surprise 2× scaling.
-        assert!(hyper >= Real::from_int(500) && hyper <= Real::from_int(650));
+        assert!(hyper >= Real::from_int(2500) && hyper <= Real::from_int(3250));
     }
 
     /// Calibration regression test for the founding floor.

@@ -3,6 +3,7 @@
 //! `check_collapse_with_terrain` is the production path called by
 //! sim/core.
 
+use crate::demographics::streak_ticks_for_metabolism;
 use crate::{
     Civ, CollapseReason, CIVIL_WAR_COHESION_FLOOR, CIVIL_WAR_STREAK_TICKS,
     COHESION_BREAKAWAY_TRIGGER, CULTURAL_LOCK_DOGMA, CULTURAL_LOCK_STREAK_TICKS,
@@ -124,6 +125,22 @@ impl Civ {
         if !self.is_active() {
             return None;
         }
+        // Every streak / cooldown is denominated in "baseline-tick"
+        // units (Aqueous calibration). Stretch them by the inverse of
+        // the substrate metabolism so a silicate civ's "75-year
+        // civil-war streak" lasts the same number of generations as
+        // an aqueous civ's, just over more ticks.
+        let metabolism = planet.metabolic_substrate.metabolism();
+        let food_crisis_streak = streak_ticks_for_metabolism(FOOD_CRISIS_STREAK_TICKS, metabolism);
+        let plateau_window = streak_ticks_for_metabolism(PLATEAU_WINDOW_TICKS, metabolism);
+        let cultural_lock_streak =
+            streak_ticks_for_metabolism(CULTURAL_LOCK_STREAK_TICKS, metabolism);
+        let tiny_territory_streak =
+            streak_ticks_for_metabolism(TINY_TERRITORY_STREAK_TICKS, metabolism);
+        let civil_war_streak = streak_ticks_for_metabolism(CIVIL_WAR_STREAK_TICKS, metabolism);
+        let depopulation_streak =
+            streak_ticks_for_metabolism(DEPOPULATION_STREAK_TICKS, metabolism);
+
         let demand = self
             .cohort
             .weighted_demand_from_multipliers(&self.dynamics.food_multipliers);
@@ -146,7 +163,7 @@ impl Civ {
         let dogma = self.cosmology.dogmatism();
         let dogma_floor = Real::from_ratio(CULTURAL_LOCK_DOGMA.0, CULTURAL_LOCK_DOGMA.1);
         let no_recent_refinement =
-            tick.saturating_sub(self.last_refinement_tick) >= CULTURAL_LOCK_STREAK_TICKS;
+            tick.saturating_sub(self.last_refinement_tick) >= cultural_lock_streak;
         if dogma >= dogma_floor && no_recent_refinement {
             self.cultural_lock_streak = self.cultural_lock_streak.saturating_add(1);
         } else {
@@ -174,9 +191,10 @@ impl Civ {
         //  * dogmatism: shared belief holds the polity together
         //  * literacy: shared canon and institutions hold longer
         // Drift rate is small per tick (1/200) so meaningful shifts
-        // take many sim-years; the streak threshold for civil war
-        // is correspondingly long (75 baseline-years).
-        self.update_cohesion(security, tick);
+        // take many sim-years; on slow substrates it scales by
+        // metabolism so societal change unfolds at the same
+        // per-generation rate.
+        self.update_cohesion(security, tick, metabolism);
         let cw_floor = Real::from_ratio(CIVIL_WAR_COHESION_FLOOR.0, CIVIL_WAR_COHESION_FLOOR.1);
         let breakaway_trigger =
             Real::from_ratio(COHESION_BREAKAWAY_TRIGGER.0, COHESION_BREAKAWAY_TRIGGER.1);
@@ -194,22 +212,22 @@ impl Civ {
         } else {
             self.cohesion_breakaway_streak = 0;
         }
-        if self.low_food_streak >= FOOD_CRISIS_STREAK_TICKS {
+        if self.low_food_streak >= food_crisis_streak {
             return Some(CollapseReason::FoodCrisis);
         }
-        if tick.saturating_sub(self.last_discovery_tick) >= PLATEAU_WINDOW_TICKS {
+        if tick.saturating_sub(self.last_discovery_tick) >= plateau_window {
             return Some(CollapseReason::KnowledgePlateau);
         }
-        if self.cultural_lock_streak >= CULTURAL_LOCK_STREAK_TICKS {
+        if self.cultural_lock_streak >= cultural_lock_streak {
             return Some(CollapseReason::CulturalLock);
         }
-        if self.tiny_territory_streak >= TINY_TERRITORY_STREAK_TICKS {
+        if self.tiny_territory_streak >= tiny_territory_streak {
             return Some(CollapseReason::TerritoryTooSmall);
         }
-        if self.civil_war_streak >= CIVIL_WAR_STREAK_TICKS {
+        if self.civil_war_streak >= civil_war_streak {
             return Some(CollapseReason::CivilWar);
         }
-        if self.depopulation_streak >= DEPOPULATION_STREAK_TICKS {
+        if self.depopulation_streak >= depopulation_streak {
             return Some(CollapseReason::Depopulation);
         }
         None
@@ -229,7 +247,7 @@ impl Civ {
     ///
     /// `tick` is the current simulation tick; used to compute
     /// `literacy_score(tick)` for the bonus term.
-    pub fn update_cohesion(&mut self, security: Real, tick: u64) {
+    pub fn update_cohesion(&mut self, security: Real, tick: u64, metabolism: Real) {
         let cells = i64::try_from(self.claimed_cells.len()).unwrap_or(i64::MAX);
         let size_factor = (Real::from_int(cells) / Real::from_int(30))
             .max(Real::ZERO)
@@ -254,8 +272,11 @@ impl Civ {
             + tool_bonus)
             .max(Real::ZERO)
             .min(Real::ONE);
-        // Drift toward target at 1/200 per tick.
-        let drift_rate = Real::from_ratio(1, 200);
+        // Drift toward target at 1/200 per tick on Aqueous; scaled
+        // by metabolism so slow chemistries drift proportionally
+        // slower and the streak thresholds (also stretched by
+        // metabolism) still cover the same fraction of generations.
+        let drift_rate = Real::from_ratio(1, 200) * metabolism;
         self.cohesion = (self.cohesion + (target - self.cohesion) * drift_rate)
             .max(Real::ZERO)
             .min(Real::ONE);

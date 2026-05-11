@@ -5,6 +5,7 @@
 use crate::cosmology;
 use crate::demographics::{
     attempt_period_for_cognition, carrying_capacity_per_unit, migration_pressure_threshold,
+    scale_attempt_period_for_metabolism,
 };
 use crate::figures::{found_band, NameGrammar};
 use crate::religion;
@@ -117,16 +118,27 @@ impl Civ {
     /// civ. Called once per civ at founding by sim/core; replaces the
     /// flat 50 / 0.85 placeholders with values derived from the
     /// planet's biosphere, gravity, and the species' cognition +
-    /// sociality. Idempotent — safe to re-call as substrate changes.
+    /// sociality. The metabolism arg stretches every founding figure's
+    /// hypothesizer `attempt_period` so theory-formation cadence
+    /// tracks the planet's biological time-scale. Idempotent — safe
+    /// to re-call as substrate changes.
     pub fn configure_substrate(
         &mut self,
         biosphere: BiosphereClass,
         gravity: Real,
         cognition: Real,
         sociality: Real,
+        metabolism: Real,
     ) {
         self.carrying_capacity_per_unit = carrying_capacity_per_unit(biosphere, gravity, cognition);
         self.migration_pressure_threshold = migration_pressure_threshold(sociality);
+        let scaled = scale_attempt_period_for_metabolism(
+            attempt_period_for_cognition(cognition),
+            metabolism,
+        );
+        for figure in &mut self.figures {
+            figure.hypothesizer.attempt_period = scaled;
+        }
     }
 
     /// literacy score in `[0, 1]`. Discovery-rate proxy with

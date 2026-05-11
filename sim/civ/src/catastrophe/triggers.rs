@@ -26,8 +26,10 @@ pub(super) fn volcanic_fires(state: &PhysicsState) -> Option<usize> {
 
 /// Disease trigger: civ population > 80% of carrying capacity
 /// AND civ has been continuously active for at least
-/// `DISEASE_AGE_FLOOR_TICKS`.
-pub(super) fn disease_fires(civ: &Civ, state: &PhysicsState, tick: u64) -> bool {
+/// `DISEASE_AGE_FLOOR_TICKS` (stretched by substrate metabolism so
+/// a slow-substrate civ doesn't get plague-immune just because the
+/// floor was calibrated against aqueous time).
+pub(super) fn disease_fires(civ: &Civ, state: &PhysicsState, planet: &Planet, tick: u64) -> bool {
     let cap = civ.carrying_capacity(state);
     if cap <= Real::ZERO {
         return false;
@@ -36,7 +38,11 @@ pub(super) fn disease_fires(civ: &Civ, state: &PhysicsState, tick: u64) -> bool 
     if crowding < Real::from_ratio(8, 10) {
         return false;
     }
-    tick.saturating_sub(civ.founded_tick) >= DISEASE_AGE_FLOOR_TICKS
+    let age_floor = crate::demographics::streak_ticks_for_metabolism(
+        DISEASE_AGE_FLOOR_TICKS,
+        planet.metabolic_substrate.metabolism(),
+    );
+    tick.saturating_sub(civ.founded_tick) >= age_floor
 }
 
 /// Probabilistic asteroid trigger. `tick` modulo a prime gives a

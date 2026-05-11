@@ -40,12 +40,45 @@ biosphere + species traits. No homo-sapiens-pinned defaults.
 | Constant | Driven by |
 |----------|-----------|
 | Founding floor | Sociality + biosphere density |
-| Carrying capacity (per fuel-unit) | Biosphere density × cognition × `(1 / gravity)` |
-| Migration pressure threshold | Sociality + cell habitability |
-| Birth-rate biosphere multiplier | Biosphere density × axial-tilt seasonal swing × luminosity |
+| Carrying capacity (per fuel-unit) | Biosphere density × cognition × `(1 / gravity)`, baseline 2500 |
+| Migration pressure threshold | Sociality (0.55 – 0.75 band) |
+| Birth-rate biosphere multiplier | Biosphere density × axial-tilt seasonal swing × luminosity × substrate metabolism |
 | Lifespan rescaling | `80 / lifespan_years` clamped `[0.25, 4.0]` |
 
 A 200-year species reproduces at 0.4×; a 20-year species at 4×.
+
+### Substrate metabolism — biological time scale
+
+Per-cell biological **rates** (birth, civ-claim cadence, hypothesis
+attempts, cohesion drift, religion/cosmology drift) and per-streak
+**cooldowns** (civil-war / food-crisis / cultural-lock /
+knowledge-plateau / tiny-territory / depopulation thresholds, plus
+the disease catastrophe cooldown) are multiplied / divided by a
+substrate-derived `metabolism` factor so a silicate civ unfolds
+across ~5× more ticks than an aqueous one. Aqueous is the
+calibration baseline (1.0):
+
+| Substrate | Metabolism | Effective time-scale |
+|-----------|-----------|----------------------|
+| Aqueous | 1.0 | baseline |
+| Ammoniacal | 0.5 | 2× longer |
+| Hydrocarbon | 0.4 | 2.5× longer |
+| Silicate | 0.2 | 5× longer |
+
+Physics catastrophes (asteroid / solar flare / ice age / volcanic)
+are *not* scaled — they're external to biology and keep raw
+cooldowns. Disease is scaled because it's a crowding-driven
+biological event.
+
+### Per-cell capacity rescale
+
+The base `carrying_capacity_per_unit` is **2500** (5× the prior
+500). Each 36×30 grid cell represents ~470,000 km²; the lift lets
+a 200k-population civ live in ~20 densely-packed cells (dense core +
+sparse frontier) rather than uniformly claiming ~120 cells. The
+migration-pressure threshold is correspondingly lowered to the
+0.55–0.75 band so claim activity continues — cells densify to
+~60–75% of cap before spilling into neighbours.
 
 ## Nomadic species pool
 
