@@ -3,7 +3,7 @@
 //! `Write` (typically stdout) at the configured frame cadence.
 
 use super::ansi::{
-    center_to, divider, pad_to, split_divider, write_centered_line,
+    divider, pad_to, split_divider, visible_width, write_centered_line,
     ANSI_ALT_SCREEN_OFF, ANSI_ALT_SCREEN_ON, ANSI_ERASE_LINE, ANSI_ERASE_TO_END, ANSI_HIDE_CURSOR,
     ANSI_SHOW_CURSOR, MAP_WIDTH,
 };
@@ -1084,18 +1084,18 @@ impl<W: Write> ViewportEmitter<W> {
             } else {
                 (String::new(), String::new())
             };
-            // Header carries the civ's tech tier so the reader
-            // can see at a glance whether a civ is stone-age
-            // (`t1`) or industrial / information (`t4` / `t5`).
-            // Tier defaults to 0 (pre-stone-age) until the first
-            // `TechUnlocked` event arrives.
-            let tier = self.civ_tech_tier.get(civ_id).copied().unwrap_or(0);
             let header = if name.is_empty() {
-                format!("─── {open}civ {civ_id}{close} · t{tier} ───")
+                format!("─── {open}civ {civ_id}{close} ───")
             } else {
-                format!("─── {open}{name}{close} · t{tier} ───")
+                format!("─── {open}{name}{close} ───")
             };
             lines.push(header);
+            // Tech tier sits on the identity line next to the
+            // capital-letter / pop-digit swatch so the reader can
+            // scan "what marker, which population, what era" in
+            // one row. Tier defaults to 0 until the first
+            // `TechUnlocked` event arrives.
+            let tier = self.civ_tech_tier.get(civ_id).copied().unwrap_or(0);
             // Identity line: capital letter (still A..Z by civ_id)
             // is the on-map marker for this civ's centroid; the
             // `0-9` is a colored swatch standing in for the
@@ -1104,14 +1104,14 @@ impl<W: Write> ViewportEmitter<W> {
             // back to the legacy `{letter}=cap · {digit}=civ` line.
             let identity = if self.cfg.use_color {
                 format!(
-                    "{open}{cap}{close}=cap · {open}0-9{close}=pop",
+                    "{open}{cap}{close}=cap · {open}0-9{close}=pop · t{tier}",
                     open = open,
                     close = close,
                     cap = centroid_symbol(*civ_id),
                 )
             } else {
                 format!(
-                    "{}=cap · {}=civ",
+                    "{}=cap · {}=civ · t{tier}",
                     centroid_symbol(*civ_id),
                     claim_symbol(*civ_id),
                 )
@@ -1344,21 +1344,41 @@ impl<W: Write> ViewportEmitter<W> {
                 }
                 let mut planet_lines: Vec<String> = card.lines().map(str::to_string).collect();
                 planet_lines.push(caption.clone());
+                // Block-center: every line gets the same left
+                // padding computed from the widest line, so the
+                // card reads as one centered block where every
+                // entry starts at the same column. Independent
+                // per-line centering put each line at its own
+                // offset, which looked off-center even though each
+                // line was technically balanced.
+                let widest = planet_lines
+                    .iter()
+                    .map(|l| visible_width(l))
+                    .max()
+                    .unwrap_or(0);
+                let block_left = MAP_WIDTH.saturating_sub(widest) / 2;
+                // Compose each line as `<block_left spaces><line><right pad>`
+                // so it pads out to MAP_WIDTH while sharing a single
+                // left margin with every other line of the card.
+                let render_line = |line: &str| -> String {
+                    let mut s = String::with_capacity(MAP_WIDTH + 8);
+                    for _ in 0..block_left {
+                        s.push(' ');
+                    }
+                    s.push_str(line);
+                    let used = block_left + visible_width(line);
+                    for _ in used..MAP_WIDTH {
+                        s.push(' ');
+                    }
+                    s
+                };
                 if log_rides_top {
                     let log_lines: Vec<&str> =
                         self.recent_events.iter().map(String::as_str).collect();
                     let row_count = planet_lines.len().max(log_lines.len());
                     for i in 0..row_count {
                         let p_row = planet_lines.get(i).map_or("", String::as_str);
-                        // Center each planet-card line within the
-                        // left zone so the stats sit visually
-                        // beneath the centered name divider. The
-                        // caption row (last planet_lines entry) is
-                        // already centered upstream — pad_to-style
-                        // left-pad on already-centered content
-                        // would double-shift it; center_to is
-                        // idempotent on centered input.
-                        let p_padded = center_to(p_row, MAP_WIDTH);
+                        let p_padded = render_line(p_row);
                         let l_row = log_lines.get(i).copied().unwrap_or("");
                         buf.write_all(p_padded.as_bytes())?;
                         buf.write_all(b" |")?;
@@ -1371,8 +1391,7 @@ impl<W: Write> ViewportEmitter<W> {
                     }
                 } else {
                     for line in &planet_lines {
-                        let centered = center_to(line, MAP_WIDTH);
-                        buf.write_all(centered.as_bytes())?;
+                        buf.write_all(render_line(line).as_bytes())?;
                         buf.write_all(ANSI_ERASE_LINE.as_bytes())?;
                         buf.write_all(b"\n")?;
                     }
