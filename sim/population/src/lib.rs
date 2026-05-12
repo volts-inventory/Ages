@@ -26,7 +26,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use sim_arith::transcendental::{exp, ln};
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_species::PopulationBiology;
 
 /// 4-bracket population cohort. Replaces the earlier scalar
@@ -37,10 +37,10 @@ use sim_species::PopulationBiology;
 /// times its lifespan.
 #[derive(Debug, Clone)]
 pub struct Cohort {
-    pub infant: Real,
-    pub juvenile: Real,
-    pub fertile: Real,
-    pub elder: Real,
+    pub infant: Pop,
+    pub juvenile: Pop,
+    pub fertile: Pop,
+    pub elder: Pop,
     /// Civ membership tag. `Some(civ_id)` for cohorts attached
     /// to a civ; `None` for stateless population (post-collapse
     /// remnants).
@@ -52,17 +52,17 @@ impl Cohort {
     /// the fertile bracket. Founders are by definition adults; the
     /// per-tick step produces infants and ages them up over the
     /// first generation.
-    pub fn new(initial_count: Real) -> Self {
+    pub fn new(initial_count: Pop) -> Self {
         Self {
-            infant: Real::ZERO,
-            juvenile: Real::ZERO,
+            infant: Pop::ZERO,
+            juvenile: Pop::ZERO,
             fertile: initial_count,
-            elder: Real::ZERO,
+            elder: Pop::ZERO,
             civ_membership: None,
         }
     }
 
-    pub fn with_civ(initial_count: Real, civ_id: u32) -> Self {
+    pub fn with_civ(initial_count: Pop, civ_id: u32) -> Self {
         let mut c = Self::new(initial_count);
         c.civ_membership = Some(civ_id);
         c
@@ -72,10 +72,10 @@ impl Cohort {
     /// per-cell breakdown via `add_to_fertile` and friends.
     pub fn empty() -> Self {
         Self {
-            infant: Real::ZERO,
-            juvenile: Real::ZERO,
-            fertile: Real::ZERO,
-            elder: Real::ZERO,
+            infant: Pop::ZERO,
+            juvenile: Pop::ZERO,
+            fertile: Pop::ZERO,
+            elder: Pop::ZERO,
             civ_membership: None,
         }
     }
@@ -88,7 +88,7 @@ impl Cohort {
 
     /// Sum of all brackets — the bracket-agnostic total
     /// "population" of the cohort.
-    pub fn total(&self) -> Real {
+    pub fn total(&self) -> Pop {
         self.infant + self.juvenile + self.fertile + self.elder
     }
 
@@ -96,7 +96,7 @@ impl Cohort {
     /// per-cell capacity formula compares this to capacity rather
     /// than raw `total()`, so an age-skewed cohort (lots of
     /// dependents) feels stress harder.
-    pub fn weighted_demand(&self, biology: &PopulationBiology) -> Real {
+    pub fn weighted_demand(&self, biology: &PopulationBiology) -> Pop {
         self.weighted_demand_from_multipliers(&biology.food_multipliers)
     }
 
@@ -104,14 +104,14 @@ impl Cohort {
     /// directly. Lets callers that hold `PopulationDynamics` (which
     /// mirrors `biology.food_multipliers`) compute demand without
     /// a second `PopulationBiology` lookup.
-    pub fn weighted_demand_from_multipliers(&self, m: &[Real; 4]) -> Real {
+    pub fn weighted_demand_from_multipliers(&self, m: &[Real; 4]) -> Pop {
         self.infant * m[0] + self.juvenile * m[1] + self.fertile * m[2] + self.elder * m[3]
     }
 
     /// Add a population delta to the fertile bracket. Used by
     /// callers that just have a scalar pop (e.g. nomad absorption
     /// at civ founding) and want to deposit it as adult founders.
-    pub fn add_fertile(&mut self, delta: Real) {
+    pub fn add_fertile(&mut self, delta: Pop) {
         self.fertile = self.fertile + delta;
     }
 
@@ -122,8 +122,8 @@ impl Cohort {
     /// nomadic group). The infant/juvenile/elder splits are
     /// deposited at full count, not survival-discounted, since the
     /// per-tick step will apply the next-tick mortality.
-    pub fn deposit_distributed(&mut self, count: Real, biology: &PopulationBiology) {
-        if count <= Real::ZERO {
+    pub fn deposit_distributed(&mut self, count: Pop, biology: &PopulationBiology) {
+        if count <= Pop::ZERO {
             return;
         }
         let i = count * biology.infant_fraction;
@@ -174,15 +174,15 @@ impl Cohort {
     /// own dependents along, but post-reproductive elders are too
     /// rooted (or too senescent) to migrate. Returns the total
     /// number of people that moved (fertile + infants + juveniles).
-    pub fn migrate_family_to(&mut self, dst: &mut Cohort, fertile_to_move: Real) -> Real {
-        let move_f = fertile_to_move.min(self.fertile).max(Real::ZERO);
-        if move_f <= Real::ZERO || self.fertile <= Real::ZERO {
-            return Real::ZERO;
+    pub fn migrate_family_to(&mut self, dst: &mut Cohort, fertile_to_move: Pop) -> Pop {
+        let move_f = fertile_to_move.min(self.fertile).max(Pop::ZERO);
+        if move_f <= Pop::ZERO || self.fertile <= Pop::ZERO {
+            return Pop::ZERO;
         }
         let infant_ratio = self.infant / self.fertile;
         let juvenile_ratio = self.juvenile / self.fertile;
-        let move_i = (move_f * infant_ratio).min(self.infant).max(Real::ZERO);
-        let move_j = (move_f * juvenile_ratio).min(self.juvenile).max(Real::ZERO);
+        let move_i = (move_f * infant_ratio).min(self.infant).max(Pop::ZERO);
+        let move_j = (move_f * juvenile_ratio).min(self.juvenile).max(Pop::ZERO);
         self.fertile = self.fertile - move_f;
         self.infant = self.infant - move_i;
         self.juvenile = self.juvenile - move_j;
@@ -209,10 +209,10 @@ impl Cohort {
     /// that combine a fractional pop loss with a minimum-pop floor:
     /// `target = (total() × (1 - frac)).max(floor)` on the caller
     /// side, then this method preserves age structure.
-    pub fn shrink_to(&mut self, target: Real) -> Real {
+    pub fn shrink_to(&mut self, target: Pop) -> Pop {
         let before = self.total();
-        if before <= target || before <= Real::ZERO {
-            return Real::ZERO;
+        if before <= target || before <= Pop::ZERO {
+            return Pop::ZERO;
         }
         let scale = target / before;
         self.scale_in_place(scale);
@@ -223,17 +223,17 @@ impl Cohort {
     /// paths that subtract before checking sign (e.g. war
     /// casualties).
     pub fn floor_at_zero(&mut self) {
-        if self.infant < Real::ZERO {
-            self.infant = Real::ZERO;
+        if self.infant < Pop::ZERO {
+            self.infant = Pop::ZERO;
         }
-        if self.juvenile < Real::ZERO {
-            self.juvenile = Real::ZERO;
+        if self.juvenile < Pop::ZERO {
+            self.juvenile = Pop::ZERO;
         }
-        if self.fertile < Real::ZERO {
-            self.fertile = Real::ZERO;
+        if self.fertile < Pop::ZERO {
+            self.fertile = Pop::ZERO;
         }
-        if self.elder < Real::ZERO {
-            self.elder = Real::ZERO;
+        if self.elder < Pop::ZERO {
+            self.elder = Pop::ZERO;
         }
     }
 }
@@ -434,7 +434,7 @@ impl PopulationDynamics {
     /// (per-bracket food multipliers × counts) vs capacity. `0`
     /// drives all brackets toward extinction via the stress-
     /// amplified death term and zero births.
-    pub fn step_with_capacity(&self, cohort: &mut Cohort, capacity: Real) {
+    pub fn step_with_capacity(&self, cohort: &mut Cohort, capacity: Pop) {
         let demand = self.food_multipliers[0] * cohort.infant
             + self.food_multipliers[1] * cohort.juvenile
             + self.food_multipliers[2] * cohort.fertile
@@ -525,7 +525,7 @@ impl PopulationDynamics {
     pub fn step(&self, cohort: &mut Cohort) {
         // Pass a capacity well above any plausible cohort size so
         // food_security == 1 and the stress term is zero.
-        let big = (cohort.total() * Real::from_int(1_000)).max(Real::from_int(1_000_000));
+        let big = (cohort.total() * Real::from_int(1_000)).max(Pop::from_int(1_000_000));
         self.step_with_capacity(cohort, big);
     }
 
@@ -612,11 +612,11 @@ impl PopulationDynamics {
 /// formula penalises overshoot symmetrically — a cohort whose
 /// weighted demand equals capacity gets `food_security = 1`; one
 /// at 2× capacity gets 0.
-pub fn food_security(demand: Real, capacity: Real) -> Real {
-    if capacity <= Real::ZERO {
+pub fn food_security(demand: Pop, capacity: Pop) -> Real {
+    if capacity <= Pop::ZERO {
         return Real::ZERO;
     }
-    let ratio = demand / capacity;
+    let ratio: Real = demand / capacity;
     let overshoot = ratio - Real::ONE;
     let stress = if overshoot > Real::ZERO {
         overshoot
@@ -654,20 +654,20 @@ mod tests {
     #[test]
     fn cohort_total_sums_brackets() {
         let mut c = Cohort::empty();
-        c.infant = Real::from_int(10);
-        c.juvenile = Real::from_int(20);
-        c.fertile = Real::from_int(50);
-        c.elder = Real::from_int(15);
-        assert_eq!(c.total(), Real::from_int(95));
+        c.infant = Pop::from_int(10);
+        c.juvenile = Pop::from_int(20);
+        c.fertile = Pop::from_int(50);
+        c.elder = Pop::from_int(15);
+        assert_eq!(c.total(), Pop::from_int(95));
     }
 
     #[test]
     fn cohort_new_seeds_fertile_only() {
-        let c = Cohort::new(Real::from_int(100));
-        assert_eq!(c.infant, Real::ZERO);
-        assert_eq!(c.juvenile, Real::ZERO);
-        assert_eq!(c.fertile, Real::from_int(100));
-        assert_eq!(c.elder, Real::ZERO);
+        let c = Cohort::new(Pop::from_int(100));
+        assert_eq!(c.infant, Pop::ZERO);
+        assert_eq!(c.juvenile, Pop::ZERO);
+        assert_eq!(c.fertile, Pop::from_int(100));
+        assert_eq!(c.elder, Pop::ZERO);
     }
 
     #[test]
@@ -705,17 +705,17 @@ mod tests {
             Real::from_ratio(50, 100),
             Real::from_ratio(50, 100),
         );
-        let mut c = Cohort::new(Real::from_int(100));
+        let mut c = Cohort::new(Pop::from_int(100));
         // Big capacity so no stress.
         for _ in 0..120 {
-            dyn_.step_with_capacity(&mut c, Real::from_int(100_000));
+            dyn_.step_with_capacity(&mut c, Pop::from_int(100_000));
         }
         // After 10 years (120 ticks), a clutch=10, mid-survival
         // species starting from 100 fertile founders should grow
         // and have all four brackets populated.
-        assert!(c.total() > Real::from_int(100), "should grow: {c:?}");
-        assert!(c.infant > Real::ZERO, "infants should appear: {c:?}");
-        assert!(c.juvenile > Real::ZERO, "juveniles should appear: {c:?}");
+        assert!(c.total() > Pop::from_int(100), "should grow: {c:?}");
+        assert!(c.infant > Pop::ZERO, "infants should appear: {c:?}");
+        assert!(c.juvenile > Pop::ZERO, "juveniles should appear: {c:?}");
     }
 
     #[test]
@@ -727,12 +727,12 @@ mod tests {
             Real::from_ratio(50, 100),
             Real::from_ratio(50, 100),
         );
-        let mut c = Cohort::new(Real::from_int(100));
+        let mut c = Cohort::new(Pop::from_int(100));
         for _ in 0..200 {
-            dyn_.step_with_capacity(&mut c, Real::ZERO);
+            dyn_.step_with_capacity(&mut c, Pop::ZERO);
         }
         assert!(
-            c.total() < Real::from_int(5),
+            c.total() < Pop::from_int(5),
             "should collapse under zero capacity: {c:?}"
         );
     }
@@ -741,52 +741,52 @@ mod tests {
     fn weighted_demand_uses_food_multipliers() {
         let biology = test_biology();
         let mut c = Cohort::empty();
-        c.infant = Real::from_int(10);
-        c.juvenile = Real::from_int(10);
-        c.fertile = Real::from_int(10);
-        c.elder = Real::from_int(10);
+        c.infant = Pop::from_int(10);
+        c.juvenile = Pop::from_int(10);
+        c.fertile = Pop::from_int(10);
+        c.elder = Pop::from_int(10);
         // 0.3*10 + 0.6*10 + 1.0*10 + 0.9*10 = 28. Q32.32 has small
         // rounding error since 0.3, 0.6, 0.9 aren't binary-exact;
         // tolerate within 0.001.
         let d = c.weighted_demand(&biology);
-        let expected = Real::from_int(28);
+        let expected = Pop::from_int(28);
         let diff = if d > expected { d - expected } else { expected - d };
-        assert!(diff < Real::from_ratio(1, 1_000), "demand {d:?} != 28 within tol");
+        assert!(diff < Pop::from_ratio(1, 1_000), "demand {d:?} != 28 within tol");
     }
 
     #[test]
     fn food_security_one_at_or_below_capacity() {
         assert_eq!(
-            food_security(Real::from_int(50), Real::from_int(100)),
+            food_security(Pop::from_int(50), Pop::from_int(100)),
             Real::ONE
         );
         assert_eq!(
-            food_security(Real::from_int(100), Real::from_int(100)),
+            food_security(Pop::from_int(100), Pop::from_int(100)),
             Real::ONE
         );
     }
 
     #[test]
     fn food_security_drops_above_capacity() {
-        let s = food_security(Real::from_int(150), Real::from_int(100));
+        let s = food_security(Pop::from_int(150), Pop::from_int(100));
         assert_eq!(s, Real::from_ratio(5, 10));
     }
 
     #[test]
     fn food_security_zero_at_or_above_double_capacity() {
         assert_eq!(
-            food_security(Real::from_int(200), Real::from_int(100)),
+            food_security(Pop::from_int(200), Pop::from_int(100)),
             Real::ZERO
         );
         assert_eq!(
-            food_security(Real::from_int(500), Real::from_int(100)),
+            food_security(Pop::from_int(500), Pop::from_int(100)),
             Real::ZERO
         );
     }
 
     #[test]
     fn food_security_zero_when_capacity_zero() {
-        assert_eq!(food_security(Real::from_int(10), Real::ZERO), Real::ZERO);
+        assert_eq!(food_security(Pop::from_int(10), Pop::ZERO), Real::ZERO);
     }
 
     #[test]
@@ -798,11 +798,11 @@ mod tests {
             Real::from_ratio(50, 100),
             Real::from_ratio(50, 100),
         );
-        let mut a = Cohort::new(Real::from_int(100));
-        let mut b = Cohort::new(Real::from_int(100));
+        let mut a = Cohort::new(Pop::from_int(100));
+        let mut b = Cohort::new(Pop::from_int(100));
         for _ in 0..50 {
-            dyn_.step_with_capacity(&mut a, Real::from_int(10_000));
-            dyn_.step_with_capacity(&mut b, Real::from_int(10_000));
+            dyn_.step_with_capacity(&mut a, Pop::from_int(10_000));
+            dyn_.step_with_capacity(&mut b, Pop::from_int(10_000));
         }
         assert_eq!(a.total(), b.total());
         assert_eq!(a.fertile, b.fertile);
@@ -852,12 +852,12 @@ mod tests {
             Real::from_ratio(80, 100),
             Real::from_ratio(80, 100),
         );
-        let mut r_cohort = Cohort::new(Real::from_int(100));
-        let mut k_cohort = Cohort::new(Real::from_int(100));
+        let mut r_cohort = Cohort::new(Pop::from_int(100));
+        let mut k_cohort = Cohort::new(Pop::from_int(100));
         // 60 ticks (5 sim-years).
         for _ in 0..60 {
-            r_dyn.step_with_capacity(&mut r_cohort, Real::from_int(1_000_000));
-            k_dyn.step_with_capacity(&mut k_cohort, Real::from_int(1_000_000));
+            r_dyn.step_with_capacity(&mut r_cohort, Pop::from_int(1_000_000));
+            k_dyn.step_with_capacity(&mut k_cohort, Pop::from_int(1_000_000));
         }
         assert!(
             r_cohort.total() > k_cohort.total(),
@@ -920,11 +920,11 @@ mod tests {
             Real::from_ratio(40, 100),
             Real::from_ratio(40, 100),
         ];
-        let mut baseline_cohort = Cohort::new(Real::from_int(200));
-        let mut tech_cohort = Cohort::new(Real::from_int(200));
+        let mut baseline_cohort = Cohort::new(Pop::from_int(200));
+        let mut tech_cohort = Cohort::new(Pop::from_int(200));
         // Modest capacity — both runs feel mild stress so the
         // baseline-mortality cut shows up in the diff.
-        let cap = Real::from_int(500);
+        let cap = Pop::from_int(500);
         for _ in 0..240 {
             baseline_dyn.step_with_capacity(&mut baseline_cohort, cap);
             tech_dyn.step_with_capacity(&mut tech_cohort, cap);

@@ -4,7 +4,7 @@
 //! × terrain stack.
 
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 
 impl Civ {
     /// Carrying capacity: derived from the civ's claimed cells'
@@ -24,7 +24,7 @@ impl Civ {
     /// so growth headroom is fine). A fully-territorial civ scales
     /// linearly to 7000+ capacity. Decline reverses it: shedding
     /// cells drops capacity, which throttles regrowth.
-    pub fn carrying_capacity(&self, state: &sim_physics::PhysicsState) -> Real {
+    pub fn carrying_capacity(&self, state: &sim_physics::PhysicsState) -> Pop {
         let fuel = state.substance(sim_physics::Substance::Fuel.idx());
         let fuel_total = if self.claimed_cells.is_empty() {
             // Pre-territory case: fall back to the planet-wide sum.
@@ -37,17 +37,14 @@ impl Civ {
                 .filter_map(|c| fuel.get(*c as usize).copied())
                 .fold(Real::ZERO, |a, b| a + b)
         };
-        // Calibration: treat each unit of summed Fuel density as
-        // supporting ~50 individuals. Pinned at this M3 placeholder
-        // pending tuning.
-        let per_unit = self.carrying_capacity_per_unit;
         // tool-derived multiplicative tech multiplier folds
         // in alongside the existing `self.tech_multiplier`
         // placeholder. Tier-1 tools (LocalisedCombustion +15%,
         // FoodProcessing +15%, StoneWorking +5%) stack
         // multiplicatively; tiers 2-5 add larger factors as the
         // tech tree fills.
-        fuel_total * per_unit * self.tech_multiplier * self.tool_capacity_multiplier()
+        let mult = fuel_total * self.tech_multiplier * self.tool_capacity_multiplier();
+        Pop::from_real(self.carrying_capacity_per_unit) * mult
     }
 
     /// terrain-aware carrying capacity. Same fuel-summed
@@ -64,7 +61,7 @@ impl Civ {
         &self,
         state: &sim_physics::PhysicsState,
         planet: &sim_world::Planet,
-    ) -> Real {
+    ) -> Pop {
         let fuel = state.substance(sim_physics::Substance::Fuel.idx());
         let fuel_total = if self.claimed_cells.is_empty() {
             fuel.iter().copied().fold(Real::ZERO, |a, b| a + b)
@@ -78,8 +75,8 @@ impl Civ {
                 })
                 .fold(Real::ZERO, |a, b| a + b)
         };
-        let per_unit = self.carrying_capacity_per_unit;
-        fuel_total * per_unit * self.tech_multiplier * self.tool_capacity_multiplier()
+        let mult = fuel_total * self.tech_multiplier * self.tool_capacity_multiplier();
+        Pop::from_real(self.carrying_capacity_per_unit) * mult
     }
 
     /// season-aware carrying capacity. Sums per-cell capacity
@@ -93,13 +90,13 @@ impl Civ {
         state: &sim_physics::PhysicsState,
         tick: u64,
         planet: &sim_world::Planet,
-    ) -> Real {
+    ) -> Pop {
         if self.claimed_cells.is_empty() {
             return self.carrying_capacity(state);
         }
         let fuel = state.substance(sim_physics::Substance::Fuel.idx());
         let temps = state.temperature();
-        let per_unit = self.carrying_capacity_per_unit;
+        let pop_per_unit = Pop::from_real(self.carrying_capacity_per_unit);
         let grid = state.grid();
         self.claimed_cells
             .iter()
@@ -121,14 +118,14 @@ impl Civ {
                 // contribute zero, coast gets a 1.20× boost, peaks
                 // contribute ~10%.
                 let hab = sim_world::cell_habitability(state, planet, c);
-                base_fuel
-                    * per_unit
+                let mult = base_fuel
                     * self.tech_multiplier
                     * self.tool_capacity_multiplier()
                     * factor
-                    * hab
+                    * hab;
+                pop_per_unit * mult
             })
-            .fold(Real::ZERO, |a, b| a + b)
+            .fold(Pop::ZERO, |a, b| a + b)
     }
 
     /// Advance the civ's population using the capacity-coupled
@@ -169,7 +166,7 @@ impl Civ {
         cell: u32,
         tick: u64,
         planet: &sim_world::Planet,
-    ) -> Real {
+    ) -> Pop {
         let fuel = state.substance(sim_physics::Substance::Fuel.idx());
         let base_fuel = fuel.get(cell as usize).copied().unwrap_or(Real::ZERO);
         let temps = state.temperature();
@@ -182,14 +179,15 @@ impl Civ {
         // sees the lifted factor so winter cells with shelter shed
         // less population.
         let factor = self.effective_seasonal_factor(raw_factor);
-        let per_unit = self.carrying_capacity_per_unit;
         // Terrain habitability — gates per-cell capacity by
         // the cell's glyph-derived multiplier (zero for deep ocean
         // or gas, ~10% for peaks, 1.20 for coast). Per-cell
         // migration sees the gated capacity, so high-
         // pressure cells naturally shed pop toward better terrain.
         let hab = sim_world::cell_habitability(state, planet, cell);
-        base_fuel * per_unit * self.tech_multiplier * self.tool_capacity_multiplier() * factor * hab
+        let mult =
+            base_fuel * self.tech_multiplier * self.tool_capacity_multiplier() * factor * hab;
+        Pop::from_real(self.carrying_capacity_per_unit) * mult
     }
 
     /// per-cell population step. Each `region_cohort` evolves
@@ -247,21 +245,21 @@ impl Civ {
             .region_cohorts
             .values()
             .map(|c| c.infant)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
         self.cohort.juvenile = self
             .region_cohorts
             .values()
             .map(|c| c.juvenile)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
         self.cohort.fertile = self
             .region_cohorts
             .values()
             .map(|c| c.fertile)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
         self.cohort.elder = self
             .region_cohorts
             .values()
             .map(|c| c.elder)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
     }
 }

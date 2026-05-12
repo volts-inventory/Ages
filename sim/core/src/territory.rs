@@ -40,14 +40,16 @@ pub(crate) fn target_cell_count(civ: &Civ, max: usize) -> usize {
     // Cap floor: integer floor of approx_cap, clamped to ≥ 1 so we
     // never divide by zero. A degenerate civ with zero capacity per
     // unit (no fuel, no tech) just falls back to the founding floor.
-    let cap_bits = approx_cap.raw().to_bits();
-    let cap_floor = (cap_bits >> 32).max(1);
-    // Q32.32: raw bits = value × 2^32, so bits >> 32 is floor(value)
-    // for non-negative inputs. Population is non-negative by
-    // construction (population dynamics clamp at zero).
-    let pop_bits = civ.cohort.total().raw().to_bits();
-    let pop_floor = (pop_bits >> 32).max(0);
-    let n = (pop_floor + cap_floor - 1) / cap_floor;
+    // `approx_cap` is `Real` (Q32.32, i64); promote to i128 so the
+    // population arithmetic (which is `Pop`, i128) divides cleanly.
+    let cap_bits: i128 = i128::from(approx_cap.raw().to_bits());
+    let cap_floor: i128 = (cap_bits >> 32).max(1);
+    // Q32.32/Q96.32: raw bits = value × 2^32, so bits >> 32 is
+    // floor(value) for non-negative inputs. Population is non-negative
+    // by construction (population dynamics clamp at zero).
+    let pop_bits: i128 = civ.cohort.total().raw().to_bits();
+    let pop_floor: i128 = (pop_bits >> 32).max(0);
+    let n: i128 = (pop_floor + cap_floor - 1) / cap_floor;
     let n_usize = usize::try_from(n).unwrap_or(usize::MAX);
     n_usize.clamp(FOUNDING_TERRITORY_FLOOR.min(max.max(1)), max.max(1))
 }

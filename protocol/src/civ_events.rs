@@ -195,7 +195,17 @@ pub struct CivFounded {
     /// back to `"civ {civ_id}"`.
     #[serde(default)]
     pub name: String,
-    pub initial_population_q32: i64,
+    /// Q96.32 raw bits of the founding cohort population. Backed by
+    /// `Pop` (i128) so modern/future-age civs can carry > 2.1B
+    /// without saturating. Field kept as `_q32` for legacy NDJSON
+    /// compatibility — the Q-format suffix here documents the
+    /// fractional precision (32 bits) common to `Real` (Q32.32) and
+    /// `Pop` (Q96.32). Integer width is now i128. Serialized as a
+    /// JSON string (`serde`'s tagged-enum buffer doesn't support
+    /// `i128` natively — see `pop_bits_serde`).
+    #[serde(with = "crate::pop_bits_serde")]
+    #[schemars(with = "String")]
+    pub initial_population_q32: i128,
     pub founding_figure_count: u32,
     /// Cell ids the civ claims as its territory at founding
     /// Used by the post-run report to render per-civ
@@ -219,18 +229,24 @@ pub struct CivTerritoryChanged {
     pub tick: u64,
     pub civ_id: u32,
     pub claimed_cells: Vec<u32>,
-    /// Q32.32 raw bits of the cohort population at the time of the
+    /// Q96.32 raw bits of the cohort population at the time of the
     /// change. Lets consumers correlate territory size with the
-    /// underlying pressure.
-    pub population_q32: i64,
+    /// underlying pressure. Backed by `Pop` (i128) — modern civs
+    /// reach into the billions, well beyond Q32.32's ±2.1B ceiling.
+    /// Wire-encoded as a JSON string (see `pop_bits_serde`).
+    #[serde(with = "crate::pop_bits_serde")]
+    #[schemars(with = "String")]
+    pub population_q32: i128,
     /// Per-cell population breakdown. One entry per cell in
     /// `claimed_cells`, in the same order. Lets the post-run
     /// keyframe maps render density (cell pop / cap) as ASCII
     /// shading rather than just ownership-by-civ. Sums to
-    /// `population_q32`.
-    #[serde(default)]
-    pub cell_populations_q32: Vec<i64>,
-    /// Per-cell carrying capacity (Q32.32 raw). One entry per cell
+    /// `population_q32`. Wire-encoded as a JSON array of decimal
+    /// strings (see `pop_bits_vec_serde`).
+    #[serde(default, with = "crate::pop_bits_vec_serde")]
+    #[schemars(with = "Vec<String>")]
+    pub cell_populations_q32: Vec<i128>,
+    /// Per-cell carrying capacity (Q96.32 raw). One entry per cell
     /// in `claimed_cells`, in the same order. Computed from the
     /// civ's `cell_capacity` (tech × terrain × seasonal ×
     /// biosphere) at the moment of the territory change. Lets the
@@ -238,9 +254,11 @@ pub struct CivTerritoryChanged {
     /// fraction of *its own* cap — digit `9` = saturated, `0` =
     /// nearly empty — so density tells a "how full is this cell"
     /// story rather than absolute headcount. Empty for older event
-    /// logs; consumers fall back to a frame-relative scale.
-    #[serde(default)]
-    pub cell_capacities_q32: Vec<i64>,
+    /// logs; consumers fall back to a frame-relative scale. Wire-
+    /// encoded as a JSON array of decimal strings.
+    #[serde(default, with = "crate::pop_bits_vec_serde")]
+    #[schemars(with = "Vec<String>")]
+    pub cell_capacities_q32: Vec<i128>,
 }
 
 /// A civilization collapsed. Emitted once per civ lifecycle.
@@ -254,8 +272,11 @@ pub struct CivCollapsed {
     pub tick: u64,
     pub civ_id: u32,
     pub reason: String,
-    /// Q32.32 raw bits of the cohort population at collapse.
-    pub final_population_q32: i64,
+    /// Q96.32 raw bits of the cohort population at collapse.
+    /// Wire-encoded as a JSON string (see `pop_bits_serde`).
+    #[serde(with = "crate::pop_bits_serde")]
+    #[schemars(with = "String")]
+    pub final_population_q32: i128,
     pub final_figure_count: u32,
 }
 

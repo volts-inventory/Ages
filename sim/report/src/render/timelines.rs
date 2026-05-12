@@ -4,7 +4,7 @@
 
 use super::{digest_period, tick_to_year};
 use crate::digest::Digest;
-use crate::q32::q32_to_f64;
+use crate::q32::{pop_q32_to_f64, q32_to_f64};
 use std::fmt::Write;
 
 /// Species population timeline — declared in `docs/architecture.md`
@@ -31,7 +31,7 @@ pub(super) fn render_population_timeline(s: &mut String, d: &Digest) {
     for ev in &d.events {
         match ev {
             Event::CivFounded(c) => {
-                let pop = q32_to_f64(c.initial_population_q32);
+                let pop = pop_q32_to_f64(c.initial_population_q32);
                 // Successor population is sourced from the breakaway
                 // parent (halved) or stateless cohort (drained); the
                 // event log doesn't emit counterpart "drained" events
@@ -52,7 +52,7 @@ pub(super) fn render_population_timeline(s: &mut String, d: &Digest) {
             Event::CivCollapsed(c) => {
                 // Final pop becomes the stateless residual; reduce
                 // the per-civ entry to that and drop from active.
-                let final_pop = q32_to_f64(c.final_population_q32);
+                let final_pop = pop_q32_to_f64(c.final_population_q32);
                 per_civ.insert(c.civ_id, final_pop);
                 active.remove(&c.civ_id);
                 rows.push((
@@ -93,24 +93,27 @@ pub(super) fn render_population_timeline(s: &mut String, d: &Digest) {
         for (tick, label, n_active, pop) in &rows {
             let _ = writeln!(
                 s,
-                "| {} | {label} | {n_active} | {pop:.0} |",
-                tick_to_year(*tick, period)
+                "| {} | {label} | {n_active} | {} |",
+                tick_to_year(*tick, period),
+                crate::q32::fmt_pop(*pop),
             );
         }
     } else {
         for (tick, label, n_active, pop) in rows.iter().take(15) {
             let _ = writeln!(
                 s,
-                "| {} | {label} | {n_active} | {pop:.0} |",
-                tick_to_year(*tick, period)
+                "| {} | {label} | {n_active} | {} |",
+                tick_to_year(*tick, period),
+                crate::q32::fmt_pop(*pop),
             );
         }
         let _ = writeln!(s, "| … | _({} omitted)_ | | |", rows.len() - 30);
         for (tick, label, n_active, pop) in rows.iter().rev().take(15).rev() {
             let _ = writeln!(
                 s,
-                "| {} | {label} | {n_active} | {pop:.0} |",
-                tick_to_year(*tick, period)
+                "| {} | {label} | {n_active} | {} |",
+                tick_to_year(*tick, period),
+                crate::q32::fmt_pop(*pop),
             );
         }
     }
@@ -170,10 +173,10 @@ pub(super) fn render_migration_patterns(s: &mut String, d: &Digest) {
                 .claimed_cells
                 .iter()
                 .copied()
-                .zip(prev.cell_populations_q32.iter().copied().map(q32_to_f64))
+                .zip(prev.cell_populations_q32.iter().copied().map(pop_q32_to_f64))
                 .collect();
             for (i, &cell) in next.claimed_cells.iter().enumerate() {
-                let next_pop = q32_to_f64(next.cell_populations_q32[i]);
+                let next_pop = pop_q32_to_f64(next.cell_populations_q32[i]);
                 if let Some(&prev_pop) = prev_map.get(&cell) {
                     let delta = next_pop - prev_pop;
                     let abs_delta = delta.abs();

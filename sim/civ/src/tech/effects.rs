@@ -40,43 +40,53 @@ impl ToolKind {
             ToolKind::LocalisedCombustion => Real::from_ratio(115, 100),
             ToolKind::FoodProcessing => Real::from_ratio(115, 100),
             ToolKind::StoneWorking => Real::from_ratio(105, 100),
-            // Tier-2: cultivation + domestication push capacity
-            // hard (×2.0 / ×1.5 per the spec); fluid control +
-            // urbanisation are smaller multiplicative bumps;
-            // material-refining gives a small craft bonus.
-            ToolKind::BulkCultivation => Real::from_int(2),
-            ToolKind::AnimalSymbiosis => Real::from_ratio(150, 100),
+            // Tier-2: agriculture is the headline demographic-
+            // transition jump — settled farming was *the* biggest
+            // density bump in real history (paleolithic 0.1/km² →
+            // neolithic 5/km²). `BulkCultivation` ×5.0 carries that
+            // weight; `AnimalSymbiosis` ×2.5 layers plough animals +
+            // livestock on top. `FluidControl` (irrigation),
+            // `UrbanConstruction` (settlement density), and
+            // `MaterialRefining` (craft surplus) add the smaller
+            // amplifications around it.
+            ToolKind::BulkCultivation => Real::from_int(5),
+            ToolKind::AnimalSymbiosis => Real::from_ratio(250, 100),
             ToolKind::FluidControl => Real::from_ratio(120, 100),
             ToolKind::UrbanConstruction => Real::from_ratio(110, 100),
             ToolKind::MaterialRefining => Real::from_ratio(105, 100),
-            // Tier-3: ArtisanalSpecialisation + MechanicalAdvantage
+            // Tier-3: `ArtisanalSpecialisation` + `MechanicalAdvantage`
             // give craft-amplification and labour-amplification
-            // respectively. Both ×1.10 — the major capacity
-            // jumps live at tier-2 (cultivation / domestication)
-            // and tier-4 (Mechanisation × 3.0). AmphibiousConstruction
-            // ×1.05 — the habitat-lift in `can_claim_glyph` is the
-            // headline mechanical effect, but living-on-water
-            // construction (stilts, floating platforms, sea walls)
-            // also lifts cell capacity directly.
+            // respectively. Both ×1.10 — the major capacity jumps
+            // live at tier-2 (cultivation / domestication) and tier-4
+            // (Mechanisation ×10.0). `AmphibiousConstruction` ×1.05 —
+            // the habitat-lift in `can_claim_glyph` is the headline
+            // mechanical effect, but living-on-water construction
+            // (stilts, floating platforms, sea walls) also lifts cell
+            // capacity directly.
             ToolKind::ArtisanalSpecialisation => Real::from_ratio(110, 100),
             ToolKind::MechanicalAdvantage => Real::from_ratio(110, 100),
             ToolKind::AmphibiousConstruction => Real::from_ratio(105, 100),
-            // Tier-4: Mechanisation is the spec's ×3.0 industrial
-            // multiplier — the headline jump. ChemicalSynthesis
-            // ×1.20 (fertilisers, polymers); PowerGeneration
-            // ×1.15 (energy abundance); MedicalIntervention ×1.10
-            // (longer healthy lives, more workers).
-            ToolKind::Mechanisation => Real::from_int(3),
-            ToolKind::ChemicalSynthesis => Real::from_ratio(120, 100),
+            // Tier-4: the industrial-revolution headline. `Mechanisation`
+            // ×10.0 — mechanised agriculture + rail logistics drove
+            // the 19th-century population explosion. `ChemicalSynthesis`
+            // ×3.0 — Haber-Bosch nitrogen fixation alone underwrites
+            // ~half of modern food supply. `MedicalIntervention` ×2.0
+            // — germ theory + sanitation collapse child mortality.
+            // `PowerGeneration` ×1.15 (energy abundance).
+            ToolKind::Mechanisation => Real::from_int(10),
+            ToolKind::ChemicalSynthesis => Real::from_int(3),
             ToolKind::PowerGeneration => Real::from_ratio(115, 100),
-            ToolKind::MedicalIntervention => Real::from_ratio(110, 100),
+            ToolKind::MedicalIntervention => Real::from_int(2),
             // Tier-5 (information-age): genetic engineering and
-            // medicine push capacity hard; autonomous systems +
-            // material fabrication add labour amplification on
-            // top of Mechanisation; energy storage + cryogenic
-            // engineering smooth the seasonal floor.
-            ToolKind::GeneticManipulation => Real::from_ratio(120, 100),
-            ToolKind::AdvancedMedicine => Real::from_ratio(120, 100),
+            // medicine push capacity hard. `AdvancedMedicine` ×3.0
+            // (antibiotics + vaccines → infant-mortality collapse on
+            // top of tier-4 sanitation). `GeneticManipulation` ×2.0
+            // (GMO yields, precision agriculture).
+            // Autonomous systems + material fabrication add labour
+            // amplification on top of Mechanisation; energy storage +
+            // cryogenic engineering smooth the seasonal floor.
+            ToolKind::GeneticManipulation => Real::from_int(2),
+            ToolKind::AdvancedMedicine => Real::from_int(3),
             ToolKind::AutonomousSystems => Real::from_ratio(115, 100),
             ToolKind::MaterialFabrication => Real::from_ratio(110, 100),
             ToolKind::EnergyStorage => Real::from_ratio(110, 100),

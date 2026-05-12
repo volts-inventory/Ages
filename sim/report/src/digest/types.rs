@@ -113,7 +113,7 @@ pub struct CivChapter {
     pub parent_civ_id: Option<u32>,
     pub founded_tick: u64,
     pub founding_figure_count: u32,
-    pub initial_population_q32: i64,
+    pub initial_population_q32: i128,
     pub collapsed: Option<CollapseRecord>,
     /// Discoveries this civ confirmed (its own original work, not
     /// inherited). Sorted by tick of confirmation.
@@ -210,25 +210,25 @@ pub struct InventedToolRecord {
 pub struct TerritorySnapshot {
     pub tick: u64,
     pub claimed_cells: Vec<u32>,
-    pub population_q32: i64,
+    pub population_q32: i128,
     /// Per-cell population breakdown, in the same order as
     /// `claimed_cells`. Empty for older event logs that pre-date
     /// the field; readers (the keyframe renderer) treat empty as
     /// "no per-cell density available, render flat ownership".
-    pub cell_populations_q32: Vec<i64>,
+    pub cell_populations_q32: Vec<i128>,
     /// Per-cell carrying capacity, in the same order as
     /// `claimed_cells`. Lets the colored viewport's pop-digit
     /// scale read each cell as `pop / cap` saturation. Empty for
     /// older event logs; readers fall back to a frame-relative
     /// max-pop scale.
-    pub cell_capacities_q32: Vec<i64>,
+    pub cell_capacities_q32: Vec<i128>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CollapseRecord {
     pub tick: u64,
     pub reason: String,
-    pub final_population_q32: i64,
+    pub final_population_q32: i128,
     pub final_figure_count: u32,
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use sim_arith::Pop;
 use sim_physics::{HexGrid, PhysicsState, Substance};
 use sim_recognition::Firing;
 
@@ -17,7 +18,7 @@ fn well_fed_state() -> PhysicsState {
 
 #[test]
 fn fresh_civ_is_active_with_no_collapse_state() {
-    let civ = Civ::new(1, 0, Real::from_int(50));
+    let civ = Civ::new(1, 0, Pop::from_int(50));
     assert!(civ.is_active());
     assert!(civ.collapsed_tick.is_none());
     assert_eq!(civ.low_food_streak, 0);
@@ -25,7 +26,7 @@ fn fresh_civ_is_active_with_no_collapse_state() {
 
 #[test]
 fn collapse_fires_on_sustained_food_crisis() {
-    let mut civ = Civ::new(1, 0, Real::from_int(1000));
+    let mut civ = Civ::new(1, 0, Pop::from_int(1000));
     let state = empty_state(); // capacity = 0 → security = 0 every tick
     let mut reason = None;
     for tick in 1..=(FOOD_CRISIS_STREAK_TICKS + 100) {
@@ -43,7 +44,7 @@ fn collapse_fires_on_sustained_food_crisis() {
 
 #[test]
 fn collapse_fires_on_knowledge_plateau() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let state = well_fed_state();
     // Capacity is huge, food security stays at 1.0; only plateau
     // can fire. With last_discovery_tick = 0 (founding tick),
@@ -62,7 +63,7 @@ fn collapse_fires_on_knowledge_plateau() {
 
 #[test]
 fn note_discovery_resets_plateau_window() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let state = well_fed_state();
     // Mark discoveries every PLATEAU_WINDOW_TICKS - 10 to keep
     // the plateau from firing.
@@ -79,7 +80,7 @@ fn note_discovery_resets_plateau_window() {
 
 #[test]
 fn collapse_marks_figures_retired_and_cohort_stateless() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     assert_eq!(civ.cohort.civ_membership, Some(1));
     let n_figures = civ.figures.len();
     civ.collapse(42);
@@ -97,7 +98,7 @@ fn collapse_marks_figures_retired_and_cohort_stateless() {
 
 #[test]
 fn collapse_is_idempotent() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     civ.collapse(10);
     // Second collapse at a later tick must not overwrite the
     // first collapse_tick or the figures' retired_tick.
@@ -108,7 +109,7 @@ fn collapse_is_idempotent() {
 
 #[test]
 fn check_collapse_returns_none_after_already_collapsed() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     civ.collapse(10);
     let state = empty_state();
     for tick in 11..=300 {
@@ -118,13 +119,13 @@ fn check_collapse_returns_none_after_already_collapsed() {
 
 #[test]
 fn fresh_civ_has_no_observations() {
-    let civ = Civ::new(1, 0, Real::from_int(50));
+    let civ = Civ::new(1, 0, Pop::from_int(50));
     assert_eq!(civ.observation_count(1), 0);
 }
 
 #[test]
 fn observations_accumulate() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let firings = vec![
         Firing {
             template_id: 1,
@@ -148,8 +149,8 @@ fn observations_accumulate() {
 
 #[test]
 fn population_step_is_deterministic() {
-    let mut a = Civ::new(1, 0, Real::from_int(100));
-    let mut b = Civ::new(1, 0, Real::from_int(100));
+    let mut a = Civ::new(1, 0, Pop::from_int(100));
+    let mut b = Civ::new(1, 0, Pop::from_int(100));
     for _ in 0..20 {
         a.step_population();
         b.step_population();
@@ -167,7 +168,7 @@ fn population_step_is_deterministic() {
 /// one cell could linger indefinitely.
 #[test]
 fn collapse_fires_on_tiny_territory_streak() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     // One claimed cell for the full streak window. Use the
     // well-fed state so food security stays above the crisis
     // floor and only the territory trigger can fire.
@@ -205,7 +206,7 @@ fn tiny_territory_streak_resets_on_recovery() {
     // test in CI.
     const { assert!(TINY_TERRITORY_STREAK_TICKS >= 5) }
     let dip_ticks = TINY_TERRITORY_STREAK_TICKS / 2;
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let state = well_fed_state();
     let mut tiny = BTreeSet::new();
     tiny.insert(0u32);
@@ -237,7 +238,7 @@ fn tiny_territory_streak_resets_on_recovery() {
 fn collapse_fires_on_depopulation_streak() {
     // Start the civ already depopulated. Founding with pop 0
     // makes the streak begin firing on the very first tick.
-    let mut civ = Civ::new(1, 0, Real::ZERO);
+    let mut civ = Civ::new(1, 0, Pop::ZERO);
     let state = well_fed_state();
     let mut reason = None;
     for tick in 1..=(DEPOPULATION_STREAK_TICKS + 50) {
@@ -261,7 +262,7 @@ fn collapse_fires_on_depopulation_streak() {
 fn depopulation_streak_resets_on_recovery() {
     const { assert!(DEPOPULATION_STREAK_TICKS >= 5) }
     let dip_ticks = DEPOPULATION_STREAK_TICKS / 2;
-    let mut civ = Civ::new(1, 0, Real::ZERO);
+    let mut civ = Civ::new(1, 0, Pop::ZERO);
     let state = well_fed_state();
     for tick in 1..=dip_ticks {
         civ.last_discovery_tick = tick;
@@ -269,7 +270,7 @@ fn depopulation_streak_resets_on_recovery() {
     }
     assert_eq!(civ.depopulation_streak, dip_ticks);
     // Recover the cohort above the floor: streak resets to 0.
-    civ.cohort = sim_population::Cohort::with_civ(Real::from_int(500), civ.id);
+    civ.cohort = sim_population::Cohort::with_civ(Pop::from_int(500), civ.id);
     let recovery_tick = dip_ticks + 1;
     civ.last_discovery_tick = recovery_tick;
     assert!(civ.check_collapse(recovery_tick, &state).is_none());
@@ -294,7 +295,7 @@ fn successor_lands_on_distinct_centroid() {
     // seed-42-style outcome that motivated the override). Claim a small
     // contiguous block around it so the parent has a real
     // capital before collapsing.
-    let mut civ1 = Civ::new(1, 0, Real::from_int(50));
+    let mut civ1 = Civ::new(1, 0, Pop::from_int(50));
     civ1.territory_centroid = 0;
     let mut civ1_cells: BTreeSet<u32> = BTreeSet::new();
     civ1_cells.insert(0u32);
@@ -306,7 +307,7 @@ fn successor_lands_on_distinct_centroid() {
     // Civ 2: refound_from_stateless rebuilds the band; its
     // figures-derived centroid will collide with cell 0 on this
     // setup. Run the same override sim/core does.
-    let stateless = Cohort::with_civ(Real::from_int(50), 2);
+    let stateless = Cohort::with_civ(Pop::from_int(50), 2);
     let mut civ2 = Civ::refound_from_stateless(2, 200, stateless, Real::ONE, 0, &[], 1);
     // Simulate compute_territory: BFS from civ2's initial
     // centroid. Use a small target so the territory is just a
@@ -432,7 +433,7 @@ fn terrain_habitability_smoke_test() {
     // Build a minimal civ + run the same pick-then-BFS dance
     // sim/core does for the inaugural civ, so this test stays
     // free of sim/core's full lifecycle.
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     // Force the figure-derived seed centroid to cell 0 (deep
     // ocean on seed 1) to exercise the relocation logic.
     civ.territory_centroid = 0;
@@ -530,7 +531,7 @@ fn terrain_habitability_smoke_test() {
 /// seasonal factor when seasonal-floor tools are unlocked.
 #[test]
 fn seasonal_floor_lifts_winter_factor_with_shelter() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     // Pre-shelter: identity passthrough on raw factor.
     let raw = Real::from_ratio(80, 100);
     let no_shelter = civ.effective_seasonal_factor(raw);
@@ -557,7 +558,7 @@ fn seasonal_floor_lifts_winter_factor_with_shelter() {
 /// loss fraction when catastrophe-resistance tools are unlocked.
 #[test]
 fn catastrophe_resistance_softens_loss_with_medical_tools() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let baseline_loss = Real::from_ratio(30, 100); // 30% baseline loss
                                                    // Pre-tool: identity.
     let untouched = civ.apply_catastrophe_resistance(baseline_loss);
@@ -597,7 +598,7 @@ fn catastrophe_resistance_softens_loss_with_medical_tools() {
 /// kin of the same species.
 #[test]
 fn tool_lifespan_extension_lifts_effective_lifespan() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let zero_factor = civ.tool_lifespan_extension_factor();
     assert_eq!(zero_factor, Real::ZERO);
     // Stack MedicalIntervention (+0.05) + AdvancedMedicine (+0.10)
@@ -627,7 +628,7 @@ fn tool_lifespan_extension_lifts_effective_lifespan() {
 /// pre-tech civ sees zero across the board.
 #[test]
 fn tool_mortality_reduction_aggregates_per_bracket() {
-    let mut civ = Civ::new(1, 0, Real::from_int(50));
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
     let zero = civ.tool_mortality_reduction_per_bracket();
     for v in zero {
         assert_eq!(v, Real::ZERO);
@@ -666,7 +667,7 @@ fn tool_mortality_reduction_aggregates_per_bracket() {
 /// `effective_pop = pop * (1 + bonus)` calculation.
 #[test]
 fn expansion_rate_aggregator_reflects_unlocked_navigation_tools() {
-    let mut civ = Civ::new(1, 0, Real::from_int(100));
+    let mut civ = Civ::new(1, 0, Pop::from_int(100));
     assert_eq!(civ.tool_expansion_rate_bonus(), Real::ZERO);
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::WatercraftConstruction); // +0.10
@@ -690,7 +691,7 @@ fn expansion_rate_aggregator_reflects_unlocked_navigation_tools() {
 /// `transmission::diffuse_between` and `transmit_from_parent`.
 #[test]
 fn transmission_fidelity_aggregator_reflects_unlocked_encoding_tools() {
-    let mut civ = Civ::new(1, 0, Real::from_int(100));
+    let mut civ = Civ::new(1, 0, Pop::from_int(100));
     assert_eq!(civ.tool_transmission_fidelity_bonus(), Real::ZERO);
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::CulturalEncoding); // +0.10
@@ -717,7 +718,7 @@ fn transmission_fidelity_aggregator_reflects_unlocked_encoding_tools() {
 /// AbstractMathematics (+0.10) yields ≈0.45.
 #[test]
 fn tool_discovery_rate_aggregates() {
-    let mut civ = Civ::new(1, 0, Real::from_int(10));
+    let mut civ = Civ::new(1, 0, Pop::from_int(10));
     assert_eq!(civ.tool_discovery_rate_bonus(), Real::ZERO);
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::AnalyticalEngines);
@@ -747,7 +748,7 @@ fn tool_discovery_rate_aggregates() {
 /// UrbanConstruction (+0.05) raw-sums to 0.50, clamps to 0.40.
 #[test]
 fn tool_cohesion_caps_at_forty() {
-    let mut civ = Civ::new(1, 0, Real::from_int(10));
+    let mut civ = Civ::new(1, 0, Pop::from_int(10));
     assert_eq!(civ.tool_cohesion_bonus(), Real::ZERO);
     for tk in [
         crate::tech::ToolKind::WrittenJurisprudence,
@@ -773,7 +774,7 @@ fn tool_cohesion_caps_at_forty() {
 /// MotivePropulsion (+0.10) yields 0.50.
 #[test]
 fn tool_migration_speed_aggregates() {
-    let mut civ = Civ::new(1, 0, Real::from_int(10));
+    let mut civ = Civ::new(1, 0, Pop::from_int(10));
     assert_eq!(civ.tool_migration_speed_bonus(), Real::ZERO);
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::HeavyTransport);
@@ -801,7 +802,7 @@ fn tool_migration_speed_aggregates() {
 /// (+0.03) raw-sums to 0.43, stays under the 0.50 cap.
 #[test]
 fn tool_fertility_aggregates_and_caps() {
-    let mut civ = Civ::new(1, 0, Real::from_int(10));
+    let mut civ = Civ::new(1, 0, Pop::from_int(10));
     assert_eq!(civ.tool_fertility_bonus(), Real::ZERO);
     for tk in [
         crate::tech::ToolKind::MedicalIntervention,

@@ -8,7 +8,7 @@
 //! stay put when their cell sheds population.
 
 use crate::{catastrophe, Civ};
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_population::Cohort;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -71,10 +71,10 @@ impl Civ {
             if cells.contains(&centroid) && cells.len() > 1 {
                 let centroid_share = Real::from_ratio(70, 100);
                 let mut centroid_cohort =
-                    Cohort::with_civ(Real::ZERO, self.id);
+                    Cohort::with_civ(Pop::ZERO, self.id);
                 centroid_cohort.merge_in(&self.cohort);
                 centroid_cohort.scale_in_place(centroid_share);
-                let mut others_pool = Cohort::with_civ(Real::ZERO, self.id);
+                let mut others_pool = Cohort::with_civ(Pop::ZERO, self.id);
                 others_pool.merge_in(&self.cohort);
                 others_pool.scale_in_place(Real::ONE - centroid_share);
                 let other_n_count = i64::try_from(cells.len() - 1).unwrap_or(1);
@@ -131,7 +131,7 @@ impl Civ {
         // Redistribute refugees uniformly across retained cells —
         // each bracket scaled by `1 / n_retained`.
         let retained: Vec<u32> = old_cells.intersection(cells).copied().collect();
-        if !retained.is_empty() && refugee_pool.total() > Real::ZERO {
+        if !retained.is_empty() && refugee_pool.total() > Pop::ZERO {
             let share_factor =
                 Real::ONE / Real::from_int(i64::try_from(retained.len()).unwrap_or(1).max(1));
             for cell in &retained {
@@ -199,22 +199,22 @@ impl Civ {
             .region_cohorts
             .values()
             .map(|c| c.infant)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
         self.cohort.juvenile = self
             .region_cohorts
             .values()
             .map(|c| c.juvenile)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
         self.cohort.fertile = self
             .region_cohorts
             .values()
             .map(|c| c.fertile)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
         self.cohort.elder = self
             .region_cohorts
             .values()
             .map(|c| c.elder)
-            .fold(Real::ZERO, |a, b| a + b);
+            .fold(Pop::ZERO, |a, b| a + b);
     }
 
     /// Reduce the given cell's region cohort by `fraction`
@@ -222,9 +222,9 @@ impl Civ {
     /// age structure survives. Returns the population lost so
     /// catastrophe events can carry the magnitude. The aggregate
     /// cohort is re-synced after the loss.
-    pub fn drop_cell_pop(&mut self, cell: u32, fraction: Real) -> Real {
+    pub fn drop_cell_pop(&mut self, cell: u32, fraction: Real) -> Pop {
         let frac = fraction.max(Real::ZERO).min(Real::ONE);
-        let mut lost = Real::ZERO;
+        let mut lost = Pop::ZERO;
         if let Some(c) = self.region_cohorts.get_mut(&cell) {
             let before = c.total();
             c.scale_in_place(Real::ONE - frac);
@@ -264,7 +264,7 @@ impl Civ {
         let migration_rate =
             Real::from_ratio(5, 100) * (Real::ONE + self.tool_migration_speed_bonus());
 
-        let caps: BTreeMap<u32, Real> = self
+        let caps: BTreeMap<u32, Pop> = self
             .region_cohorts
             .keys()
             .copied()
@@ -277,10 +277,10 @@ impl Civ {
         // moved adult drags their proportional dependents (infants
         // + juveniles) but elders stay rooted. Determinism is
         // preserved by `BTreeMap` iteration order.
-        let mut moves: Vec<(u32, u32, Real)> = Vec::new();
+        let mut moves: Vec<(u32, u32, Pop)> = Vec::new();
         for (&cell, cohort) in &self.region_cohorts {
-            let cap = caps.get(&cell).copied().unwrap_or(Real::ZERO);
-            if cap <= Real::ZERO {
+            let cap = caps.get(&cell).copied().unwrap_or(Pop::ZERO);
+            if cap <= Pop::ZERO {
                 continue;
             }
             let pressure_count = cap * pressure_threshold;
@@ -293,7 +293,7 @@ impl Civ {
             // than the source has.
             let overflow = cohort.total() - pressure_count;
             let movable_fertile = overflow.min(cohort.fertile);
-            if movable_fertile <= Real::ZERO {
+            if movable_fertile <= Pop::ZERO {
                 continue;
             }
             // Compute per-neighbour headroom over claimed
@@ -301,24 +301,24 @@ impl Civ {
             // neighbour's *total* current pop (all brackets count
             // toward filling capacity).
             let nbrs = catastrophe::hex_neighbors(cell, grid_width, grid_height);
-            let mut headroom_total = Real::ZERO;
-            let mut nbr_headrooms: Vec<(u32, Real)> = Vec::with_capacity(6);
+            let mut headroom_total = Pop::ZERO;
+            let mut nbr_headrooms: Vec<(u32, Pop)> = Vec::with_capacity(6);
             for nbr in nbrs {
                 if !self.claimed_cells.contains(&nbr) {
                     continue;
                 }
-                let n_cap = caps.get(&nbr).copied().unwrap_or(Real::ZERO);
+                let n_cap = caps.get(&nbr).copied().unwrap_or(Pop::ZERO);
                 let n_count = self
                     .region_cohorts
                     .get(&nbr)
-                    .map_or(Real::ZERO, sim_population::Cohort::total);
+                    .map_or(Pop::ZERO, sim_population::Cohort::total);
                 let h = n_cap - n_count;
-                if h > Real::ZERO {
+                if h > Pop::ZERO {
                     headroom_total = headroom_total + h;
                     nbr_headrooms.push((nbr, h));
                 }
             }
-            if headroom_total <= Real::ZERO || nbr_headrooms.is_empty() {
+            if headroom_total <= Pop::ZERO || nbr_headrooms.is_empty() {
                 continue;
             }
             // Total fertile move: 5% of fertile-overflow, capped at
@@ -334,7 +334,7 @@ impl Civ {
             // Distribute proportionally to neighbour headroom.
             for (nbr, h) in nbr_headrooms {
                 let share = total_move_f * (h / headroom_total);
-                if share > Real::ZERO {
+                if share > Pop::ZERO {
                     moves.push((cell, nbr, share));
                 }
             }
@@ -416,7 +416,7 @@ impl Civ {
         let pressure_threshold = self.migration_pressure_threshold;
         let seed_fraction = Real::from_ratio(20, 100);
 
-        let caps: BTreeMap<u32, Real> = self
+        let caps: BTreeMap<u32, Pop> = self
             .region_cohorts
             .keys()
             .copied()
@@ -432,25 +432,25 @@ impl Civ {
             if spent >= budget {
                 break;
             }
-            let cap = caps.get(&cell).copied().unwrap_or(Real::ZERO);
-            if cap <= Real::ZERO {
+            let cap = caps.get(&cell).copied().unwrap_or(Pop::ZERO);
+            if cap <= Pop::ZERO {
                 continue;
             }
             let count = self
                 .region_cohorts
                 .get(&cell)
-                .map_or(Real::ZERO, sim_population::Cohort::total);
+                .map_or(Pop::ZERO, sim_population::Cohort::total);
             let fertile_count = self
                 .region_cohorts
                 .get(&cell)
-                .map_or(Real::ZERO, |c| c.fertile);
+                .map_or(Pop::ZERO, |c| c.fertile);
             let pressure_count = cap * pressure_threshold;
             if count <= pressure_count {
                 continue;
             }
             // Pick the highest-cap unclaimed habitable neighbour.
             let nbrs = catastrophe::hex_neighbors(cell, grid_width, grid_height);
-            let mut best: Option<(u32, Real)> = None;
+            let mut best: Option<(u32, Pop)> = None;
             for nbr in nbrs {
                 if self.claimed_cells.contains(&nbr) {
                     continue;
@@ -459,7 +459,7 @@ impl Civ {
                     continue;
                 }
                 let nbr_cap = self.cell_capacity(state, nbr, tick, planet);
-                if nbr_cap <= Real::ZERO {
+                if nbr_cap <= Pop::ZERO {
                     continue;
                 }
                 if best.is_none_or(|(_, b)| nbr_cap > b) {
@@ -476,7 +476,7 @@ impl Civ {
             // but small enough that the source cell remains dense.
             let overflow = count - pressure_count;
             let seed_fertile = (overflow * seed_fraction).min(fertile_count);
-            if seed_fertile <= Real::ZERO {
+            if seed_fertile <= Pop::ZERO {
                 continue;
             }
             // Drain the source via family-aware migration into a
@@ -509,7 +509,7 @@ impl Civ {
     /// responsibility).
     /// Returns the cells removed this tick.
     pub fn prune_empty_cells(&mut self) -> Vec<u32> {
-        let floor = Real::from_ratio(1, 10); // 0.1 person across all brackets
+        let floor = Pop::from_ratio(1, 10); // 0.1 person across all brackets
         let mut removed: Vec<u32> = Vec::new();
         let candidates: Vec<u32> = self
             .region_cohorts
@@ -547,15 +547,18 @@ mod tests {
     fn expand_claims_neighbour_when_centroid_overflows() {
         // Civ with one centroid cell at saturation should claim
         // exactly one neighbour per tick (default budget = 1).
+        // Cell cap at fuel=10 × per_unit=50,000 ≈ 500k per cell, so
+        // we set fertile to 1M to push well above the migration
+        // pressure threshold (85% of cap by default).
         let state = well_fed_state(8, 8);
         let planet = sample_planet(1);
-        let mut civ = Civ::new(1, 0, Real::from_int(10000));
+        let mut civ = Civ::new(1, 0, Pop::from_int(1_000_000));
         civ.territory_centroid = 27; // interior cell
         let init: BTreeSet<u32> = std::iter::once(27u32).collect();
         civ.claim_cells(&init);
         // Force pressure: bump the centroid cohort high above cap.
         if let Some(c) = civ.region_cohorts.get_mut(&27) {
-            c.fertile = Real::from_int(100_000);
+            c.fertile = Pop::from_int(1_000_000);
         }
         let gained = civ.expand_via_overflow(&state, 0, &planet, 8, 8, &BTreeSet::new());
         assert_eq!(gained.len(), 1, "default budget is one cell per tick");
@@ -566,12 +569,12 @@ mod tests {
     fn expand_does_not_trespass_on_other_civs() {
         let state = well_fed_state(8, 8);
         let planet = sample_planet(1);
-        let mut civ = Civ::new(1, 0, Real::from_int(10000));
+        let mut civ = Civ::new(1, 0, Pop::from_int(1_000_000));
         civ.territory_centroid = 27;
         let init: BTreeSet<u32> = std::iter::once(27u32).collect();
         civ.claim_cells(&init);
         if let Some(c) = civ.region_cohorts.get_mut(&27) {
-            c.fertile = Real::from_int(100_000);
+            c.fertile = Pop::from_int(1_000_000);
         }
         // Block every neighbour of cell 27 by claiming each via a
         // hypothetical second civ.
@@ -586,7 +589,7 @@ mod tests {
     fn expand_skips_low_pressure_civs() {
         let state = well_fed_state(8, 8);
         let planet = sample_planet(1);
-        let mut civ = Civ::new(1, 0, Real::from_int(50));
+        let mut civ = Civ::new(1, 0, Pop::from_int(50));
         civ.territory_centroid = 27;
         let init: BTreeSet<u32> = std::iter::once(27u32).collect();
         civ.claim_cells(&init);
@@ -599,7 +602,7 @@ mod tests {
 
     #[test]
     fn prune_drops_empty_cells_keeps_centroid() {
-        let mut civ = Civ::new(1, 0, Real::from_int(50));
+        let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let cells: BTreeSet<u32> = [0u32, 1, 2, 3].iter().copied().collect();
         civ.claim_cells(&cells);
         civ.territory_centroid = 0;

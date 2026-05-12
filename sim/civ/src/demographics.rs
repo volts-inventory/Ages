@@ -8,7 +8,7 @@
 //! so each helper sits with its calibration commentary rather than
 //! getting lost in the `Civ` impl block.
 
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_population::PopulationDynamics;
 use sim_world::{BiosphereClass, Planet};
 
@@ -63,7 +63,7 @@ pub fn biosphere_birth_factor_for_planet(planet: &Planet) -> Real {
 /// maintain knowledge between collapses. Replaces the flat
 /// `FOUNDING_MIN_POPULATION = 100` placeholder.
 #[must_use]
-pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Real {
+pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Pop {
     let biosphere_pressure = match biosphere {
         BiosphereClass::None => Real::from_ratio(15, 10),
         BiosphereClass::Sparse => Real::ONE,
@@ -72,23 +72,31 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Re
     };
     let cog = cognition.max(Real::ZERO).min(Real::ONE);
     let cognition_penalty = Real::ONE - cog;
-    Real::from_int(50)
-        + biosphere_pressure * Real::from_int(35)
-        + cognition_penalty * Real::from_int(15)
+    Pop::from_int(50)
+        + Pop::from_int(35) * biosphere_pressure
+        + Pop::from_int(15) * cognition_penalty
 }
 
 /// Substrate-derived carrying-capacity scale (individuals per
 /// unit fuel-density). Lush biospheres + high-cognition species push
 /// the scale up; sparse / low-cognition push it down. High-gravity
 /// worlds cost more per individual; low-gravity worlds save energy.
-/// Earth-equivalent (Lush, g≈9.81, cog≈1) recovers ~2500/unit — a
-/// 5× lift over the prior 500 so a regional cell can house tens of
-/// thousands rather than ~hundreds-to-low-thousands. The intent is
-/// that a 200k-population civ occupies ~20 dense cells with a core +
-/// frontier shape, not ~120 uniformly-claimed cells. The food-
-/// security ratio (`demand / capacity`) and migration-pressure ratio
-/// (`pop / cell_capacity`) stay scale-invariant — both still trigger
-/// at the same fractional thresholds.
+///
+/// Earth-equivalent baseline (Lush, g≈9.81, cog≈1) is ~50,000/unit.
+/// The 20× lift from the prior 2,500 puts paleolithic civs at ~50k
+/// people per cell (city-state density) so the tech-tier multiplier
+/// stack (see `tools::tool_capacity_multiplier` / `tech::effects`)
+/// can carry agricultural civs to ~M/cell, industrial civs to ~10M/
+/// cell, and modern/future-age civs to ~hundreds of M/cell without
+/// needing any further global retune. The ratio thresholds (food
+/// security `demand / capacity`, migration pressure `pop /
+/// cell_capacity`) are scale-invariant — both still trigger at the
+/// same fractions of cap regardless of the absolute number.
+///
+/// Total demographic span baseline → fully-teched is ~8,000× (see
+/// `tech::effects::capacity_multiplier`), reproducing the real
+/// paleolithic → modern density growth of ~1000–5000× plus headroom
+/// for speculative future-age tools.
 #[must_use]
 pub fn carrying_capacity_per_unit(
     biosphere: BiosphereClass,
@@ -114,7 +122,7 @@ pub fn carrying_capacity_per_unit(
     // species don't compound a capacity hit on top of the existing
     // attempt-period and stress-factor cognition penalties.
     let cognition_factor = Real::from_ratio(95, 100) + Real::from_ratio(5, 100) * cog;
-    Real::from_int(2500) * biosphere_factor * g_factor * cognition_factor
+    Real::from_int(50_000) * biosphere_factor * g_factor * cognition_factor
 }
 
 /// Substrate-derived migration pressure threshold. Solitary
@@ -240,15 +248,15 @@ mod tests {
     use super::*;
 
     /// Calibration regression test. Pins the per-fuel-unit
-    /// carrying capacity to ±10% of the 2500 base for the *typical*
+    /// carrying capacity to ±10% of the 50,000 base for the typical
     /// habitable seed (Sparse–Lush–Hyper biospheres at Earth gravity
-    /// and median cognition). The 5× lift over the prior 500 base is
-    /// part of the pacing retune — it lets civs densify spatially
-    /// rather than only spreading outward, so a 200k-population civ
-    /// occupies ~20 cells with a dense core + frontier shape rather
-    /// than uniformly claiming ~120 cells. Sparse-world floor stays
-    /// within 10% of Earth-equivalent so marginal seeds don't tip
-    /// into `food_crisis` from the substrate factor alone.
+    /// and median cognition). The 20× lift over the prior 2,500 base
+    /// underwrites the billion-scale demographic-transition arc — a
+    /// fully-teched cell can now hold ~hundreds of millions, and
+    /// civs reach planetary-scale populations as the tech tree fills.
+    /// Sparse-world floor still stays within 10% of Earth-equivalent
+    /// so marginal seeds don't tip into `food_crisis` from substrate
+    /// alone.
     #[test]
     fn carrying_capacity_envelope_is_calibrated() {
         let earth_g = Real::from_ratio(981, 100);
@@ -256,13 +264,13 @@ mod tests {
         let lush = carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE);
         let sparse = carrying_capacity_per_unit(BiosphereClass::Sparse, earth_g, median_cog);
         let hyper = carrying_capacity_per_unit(BiosphereClass::HyperBiodiverse, earth_g, Real::ONE);
-        // Earth-equivalent (Lush + Earth-g + max-cog) recovers ~2500.
-        assert!(lush >= Real::from_int(2250) && lush <= Real::from_int(2750));
+        // Earth-equivalent (Lush + Earth-g + max-cog) recovers ~50,000.
+        assert!(lush >= Real::from_int(45_000) && lush <= Real::from_int(55_000));
         // Sparse + median-cog stays within 10% of Earth-equivalent
         // so marginal habitability holds.
-        assert!(sparse >= Real::from_int(2250));
+        assert!(sparse >= Real::from_int(45_000));
         // Hyper bonus is real but bounded — no surprise 2× scaling.
-        assert!(hyper >= Real::from_int(2500) && hyper <= Real::from_int(3250));
+        assert!(hyper >= Real::from_int(50_000) && hyper <= Real::from_int(65_000));
     }
 
     /// Calibration regression test for the founding floor.
@@ -275,11 +283,11 @@ mod tests {
         let sparse = founding_min_population(BiosphereClass::Sparse, Real::from_ratio(5, 10));
         let none = founding_min_population(BiosphereClass::None, Real::ZERO);
         // Lush + max-cog: ~67 (was 100). Lower is easier — fine.
-        assert!(lush <= Real::from_int(80));
+        assert!(lush <= Pop::from_int(80));
         // Sparse + median-cog: ~92 (close to old 100).
-        assert!(sparse >= Real::from_int(80) && sparse <= Real::from_int(110));
+        assert!(sparse >= Pop::from_int(80) && sparse <= Pop::from_int(110));
         // None + zero-cog: ~120 (notably higher — these worlds
         // shouldn't host civs anyway).
-        assert!(none >= Real::from_int(115));
+        assert!(none >= Pop::from_int(115));
     }
 }

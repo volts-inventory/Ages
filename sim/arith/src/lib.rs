@@ -13,7 +13,145 @@
 #![allow(clippy::module_name_repetitions)]
 
 use core::ops::{Add, Div, Mul, Neg, Sub};
-use fixed::types::I32F32;
+use fixed::types::{I32F32, I96F32};
+
+/// Wide population count type. Q96.32, 128-bit underlying,
+/// ±~4e28 range, same ~2.3e-10 LSB precision as `Real`. Use for
+/// any quantity that's a *count of individuals* — `Cohort`
+/// brackets, carrying capacities, food demand, civ aggregates,
+/// migration deltas. `Real` (Q32.32) is too narrow once modern-era
+/// civs cross 2.1B; this type carries them comfortably to
+/// quintillion scale.
+///
+/// Mixed arithmetic with `Real`: `Pop * Real -> Pop` and
+/// `Real * Pop -> Pop` (rate × count = count); `Pop / Pop -> Real`
+/// (count ÷ count = dimensionless ratio, for food-security style
+/// inputs); `Pop / Real -> Pop` (per-cell shares). `Pop +/- Pop`
+/// stays in `Pop`. Direct `Pop * Pop` is intentionally unimplemented
+/// — count × count has no physical meaning in this sim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Pop(I96F32);
+
+impl Pop {
+    pub const ZERO: Self = Self(I96F32::ZERO);
+    pub const ONE: Self = Self(I96F32::ONE);
+
+    pub const fn from_int(n: i64) -> Self {
+        Self(I96F32::const_from_int(n as i128))
+    }
+
+    pub fn from_ratio(num: i64, den: i64) -> Self {
+        debug_assert!(den != 0, "denominator must be non-zero");
+        Self(I96F32::from_num(num) / I96F32::from_num(den))
+    }
+
+    /// Widen a `Real` (Q32.32) into a `Pop` (Q64.32) — same fractional
+    /// precision, much wider integer range. Used at the boundary
+    /// where a capacity is computed in `Real` arithmetic and then
+    /// stored as `Pop`.
+    pub fn from_real(r: Real) -> Self {
+        Self(I96F32::from_num(r.raw()))
+    }
+
+    pub fn raw(self) -> I96F32 {
+        self.0
+    }
+
+    pub fn from_raw(v: I96F32) -> Self {
+        Self(v)
+    }
+
+    #[must_use]
+    pub fn min(self, other: Self) -> Self {
+        if self.0 < other.0 {
+            self
+        } else {
+            other
+        }
+    }
+
+    #[must_use]
+    pub fn max(self, other: Self) -> Self {
+        if self.0 > other.0 {
+            self
+        } else {
+            other
+        }
+    }
+
+    #[must_use]
+    pub fn abs(self) -> Self {
+        if self.0 < I96F32::ZERO {
+            Self(-self.0)
+        } else {
+            self
+        }
+    }
+
+    /// Return a `f64` *for display only*. Not for use in deterministic
+    /// computation; if you call this in a sim loop you have a bug.
+    pub fn to_f64_for_display(self) -> f64 {
+        self.0.to_num()
+    }
+}
+
+impl Add for Pop {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Sub for Pop {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Neg for Pop {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Mul<Real> for Pop {
+    type Output = Pop;
+    fn mul(self, rhs: Real) -> Pop {
+        Pop(self.0 * I96F32::from_num(rhs.raw()))
+    }
+}
+
+impl Mul<Pop> for Real {
+    type Output = Pop;
+    fn mul(self, rhs: Pop) -> Pop {
+        rhs * self
+    }
+}
+
+impl Div<Pop> for Pop {
+    type Output = Real;
+    fn div(self, rhs: Pop) -> Real {
+        let ratio: I96F32 = self.0 / rhs.0;
+        Real::from_raw(I32F32::saturating_from_num(ratio))
+    }
+}
+
+impl Div<Real> for Pop {
+    type Output = Pop;
+    fn div(self, rhs: Real) -> Pop {
+        Pop(self.0 / I96F32::from_num(rhs.raw()))
+    }
+}
+
+impl core::fmt::Display for Pop {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// The default real number type used across the sim. Q32.32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

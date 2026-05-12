@@ -21,8 +21,12 @@ pub struct Snapshot {
     /// Civ ids that have collapsed (cohort `civ_membership = None`).
     pub collapsed_civ_ids: Vec<u32>,
     /// Total population across every cohort the species owns
-    /// (active + stateless), encoded as `Q32.32` raw bits.
-    pub total_population_q32: i64,
+    /// (active + stateless), encoded as `Q96.32` raw bits (`Pop`
+    /// type, i128-backed). Wire-encoded as a JSON string (see
+    /// `pop_bits_serde`).
+    #[serde(with = "crate::pop_bits_serde")]
+    #[schemars(with = "String")]
+    pub total_population_q32: i128,
     /// Total confirmed relations across every figure across every
     /// civ that ever existed in this run.
     pub total_confirmed_relations: u32,

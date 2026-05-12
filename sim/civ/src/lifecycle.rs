@@ -10,7 +10,7 @@ use crate::{
     DEPOPULATION_FLOOR_POP, DEPOPULATION_STREAK_TICKS, FOOD_CRISIS_STREAK_TICKS,
     FOOD_CRISIS_THRESHOLD, PLATEAU_WINDOW_TICKS, TINY_TERRITORY_CELLS, TINY_TERRITORY_STREAK_TICKS,
 };
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 
 impl Civ {
     /// Per-tick collapse evaluation. Updates the food-security
@@ -81,7 +81,7 @@ impl Civ {
         // where catastrophe / combat drains the cohort to ~0 but
         // other streak triggers haven't crossed threshold yet, so
         // the viewport sidebar reads "0p" for a "live" civ.
-        let depop_floor = sim_arith::Real::from_int(DEPOPULATION_FLOOR_POP);
+        let depop_floor = sim_arith::Pop::from_int(DEPOPULATION_FLOOR_POP);
         if self.aggregate_population() <= depop_floor {
             self.depopulation_streak = self.depopulation_streak.saturating_add(1);
         } else {
@@ -178,7 +178,7 @@ impl Civ {
         // depopulation streak. Same rationale as the planet-less
         // overload above — collapses civs whose aggregate population
         // has been ≤ the rendering floor for the streak window.
-        let depop_floor = Real::from_int(DEPOPULATION_FLOOR_POP);
+        let depop_floor = Pop::from_int(DEPOPULATION_FLOOR_POP);
         if self.aggregate_population() <= depop_floor {
             self.depopulation_streak = self.depopulation_streak.saturating_add(1);
         } else {

@@ -4,7 +4,7 @@
 //! and its claimed neighbours.
 
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use std::collections::BTreeSet;
 
 /// pick the densest claimed cell for a civ — the cohort
@@ -70,8 +70,8 @@ pub fn apply_to_cell_and_neighbors(
     center_frac: Real,
     neighbor_frac: Real,
     claimed_only: bool,
-) -> Real {
-    let mut total_lost = Real::ZERO;
+) -> Pop {
+    let mut total_lost = Pop::ZERO;
     total_lost = total_lost + civ.drop_cell_pop(center, center_frac);
     let neighbours = hex_neighbors(center, grid_width, grid_height);
     let claimed: Option<BTreeSet<u32>> = if claimed_only {
