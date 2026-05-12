@@ -88,14 +88,12 @@ exist concurrently or sequentially; the species continues.
     every relation that received apparatus contributions, surfacing
     on `ConfirmedMeasurement.is_experimental` and the protocol
     event flag of the same name. Tool gate is per-tool
-    `manipulation_prereqs` (ExperimentApparatus keeps the strict
-    `ToolExtension`-only requirement) + literacy 0.30 + obs
-    pressure 30k + confirmed `fire` so a tool-using species moves
-    from observation-only to controlled-conditions intervention
-    once it has done enough science to build the apparatus, while
-    a species without `ToolExtension` stays observational forever
-    on this particular tool — though tier-1 applied-knowledge tools
-    remain reachable through other manipulation modes.
+    `manipulation_prereqs` (the apparatus accepts every
+    `ManipulationKind` — a clamp-and-measure rig is a function,
+    not a body-plan-specific form) + literacy 0.30 + obs pressure
+    30k + confirmed `fire` so any species that has done enough
+    science moves from observation-only to controlled-conditions
+    intervention through its native manipulation affordance.
   - **Transcendence run-end** — fires when the species has
     sustained at-least-one-civ-with-all-tier-5-tools for
     `TRANSCENDENCE_SUSTAINED_TICKS` (currently 2000 ticks).

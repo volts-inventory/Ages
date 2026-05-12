@@ -129,12 +129,13 @@ fn fluid_jet_species_reaches_tier1_but_not_sensorium_or_tier5() {
             "{tool:?} should accept a FluidJet-only species"
         );
     }
-    // Instrument / apparatus / tier-5 tools require ToolExtension or
-    // a higher-DoF mode; jet-only species are still locked out.
+    // Precision instrument tools and tier-5 narrative tools still
+    // require ToolExtension or a higher-DoF mode; jet-only species
+    // remain locked out of these even after the broader apparatus
+    // and tier-1 gates.
     for tool in [
         ToolKind::StoneWorking,
         ToolKind::ThermalSensor,
-        ToolKind::ExperimentApparatus,
         ToolKind::DigitalComputation,
         ToolKind::OrbitalReach,
     ] {
@@ -195,34 +196,55 @@ fn every_manipulation_kind_has_tier1_path() {
     }
 }
 
-/// ExperimentApparatus retains the strict `ToolExtension`-only
-/// requirement even after the broader tier-1 unlock. A
-/// chemical-secretion species develops tier-1 applied knowledge
-/// but is still locked out of controlled experimentation — the
-/// "different sciences" boundary now lives on the apparatus tool
-/// instead of the whole tree.
+/// ExperimentApparatus accepts every manipulation mode. A clamp-
+/// and-measure rig is a function (hold a channel at a known
+/// value, observe response), not a specific physical form: every
+/// body plan can build one with its native affordance —
+/// ChemicalSecretion runs controlled-concentration baths,
+/// WebConstruct weaves a calibrated chamber, FluidJet holds a
+/// pressure clamp, ElectricDischarge clamps field strength,
+/// Burrow excavates a controlled-volume cell. The substrate gate
+/// (confirmed `fire`) plus the per-channel clamp ladders already
+/// encode "which experiments are meaningful here."
 #[test]
-fn apparatus_still_requires_tool_extension() {
+fn apparatus_accepts_every_manipulation_kind() {
     let species = species_with(&[ChannelKind::Tactile]);
-    let secretion_only: BTreeSet<ManipulationKind> =
-        [ManipulationKind::ChemicalSecretion].into_iter().collect();
-    assert!(
-        !is_buildable(
-            ToolKind::ExperimentApparatus,
-            &species,
-            &secretion_only,
-            true,
-            true,
-            Crust::Basaltic,
-        ),
-        "ExperimentApparatus must keep its strict ToolExtension gate"
-    );
-    // But tier-1 healing IS reachable for the same species —
-    // pharmacology is a natural fit for chemical-secretion biology.
-    assert!(is_buildable(
-        ToolKind::BasicHealing,
+    let all_kinds = [
+        ManipulationKind::LimbGrasp,
+        ManipulationKind::Tentacle,
+        ManipulationKind::MouthBeak,
+        ManipulationKind::TonguePrehensile,
+        ManipulationKind::Trunk,
+        ManipulationKind::Mandible,
+        ManipulationKind::FluidJet,
+        ManipulationKind::ToolExtension,
+        ManipulationKind::WebConstruct,
+        ManipulationKind::Burrow,
+        ManipulationKind::ElectricDischarge,
+        ManipulationKind::ChemicalSecretion,
+    ];
+    for kind in all_kinds {
+        let manips: BTreeSet<ManipulationKind> = [kind].into_iter().collect();
+        assert!(
+            is_buildable(
+                ToolKind::ExperimentApparatus,
+                &species,
+                &manips,
+                true,
+                true,
+                Crust::Basaltic,
+            ),
+            "ExperimentApparatus must accept {kind:?} — a clamp-and-\
+             measure rig is a function, not a body-plan-specific form"
+        );
+    }
+    // Empty manipulation set is still rejected — the species needs
+    // *some* deliberate-state affordance.
+    let empty: BTreeSet<ManipulationKind> = BTreeSet::new();
+    assert!(!is_buildable(
+        ToolKind::ExperimentApparatus,
         &species,
-        &secretion_only,
+        &empty,
         true,
         true,
         Crust::Basaltic,

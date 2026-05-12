@@ -407,9 +407,9 @@ impl ToolKind {
             | ToolKind::CryogenicEngineering
             | ToolKind::OrganicSynthesis => &[],
             // experiment apparatus is a *generic* intervention
-            // device — no native-channel prereq beyond a strict
-            // `manipulation_prereqs = [ToolExtension]` enforced in
-            // `is_buildable`.
+            // device — no native-channel prereq. Its
+            // `manipulation_prereqs` (broad — every kind) does the
+            // body-plan gating in `is_buildable`.
             ToolKind::ExperimentApparatus => &[],
         }
     }

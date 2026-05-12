@@ -1192,11 +1192,33 @@ impl ToolKind {
                 ManipulationKind::ChemicalSecretion,
             ],
             // ExperimentApparatus: controlled-conditions intervention.
-            // The most demanding tier-2 instrument — keeps the strict
-            // ToolExtension-only gate from the prior global rule, since
-            // a clamp-and-measure rig genuinely needs fabricated
-            // valves / sensors / linkages.
-            ToolKind::ExperimentApparatus => &[ManipulationKind::ToolExtension],
+            // A clamp-and-measure rig is a *function* (hold one
+            // channel at a known value, observe the response), not a
+            // specific physical form — every manipulation mode can
+            // build one with its own native affordance:
+            // ChemicalSecretion runs controlled-concentration baths
+            // (literal pharmacology), WebConstruct weaves a chamber
+            // with calibrated mesh, FluidJet holds a stable jet as a
+            // pressure clamp, ElectricDischarge clamps field strength
+            // directly, Burrow excavates a controlled-volume cell. The
+            // substrate gate (confirmed `fire`) plus per-channel
+            // clamp-ladder math already encode "which experiments are
+            // even meaningful here"; the manipulation gate just asks
+            // "can the species deliberately hold a state."
+            ToolKind::ExperimentApparatus => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::FluidJet,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
 
             // ─── tier-3: pre-industrial ───
             //

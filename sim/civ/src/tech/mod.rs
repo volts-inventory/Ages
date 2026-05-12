@@ -443,26 +443,29 @@ pub enum ToolKind {
     /// planetary heterogeneity passive observation provides.
     ///
     /// Tier 2; same gates as the established sensorium tier-2
-    /// tools (observation 30k, literacy 0.30) plus a strict
-    /// `manipulation_prereqs = [ToolExtension]` — apparatus is
-    /// the most demanding tier-2 instrument and keeps the prior
-    /// global rule for itself even though tier-1 tools have
-    /// broader manipulation acceptance. Substrate gate: confirmed
-    /// `fire` law (the civ has fit *something* about controlled
-    /// physical conditions before it builds a controlled-conditions
-    /// device). No tool prereq, no granted channel — the effect is
-    /// on the discovery layer (faster + cleaner law recovery), not
-    /// on perception or capacity.
+    /// tools (observation 30k, literacy 0.30). `manipulation_prereqs`
+    /// accepts every `ManipulationKind` — a clamp-and-measure rig
+    /// is a function (hold a channel at a known value, observe the
+    /// response), not a body-plan-specific form: every manipulation
+    /// mode can build one with its own native affordance
+    /// (ChemicalSecretion runs controlled-concentration baths,
+    /// WebConstruct weaves a calibrated chamber, FluidJet holds a
+    /// pressure clamp, ElectricDischarge clamps field strength,
+    /// Burrow excavates a controlled-volume cell). Substrate gate:
+    /// confirmed `fire` law (the civ has fit *something* about
+    /// controlled physical conditions before it builds a controlled-
+    /// conditions device). No tool prereq, no granted channel —
+    /// the effect is on the discovery layer (faster + cleaner law
+    /// recovery), not on perception or capacity.
     ///
-    /// Vision-aligned: a tactile-only ToolExtension-bearing species
-    /// with a confirmed thermal law builds an apparatus and starts
-    /// recovering its planet's `α` from clean diffusion experiments
-    /// — that's the "Galileo, not Aristotle" upgrade the project
-    /// has been missing. A species without `ToolExtension` (chemical-
-    /// secretion / web / burrow body plans) skips this tool but can
-    /// still develop tier-1 applied knowledge through its native
-    /// manipulation modes — the "different sciences" goal lives on
-    /// the apparatus boundary now rather than the entire tree.
+    /// Vision-aligned: any species with a confirmed thermal law
+    /// builds an apparatus and starts recovering its planet's `α`
+    /// from clean diffusion experiments — that's the "Galileo, not
+    /// Aristotle" upgrade the project has been missing.
+    /// "Different sciences for different bodies" plays out on
+    /// which late-game branches a species can fabricate
+    /// (tier-2+ precision instruments, tier-5 narrative trio),
+    /// not on whether it does science at all.
     ExperimentApparatus,
 }
 

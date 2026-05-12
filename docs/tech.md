@@ -40,10 +40,16 @@ suffice to fabricate each tool — replacing the prior global
 `ToolExtension`-only gate. Tier-1 applied-knowledge tools accept
 a broad palette (limbs, tentacles, mandibles, web-construct,
 chemical-secretion, electric-discharge, etc.) so every body plan
-has at least one tier-1 entry point; tier-2+ instrument tools and
-`ExperimentApparatus` keep the strict `ToolExtension` requirement
-so the "different sciences for different bodies" boundary lives
-on instrument science rather than the entire tree.
+has at least one tier-1 entry point. `ExperimentApparatus` is also
+broad — a clamp-and-measure rig is a function (hold a channel at
+a known value, observe response), and every manipulation mode can
+build one with its native affordance. Tier-2+ precision instrument
+sensorium tools (`ThermalSensor`, `RemoteAcoustic`, `DistanceImaging`,
+`FieldSensor`, `MagneticSensor`) and the tier-5 narrative trio keep
+tighter gates (mostly `ToolExtension` plus a couple of high-DoF
+biological substitutes), so "different sciences for different
+bodies" plays out on which late-game branches a species can
+fabricate rather than whether it does science at all.
 
 ### Gates
 
@@ -120,12 +126,14 @@ intervention, not only observation.
 
 ### Unlock prereqs
 
-- Strict `manipulation_prereqs = [ToolExtension]` — the apparatus
-  is the most demanding tier-2 instrument and keeps the prior
-  global rule for itself. Pseudopod / chemical-secretion / web /
-  burrow / jet species are excluded from this tool even though
-  they can reach tier-1 applied knowledge through their native
-  manipulation modes.
+- `manipulation_prereqs` accepts every `ManipulationKind` — a
+  clamp-and-measure rig is a function, not a body-plan-specific
+  form. ChemicalSecretion runs controlled-concentration baths,
+  WebConstruct weaves a calibrated chamber, FluidJet holds a
+  pressure clamp, ElectricDischarge clamps field strength, Burrow
+  excavates a controlled-volume cell. The substrate gate
+  (confirmed `fire`) plus the per-channel clamp ladders below do
+  the real "which experiments are meaningful here" work.
 - Cumulative observation count ≥ 30 000.
 - Literacy ≥ 0.30.
 - Confirmed `fire` relation.
