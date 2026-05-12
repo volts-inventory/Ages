@@ -9,7 +9,7 @@ use super::{
 use crate::digest::{
     CivChapter, CollapseRecord, Digest, DiscoveryRecord, RefinementOutcome, RefinementRecord,
 };
-use crate::q32::q32_to_f64;
+use crate::q32::{fmt_pop, pop_q32_to_f64, q32_to_f64};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -238,11 +238,11 @@ pub(super) fn render_civ_chapter(s: &mut String, civ: &CivChapter, d: &Digest) {
     };
     let _ = writeln!(
         s,
-        "Founded in year {} ({}). Founding band of {} figures; initial population {:.0}; {}.",
+        "Founded in year {} ({}). Founding band of {} figures; initial population {}; {}.",
         tick_to_year(civ.founded_tick, period),
         parent,
         civ.founding_figure_count,
-        q32_to_f64(civ.initial_population_q32),
+        fmt_pop(pop_q32_to_f64(civ.initial_population_q32)),
         arc,
     );
     // Life expectancy at birth — surfaces the demographic
@@ -461,10 +461,10 @@ pub(super) fn render_civ_chapter(s: &mut String, civ: &CivChapter, d: &Digest) {
         }) => {
             let _ = writeln!(
                 s,
-                "**Collapse:** year {} — `{}`. Final population {:.0}, {} figures left when the lights went out.",
+                "**Collapse:** year {} — `{}`. Final population {}, {} figures left when the lights went out.",
                 tick_to_year(*tick, period),
                 reason,
-                q32_to_f64(*final_population_q32),
+                fmt_pop(pop_q32_to_f64(*final_population_q32)),
                 final_figure_count
             );
         }

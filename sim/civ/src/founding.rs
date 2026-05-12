@@ -76,7 +76,11 @@ impl Civ {
             unlocked_channels: BTreeSet::new(),
             extra_perceivable_templates: BTreeSet::new(),
             tech_multiplier: Real::ONE,
-            carrying_capacity_per_unit: Real::from_int(500),
+            // matches `state::Civ::with_species` default and the
+            // calibration in `demographics::carrying_capacity_per_unit`
+            // (50,000/fuel-unit). `configure_substrate` overwrites
+            // with a biosphere-derived value during full founding.
+            carrying_capacity_per_unit: Real::from_int(50_000),
             migration_pressure_threshold: Real::from_ratio(85, 100),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,

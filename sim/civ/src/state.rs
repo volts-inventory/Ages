@@ -8,14 +8,14 @@ use crate::demographics::attempt_period_for_cognition;
 use crate::figures::{found_band, NameGrammar};
 use crate::religion;
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_population::{Cohort, PopulationDynamics};
 use sim_recognition::Firing;
 use sim_species::ModalityKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Civ {
-    pub fn new(id: u32, founded_tick: u64, initial_population: Real) -> Self {
+    pub fn new(id: u32, founded_tick: u64, initial_population: Pop) -> Self {
         Self::with_species(
             id,
             founded_tick,
@@ -36,7 +36,7 @@ impl Civ {
     pub fn with_intelligence(
         id: u32,
         founded_tick: u64,
-        initial_population: Real,
+        initial_population: Pop,
         intelligence: Real,
     ) -> Self {
         Self::with_species(
@@ -57,7 +57,7 @@ impl Civ {
     pub fn with_species(
         id: u32,
         founded_tick: u64,
-        initial_population: Real,
+        initial_population: Pop,
         intelligence: Real,
         species_seed: u64,
         species_modalities: &[ModalityKind],
@@ -119,7 +119,13 @@ impl Civ {
             unlocked_channels: BTreeSet::new(),
             extra_perceivable_templates: BTreeSet::new(),
             tech_multiplier: Real::ONE,
-            carrying_capacity_per_unit: Real::from_int(500),
+            // matches `demographics::carrying_capacity_per_unit`
+            // baseline (50,000/fuel-unit). `configure_substrate`
+            // overwrites this with a biosphere-derived value at
+            // founding; the default is here for callers that
+            // build a `Civ` without threading planet context (legacy
+            // unit tests).
+            carrying_capacity_per_unit: Real::from_int(50_000),
             migration_pressure_threshold: Real::from_ratio(85, 100),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
@@ -211,14 +217,14 @@ impl Civ {
     /// (`Cohort::total()`, all four brackets summed). Falls back
     /// to the civ-level `cohort.total()` if `region_cohorts` is
     /// empty.
-    pub fn aggregate_population(&self) -> Real {
+    pub fn aggregate_population(&self) -> Pop {
         if self.region_cohorts.is_empty() {
             return self.cohort.total();
         }
         self.region_cohorts
             .values()
             .map(sim_population::Cohort::total)
-            .fold(Real::ZERO, |a, b| a + b)
+            .fold(Pop::ZERO, |a, b| a + b)
     }
 
     /// Advance population dynamics one civ-sim tick.
@@ -236,7 +242,7 @@ impl Civ {
         }
     }
 
-    pub fn population(&self) -> Real {
+    pub fn population(&self) -> Pop {
         self.cohort.total()
     }
 

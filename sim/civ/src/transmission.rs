@@ -13,6 +13,8 @@ use crate::figures::NameGrammar;
 use crate::Civ;
 use sim_arith::transcendental::exp;
 use sim_arith::Real;
+#[cfg(test)]
+use sim_arith::Pop;
 use std::collections::BTreeMap;
 
 /// Placeholders under tuning. Threshold tuned
@@ -425,7 +427,7 @@ mod tests {
         // knowledge for successors than one that died at hamlet
         // scale. Boundaries match the BFS-ring tier labels in the
         // post-run report (capital / town / village / hamlet).
-        let mut civ = Civ::new(1, 0, Real::from_int(1000));
+        let mut civ = Civ::new(1, 0, Pop::from_int(1000));
         assert_eq!(civ.peak_claimed_cells, 0);
         assert_eq!(
             civ.settlement_persistence_multiplier(),
@@ -476,7 +478,7 @@ mod tests {
         // that filled 12 cells at peak then shrank back to 1 still
         // reads as "grew to a town network" for transmission
         // purposes — the archives don't vaporise during decline.
-        let mut civ = Civ::new(1, 0, Real::from_int(1000));
+        let mut civ = Civ::new(1, 0, Pop::from_int(1000));
         let small: std::collections::BTreeSet<u32> = (0..3u32).collect();
         civ.claim_cells(&small);
         assert_eq!(civ.peak_claimed_cells, 3);

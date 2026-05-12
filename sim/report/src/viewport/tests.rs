@@ -218,7 +218,7 @@ fn freshly_founded_civ_sidebar_shows_initial_population() {
     let mut buf: Vec<u8> = Vec::new();
     let mut em = ViewportEmitter::new(&mut buf, cfg(5));
     em.emit(&Event::PlanetMap(pm())).unwrap();
-    let q32_one = 1_i64 << 32;
+    let q32_one: i128 = 1_i128 << 32;
     em.emit(&Event::CivFounded(CivFounded {
         tick: 0,
         civ_id: 1,

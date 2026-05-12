@@ -22,6 +22,52 @@ mod header;
 mod snapshot;
 mod world_events;
 
+/// `i128` `<-> JSON-string serde helpers. `serde`'s internal
+/// `Content` buffer (used by `#[serde(tag = "...")]` and
+/// `#[serde(untagged)]` enums during the tag-discovery phase) has
+/// no I128 variant, so a plain numeric i128 in a tagged-enum
+/// variant fails to round-trip with the error "i128 is not
+/// supported". Encoding the raw bits as a decimal string side-
+/// steps the buffer entirely — the wire format becomes a JSON
+/// string of the signed decimal magnitude (e.g. "21474836480000")
+/// which is portable across every JSON consumer (jq, Python json,
+/// browsers, etc.) and survives the tagged-enum buffer.
+///
+/// Applied via `#[serde(with = "pop_bits_serde")]` on every
+/// `i128` field that lives inside `#[serde(tag = "kind")] Event`.
+/// `pop_bits_vec_serde` is the matching helper for `Vec<i128>`.
+pub mod pop_bits_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &i128, s: S) -> Result<S::Ok, S::Error> {
+        v.to_string().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i128, D::Error> {
+        let s = String::deserialize(d)?;
+        s.parse::<i128>().map_err(serde::de::Error::custom)
+    }
+}
+
+/// `Vec<i128>` <-> JSON-array-of-strings serde helper. See
+/// [`pop_bits_serde`] for why string encoding is necessary inside
+/// tagged enums.
+pub mod pop_bits_vec_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Vec<i128>, s: S) -> Result<S::Ok, S::Error> {
+        let strs: Vec<String> = v.iter().map(i128::to_string).collect();
+        strs.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<i128>, D::Error> {
+        let strs: Vec<String> = Vec::deserialize(d)?;
+        strs.iter()
+            .map(|s| s.parse::<i128>().map_err(serde::de::Error::custom))
+            .collect()
+    }
+}
+
 pub use civ_events::*;
 pub use discovery_events::*;
 pub use header::*;

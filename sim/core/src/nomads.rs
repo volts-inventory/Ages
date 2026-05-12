@@ -634,21 +634,22 @@ pub(crate) fn absorb_into_civ(
     for cell in cells {
         if let Some(p) = pops.remove(&cell) {
             total = total + p;
+            let p_pop = sim_arith::Pop::from_real(p);
             if let Some(cohort) = civ.region_cohorts.get_mut(&cell) {
-                cohort.deposit_distributed(p, biology);
+                cohort.deposit_distributed(p_pop, biology);
             } else {
                 // Cell isn't (yet) in `region_cohorts` — shouldn't
                 // happen since `absorb_into_civ` is called on
                 // gained cells right after `claim_cells`/
                 // `expand_via_overflow` seed them, but be safe.
                 let mut c = sim_civ::Cohort::empty_with_civ(civ.id);
-                c.deposit_distributed(p, biology);
+                c.deposit_distributed(p_pop, biology);
                 civ.region_cohorts.insert(cell, c);
             }
         }
     }
     if total > Real::ZERO {
-        civ.cohort.deposit_distributed(total, biology);
+        civ.cohort.deposit_distributed(sim_arith::Pop::from_real(total), biology);
     }
     total
 }

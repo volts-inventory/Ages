@@ -68,7 +68,7 @@ impl Digest {
                 // Per-cell pops from the snapshot, if the
                 // event log included them. Older logs leave this
                 // empty and the density renderer falls back.
-                let cell_populations_q32: std::collections::BTreeMap<u32, i64> = match snapshot {
+                let cell_populations_q32: std::collections::BTreeMap<u32, i128> = match snapshot {
                     Some(s) if s.cell_populations_q32.len() == s.claimed_cells.len() => s
                         .claimed_cells
                         .iter()
@@ -77,7 +77,7 @@ impl Digest {
                         .collect(),
                     _ => std::collections::BTreeMap::new(),
                 };
-                let cell_capacities_q32: std::collections::BTreeMap<u32, i64> = match snapshot {
+                let cell_capacities_q32: std::collections::BTreeMap<u32, i128> = match snapshot {
                     Some(s) if s.cell_capacities_q32.len() == s.claimed_cells.len() => s
                         .claimed_cells
                         .iter()

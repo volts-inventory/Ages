@@ -6,7 +6,7 @@
 //! `CONFLICT_DEFEAT_FLOOR`.
 
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use std::collections::BTreeSet;
 
 pub const CONFLICT_CHECK_TICKS: u64 = 75;
@@ -24,7 +24,7 @@ pub const PEACEFUL_HIERARCHY_FLOOR: (i64, i64) = (40, 100);
 /// `OrganizedHunting` +0.05, plus tier-2+ fortification / chemical-
 /// projectile / mechanisation contributions) folds in
 /// multiplicatively via `Civ::tool_war_strength_multiplier`.
-pub fn strength(civ: &Civ, tick: u64) -> Real {
+pub fn strength(civ: &Civ, tick: u64) -> Pop {
     let pop = civ.aggregate_population();
     let literacy = civ.literacy_score(tick);
     let hier = civ.cosmology.hierarchical;
@@ -130,7 +130,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
         .min(Real::from_ratio(60, 100));
 
     let (loser, winner) = if loser_id == a.id { (a, b) } else { (b, a) };
-    let flip_floor = Real::from_int(CELL_FLIP_FLOOR);
+    let flip_floor = Pop::from_int(CELL_FLIP_FLOOR);
 
     // drop pop AND check per-cell flip in one pass.
     let mut flipped_this_check: Vec<u32> = Vec::new();
@@ -146,19 +146,19 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
         // applied only to fertile + juvenile via direct mutation.
         if let Some(c) = loser.region_cohorts.get_mut(cell) {
             let fertile_loss = c.fertile * loss_frac;
-            c.fertile = (c.fertile - fertile_loss).max(Real::ZERO);
+            c.fertile = (c.fertile - fertile_loss).max(Pop::ZERO);
             // Spillover to juveniles: 30% of the headline fraction
             // hits juveniles too — adolescents dragooned into the
             // levy take a smaller hit than fertile adults but more
             // than infants/elders.
             let juvenile_loss = c.juvenile * loss_frac * Real::from_ratio(30, 100);
-            c.juvenile = (c.juvenile - juvenile_loss).max(Real::ZERO);
+            c.juvenile = (c.juvenile - juvenile_loss).max(Pop::ZERO);
         }
         loser.resync_aggregate_from_regions();
         let post_count = loser
             .region_cohorts
             .get(cell)
-            .map_or(Real::ZERO, sim_population::Cohort::total);
+            .map_or(Pop::ZERO, sim_population::Cohort::total);
         if post_count <= flip_floor {
             // Cell flips to winner.
             loser.claimed_cells.remove(cell);
@@ -167,7 +167,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
             winner
                 .region_cohorts
                 .entry(*cell)
-                .or_insert_with(|| crate::Cohort::with_civ(Real::ZERO, winner.id));
+                .or_insert_with(|| crate::Cohort::with_civ(Pop::ZERO, winner.id));
             flipped_this_check.push(*cell);
         }
     }
@@ -296,7 +296,7 @@ fn pressure(
     planet: &sim_world::Planet,
 ) -> Real {
     let cap = civ.carrying_capacity_with_terrain(state, planet);
-    if cap <= Real::ZERO {
+    if cap <= Pop::ZERO {
         return Real::ZERO;
     }
     let headroom = Real::from_ratio(PRESSURE_HEADROOM.0, PRESSURE_HEADROOM.1);
@@ -310,12 +310,12 @@ fn opportunity(
     planet: &sim_world::Planet,
 ) -> Real {
     let pop_a = attacker.aggregate_population();
-    if pop_a <= Real::ZERO {
+    if pop_a <= Pop::ZERO {
         return Real::ZERO;
     }
     let cap_d = defender.carrying_capacity_with_terrain(state, planet);
     let pop_d = defender.aggregate_population();
-    let slack = (cap_d - pop_d).max(Real::ZERO);
+    let slack = (cap_d - pop_d).max(Pop::ZERO);
     clamp01(slack / pop_a)
 }
 
@@ -323,7 +323,7 @@ fn dominance(a: &Civ, b: &Civ, tick: u64) -> Real {
     let s_a = strength(a, tick);
     let s_b = strength(b, tick);
     let total = s_a + s_b;
-    if total <= Real::ZERO {
+    if total <= Pop::ZERO {
         return Real::from_ratio(1, 2);
     }
     s_a / total
@@ -403,7 +403,7 @@ pub fn assess_pair(
     planet: &sim_world::Planet,
     tick: u64,
 ) -> Option<PairAssessment> {
-    if a.aggregate_population() <= Real::ZERO || b.aggregate_population() <= Real::ZERO {
+    if a.aggregate_population() <= Pop::ZERO || b.aggregate_population() <= Pop::ZERO {
         return None;
     }
     let kin = kinship_pair(a, b, tick);
@@ -456,7 +456,7 @@ mod tests {
     use crate::cosmology::Cosmology;
 
     fn civ_with_id(id: u32, pop: i64) -> Civ {
-        Civ::new(id, 0, Real::from_int(pop))
+        Civ::new(id, 0, Pop::from_int(pop))
     }
 
     #[test]

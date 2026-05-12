@@ -17,7 +17,7 @@
 //! Both paths produce the same `WorldFrame` and call
 //! `render_world_frame` — there is no second renderer to drift.
 
-use crate::q32::q32_to_f64;
+use crate::q32::{pop_q32_to_f64, q32_to_f64};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -33,20 +33,20 @@ pub struct CivClaim {
     /// centroid). Marked specially in the rendered frame so the
     /// civ's "capital" location reads at a glance.
     pub centroid: u32,
-    /// Per-cell population, as Q32.32 raw bits (matches the
+    /// Per-cell population, as Q96.32 `Pop` raw bits (matches the
     /// `CivTerritoryChanged` event payload). Empty for civs
     /// reconstructed from older event logs that pre-date the
     /// field; the density renderer treats empty as "not
     /// available, skip density map".
-    pub cell_populations_q32: BTreeMap<u32, i64>,
-    /// Per-cell carrying capacity, as Q32.32 raw bits. Mirrors
+    pub cell_populations_q32: BTreeMap<u32, i128>,
+    /// Per-cell carrying capacity, as Q96.32 `Pop` raw bits. Mirrors
     /// the `CivTerritoryChanged` event field of the same name.
     /// The colored viewport's pop-digit scale reads each cell's
     /// pop as a fraction of its own cap so digit `9` = saturated,
     /// `0` = nearly empty. Empty for civs reconstructed from
     /// older event logs that pre-date the field; the renderer
     /// falls back to a frame-relative max in that case.
-    pub cell_capacities_q32: BTreeMap<u32, i64>,
+    pub cell_capacities_q32: BTreeMap<u32, i128>,
 }
 
 /// Snapshot of all active civs on the planet at a single tick.
@@ -162,7 +162,7 @@ fn render_world_frame_inner(
         civ_by_id.insert(civ.civ_id, civ);
         if use_color {
             for &raw in civ.cell_populations_q32.values() {
-                let p = q32_to_f64(raw);
+                let p = pop_q32_to_f64(raw);
                 if p > frame_max_pop {
                     frame_max_pop = p;
                 }
@@ -276,11 +276,11 @@ fn render_world_frame_inner(
                     let claim = civ_by_id.get(&civ_id);
                     let pop = claim
                         .and_then(|c| c.cell_populations_q32.get(&cell).copied())
-                        .map(q32_to_f64)
+                        .map(pop_q32_to_f64)
                         .unwrap_or(0.0);
                     let cap = claim
                         .and_then(|c| c.cell_capacities_q32.get(&cell).copied())
-                        .map(q32_to_f64)
+                        .map(pop_q32_to_f64)
                         .filter(|c| *c > 0.0)
                         // Fallback for older event logs that don't
                         // carry per-cell caps: use the frame's
@@ -487,7 +487,7 @@ pub fn render_density_frame(
     for civ in &frame.civs {
         for &raw in civ.cell_populations_q32.values() {
             have_data = true;
-            let count = q32_to_f64(raw);
+            let count = pop_q32_to_f64(raw);
             if count > max_pop {
                 max_pop = count;
             }
@@ -506,7 +506,7 @@ pub fn render_density_frame(
         centroids.insert(civ.centroid, civ.civ_id);
         for (&cell, &raw) in &civ.cell_populations_q32 {
             let entry = cell_pop.entry(cell).or_insert(0.0);
-            *entry += q32_to_f64(raw);
+            *entry += pop_q32_to_f64(raw);
         }
     }
 
@@ -666,13 +666,13 @@ mod tests {
         let cap = 1_000.0_f64;
         let scale = (1u64 << 32) as f64;
         let mut pops = BTreeMap::new();
-        pops.insert(0u32, (cap * scale) as i64); // centroid; digit irrelevant
-        pops.insert(1u32, (cap * scale) as i64); // saturated → '9'
-        pops.insert(2u32, (1.0 * scale) as i64); // 0.1% of cap → '0'
+        pops.insert(0u32, (cap * scale) as i128); // centroid; digit irrelevant
+        pops.insert(1u32, (cap * scale) as i128); // saturated → '9'
+        pops.insert(2u32, (1.0 * scale) as i128); // 0.1% of cap → '0'
         let mut caps = BTreeMap::new();
-        caps.insert(0u32, (cap * scale) as i64);
-        caps.insert(1u32, (cap * scale) as i64);
-        caps.insert(2u32, (cap * scale) as i64);
+        caps.insert(0u32, (cap * scale) as i128);
+        caps.insert(1u32, (cap * scale) as i128);
+        caps.insert(2u32, (cap * scale) as i128);
         let frame = WorldFrame {
             tick: 100,
             civs: vec![CivClaim {

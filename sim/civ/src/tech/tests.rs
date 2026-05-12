@@ -1,5 +1,5 @@
 use super::*;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_recognition::ChannelKind;
 use sim_species::ManipulationKind;
 use sim_world::Crust;
@@ -591,17 +591,17 @@ fn tier2_combustion_chain_blocked_without_fire() {
     }
 }
 
-/// tier-2 capacity: `BulkCultivation` + `AnimalSymbiosis`
-/// stack to ×3.0 multiplicatively (×2.0 × ×1.5 = 3.0). This
-/// is the carrying-capacity peak before tier-3+ adds further
-/// multipliers; tier-4 `Mechanisation` will push it to ×9 on
-/// top of the prior stack.
+/// tier-2 capacity: `BulkCultivation` (×5.0) + `AnimalSymbiosis`
+/// (×2.5) stack to ×12.5 multiplicatively. This is the agricultural-
+/// era density jump — settled farming + plough animals — which
+/// alone lifts a stone-age cell from ~50k to ~600k people. Tier-4
+/// `Mechanisation` then layers another ×10 on top.
 #[test]
 fn tier2_capacity_stacks() {
     let cult = ToolKind::BulkCultivation.capacity_multiplier();
     let dom = ToolKind::AnimalSymbiosis.capacity_multiplier();
     let stacked = cult * dom;
-    assert_eq!(stacked, Real::from_int(3));
+    assert_eq!(stacked, Real::from_ratio(25, 2));
 }
 
 /// tier-1: ids 10-19 are reserved for tier-1 capabilities
@@ -770,7 +770,7 @@ fn apply_tool_consumption_burns_fuel_with_combustion_mirror() {
 
     // Build a single-civ slice with LocalisedCombustion unlocked
     // and cells 0 + 1 claimed.
-    let mut civ = Civ::new(0, 0, Real::from_int(100));
+    let mut civ = Civ::new(0, 0, Pop::from_int(100));
     civ.claimed_cells.insert(0);
     civ.claimed_cells.insert(1);
     civ.unlocked_tools.insert(ToolKind::LocalisedCombustion);
@@ -836,7 +836,7 @@ fn apply_tool_consumption_does_not_deplete_water() {
     state.substance_mut(Substance::Water.idx())[0] = Real::from_int(10);
     state.substance_mut(Substance::Oxidiser.idx())[0] = Real::from_int(10);
 
-    let mut civ = Civ::new(0, 0, Real::from_int(100));
+    let mut civ = Civ::new(0, 0, Pop::from_int(100));
     civ.claimed_cells.insert(0);
     civ.unlocked_tools.insert(ToolKind::FluidGathering);
     let civs = vec![civ];

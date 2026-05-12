@@ -892,23 +892,23 @@ pub(crate) fn population_phase<E: Emitter>(
         }
         nomads::absorb_into_civ(nomad_pops, civ, gained, &species.biology);
         let claimed_sorted = claimed_cells_for_event(civ);
-        let cell_populations_q32: Vec<i64> = claimed_sorted
+        let cell_populations_q32: Vec<i128> = claimed_sorted
             .iter()
             .map(|c| {
                 civ.region_cohorts
                     .get(c)
-                    .map_or(0, |cohort| cohort.total().raw().to_bits())
+                    .map_or(0i128, |cohort| cohort.total().raw().to_bits())
             })
             .collect();
         // Per-cell carrying capacity (cell_capacity in
-        // Real/Q32.32). Mirrors `cell_populations_q32` order so
+        // Pop/Q96.32). Mirrors `cell_populations_q32` order so
         // the viewport renderer can read each cell's pop / cap
         // ratio for the pop-digit scale (digit 9 = saturated,
         // 0 = empty). Same `cell_capacity` formula used by
         // `step_population_per_cell` upstream — tech × terrain ×
         // seasonal × biosphere — so the digit reflects the cap
         // the population step actually evolves toward.
-        let cell_capacities_q32: Vec<i64> = claimed_sorted
+        let cell_capacities_q32: Vec<i128> = claimed_sorted
             .iter()
             .map(|&c| civ.cell_capacity(state, c, tick, planet).raw().to_bits())
             .collect();
@@ -1156,15 +1156,15 @@ pub(crate) fn culture_flip_phase<E: Emitter>(
     let mut events: Vec<CivTerritoryChanged> = Vec::new();
     for civ in civs.iter().filter(|c| touched.contains(&c.id)) {
         let claimed_sorted = claimed_cells_for_event(civ);
-        let cell_pops: Vec<i64> = claimed_sorted
+        let cell_pops: Vec<i128> = claimed_sorted
             .iter()
             .map(|c| {
                 civ.region_cohorts
                     .get(c)
-                    .map_or(0, |cohort| cohort.total().raw().to_bits())
+                    .map_or(0i128, |cohort| cohort.total().raw().to_bits())
             })
             .collect();
-        let cell_caps: Vec<i64> = claimed_sorted
+        let cell_caps: Vec<i128> = claimed_sorted
             .iter()
             .map(|&c| civ.cell_capacity(state, c, tick, planet).raw().to_bits())
             .collect();

@@ -42,7 +42,7 @@
 
 use crate::discovery::{Channel, Hypothesizer, MeasurementChannel};
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_physics::{PhysicsState, Substance};
 
 /// A single apparatus cell + the channel pairing the experiment
@@ -131,8 +131,8 @@ impl Channel {
 #[must_use]
 pub fn pick_apparatus_cell(civ: &Civ) -> Option<u32> {
     civ.claimed_cells.iter().copied().min_by(|a, b| {
-        let pop_a = civ.region_cohorts.get(a).map_or(Real::ZERO, sim_population::Cohort::total);
-        let pop_b = civ.region_cohorts.get(b).map_or(Real::ZERO, sim_population::Cohort::total);
+        let pop_a = civ.region_cohorts.get(a).map_or(Pop::ZERO, sim_population::Cohort::total);
+        let pop_b = civ.region_cohorts.get(b).map_or(Pop::ZERO, sim_population::Cohort::total);
         pop_a.cmp(&pop_b).then_with(|| a.cmp(b))
     })
 }
@@ -269,20 +269,20 @@ mod tests {
 
     #[test]
     fn pick_apparatus_cell_returns_none_for_empty_territory() {
-        let civ = Civ::new(0, 0, Real::from_int(100));
+        let civ = Civ::new(0, 0, Pop::from_int(100));
         assert!(pick_apparatus_cell(&civ).is_none());
     }
 
     #[test]
     fn pick_apparatus_cell_prefers_lowest_population() {
-        let mut civ = Civ::new(0, 0, Real::from_int(100));
+        let mut civ = Civ::new(0, 0, Pop::from_int(100));
         civ.claimed_cells.insert(7);
         civ.claimed_cells.insert(11);
         civ.claimed_cells.insert(3);
         let mut cohorts = BTreeMap::new();
-        cohorts.insert(7, sim_population::Cohort::with_civ(Real::from_int(50), 0));
-        cohorts.insert(11, sim_population::Cohort::with_civ(Real::from_int(20), 0));
-        cohorts.insert(3, sim_population::Cohort::with_civ(Real::from_int(80), 0));
+        cohorts.insert(7, sim_population::Cohort::with_civ(Pop::from_int(50), 0));
+        cohorts.insert(11, sim_population::Cohort::with_civ(Pop::from_int(20), 0));
+        cohorts.insert(3, sim_population::Cohort::with_civ(Pop::from_int(80), 0));
         civ.region_cohorts = cohorts;
         // Cell 11 has population 20 (lowest); apparatus picks it.
         assert_eq!(pick_apparatus_cell(&civ), Some(11));

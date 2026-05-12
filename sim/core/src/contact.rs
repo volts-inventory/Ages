@@ -215,7 +215,7 @@ mod tests {
     }
 
     fn civ_at(id: u32, centroid: u32, claimed: &[u32]) -> Civ {
-        let mut c = Civ::new(id, 0, sim_arith::Real::from_int(1));
+        let mut c = Civ::new(id, 0, sim_arith::Pop::from_int(1));
         c.territory_centroid = centroid;
         c.claimed_cells = claimed.iter().copied().collect();
         c

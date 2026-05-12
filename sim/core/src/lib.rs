@@ -476,7 +476,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             let probe_civ = Civ::with_species(
                 next_civ_id,
                 tick,
-                Real::from_int(50),
+                sim_arith::Pop::from_int(50),
                 species.cognition,
                 species.seed,
                 &species_modality_kinds,
@@ -497,7 +497,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     .iter()
                     .filter(|c| c.cohort.civ_membership.is_none())
                     .map(|c| c.cohort.total())
-                    .fold(Real::ZERO, |a, b| a + b);
+                    .fold(sim_arith::Pop::ZERO, |a, b| a + b);
                 // Substrate-derived founding floor — sparse
                 // worlds need more founders than lush ones.
                 let founding_floor =
@@ -736,7 +736,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             let probe = Civ::with_species(
                 next_civ_id,
                 tick,
-                Real::from_int(50),
+                sim_arith::Pop::from_int(50),
                 species.cognition,
                 species.seed,
                 &species_modality_kinds,
@@ -848,16 +848,16 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     if !seized_cells.is_empty() {
                         let parent_civ_ref = &civs[parent_idx];
                         let parent_claimed_sorted = claimed_cells_for_event(parent_civ_ref);
-                        let parent_cell_pops: Vec<i64> = parent_claimed_sorted
+                        let parent_cell_pops: Vec<i128> = parent_claimed_sorted
                             .iter()
                             .map(|c| {
                                 parent_civ_ref
                                     .region_cohorts
                                     .get(c)
-                                    .map_or(0, |cohort| cohort.total().raw().to_bits())
+                                    .map_or(0i128, |cohort| cohort.total().raw().to_bits())
                             })
                             .collect();
-                        let parent_cell_caps: Vec<i64> = parent_claimed_sorted
+                        let parent_cell_caps: Vec<i128> = parent_claimed_sorted
                             .iter()
                             .map(|&c| {
                                 parent_civ_ref
@@ -1424,10 +1424,21 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 &claim_union,
             ) {
                 last_emergent_tick = tick;
+                // Founding band seed: ~200 people. The new civ
+                // immediately absorbs the local nomadic pool via
+                // `absorb_into_civ`, so the real first-tick population
+                // is this seed + the nomad pop at the founding cell.
+                // Lifted from 20 alongside the carrying-capacity
+                // baseline lift (2,500 → 50,000/fuel-unit) so a fresh
+                // civ on Earth-equivalent terrain starts at ~0.4% of
+                // cell cap rather than 0.04%, which shortens the
+                // founding densification window and produces
+                // recognisable city-scale civs within a few sim-
+                // centuries.
                 let mut new_civ = Civ::with_species(
                     next_civ_id,
                     tick,
-                    Real::from_int(20),
+                    sim_arith::Pop::from_int(200),
                     species.cognition,
                     species.seed,
                     &species_modality_kinds,
@@ -1529,10 +1540,10 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // possible) or stagnation (extended dark age that won't
         // refound). `fixed_horizon` is the loop's natural end.
         let any_active = civs.iter().any(Civ::is_active);
-        let civ_pop: Real = civs
+        let civ_pop: sim_arith::Pop = civs
             .iter()
             .map(|c| c.cohort.total())
-            .fold(Real::ZERO, |acc, x| acc + x);
+            .fold(sim_arith::Pop::ZERO, |acc, x| acc + x);
         // Species-level total includes nomadic pop. Earlier
         // the species existed only through its civs, so an empty
         // civ list meant species-extinction. With nomadic pop
@@ -1542,7 +1553,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             .values()
             .copied()
             .fold(Real::ZERO, |acc, x| acc + x);
-        let total_pop = civ_pop + nomad_pop;
+        let total_pop: sim_arith::Pop = civ_pop + sim_arith::Pop::from_real(nomad_pop);
 
         // Periodic state-digest snapshot — vision's fourth output
         // channel. Emit every SNAPSHOT_INTERVAL_TICKS plus once at

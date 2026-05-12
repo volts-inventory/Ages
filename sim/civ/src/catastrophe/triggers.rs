@@ -4,7 +4,7 @@
 //! triggers into a single `check_and_apply` decision.
 
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_physics::PhysicsState;
 use sim_world::{Magnetosphere, Planet};
 
@@ -31,10 +31,10 @@ pub(super) fn volcanic_fires(state: &PhysicsState) -> Option<usize> {
 /// floor was calibrated against aqueous time).
 pub(super) fn disease_fires(civ: &Civ, state: &PhysicsState, planet: &Planet, tick: u64) -> bool {
     let cap = civ.carrying_capacity(state);
-    if cap <= Real::ZERO {
+    if cap <= Pop::ZERO {
         return false;
     }
-    let crowding = civ.cohort.total() / cap;
+    let crowding: Real = civ.cohort.total() / cap;
     if crowding < Real::from_ratio(8, 10) {
         return false;
     }

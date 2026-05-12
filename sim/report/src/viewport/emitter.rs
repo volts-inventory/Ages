@@ -23,6 +23,8 @@ use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::time::Duration;
 
+use crate::q32::fmt_pop;
+
 /// `out` periodically. See module docs for state rules.
 pub struct ViewportEmitter<W: Write> {
     out: W,
@@ -781,13 +783,13 @@ impl<W: Write> ViewportEmitter<W> {
                 // claimed_cells actually changes — typically tens of
                 // sim-years after founding). The next
                 // CivTerritoryChanged refines per-cell totals.
-                let n = f.claimed_cells.len() as i64;
-                let per_cell = if n > 0 {
+                let n = f.claimed_cells.len() as i128;
+                let per_cell: i128 = if n > 0 {
                     f.initial_population_q32 / n
                 } else {
                     0
                 };
-                let cell_populations_q32: std::collections::BTreeMap<u32, i64> = f
+                let cell_populations_q32: std::collections::BTreeMap<u32, i128> = f
                     .claimed_cells
                     .iter()
                     .copied()
@@ -1070,12 +1072,12 @@ impl<W: Write> ViewportEmitter<W> {
         // round-off across many cells.
         let mut civ_order: Vec<(&u32, &CivClaim)> = self.civs.iter().collect();
         civ_order.sort_by(|a, b| {
-            let pop = |claim: &CivClaim| -> i64 {
+            let pop = |claim: &CivClaim| -> i128 {
                 claim
                     .cell_populations_q32
                     .values()
                     .copied()
-                    .fold(0i64, i64::saturating_add)
+                    .fold(0i128, i128::saturating_add)
             };
             pop(b.1).cmp(&pop(a.1)).then_with(|| a.0.cmp(b.0))
         });
@@ -1146,17 +1148,17 @@ impl<W: Write> ViewportEmitter<W> {
             let civ_pop: f64 = claim
                 .cell_populations_q32
                 .values()
-                .map(|p| crate::q32::q32_to_f64(*p))
+                .map(|p| crate::q32::pop_q32_to_f64(*p))
                 .sum();
             // Sub-integer floating-point noise can sum to -0.0 or a
             // tiny negative value, which `{:.0}` then renders as
             // "-0p" in the sidebar. Population can't be negative —
             // clamp before formatting.
             lines.push(format!(
-                "y{} · {} cells · {:.0}p",
+                "y{} · {} cells · {}p",
                 founded_year,
                 claim.claimed_cells.len(),
-                civ_pop.max(0.0),
+                fmt_pop(civ_pop),
             ));
             // Stats line: cohesion + life expectancy, both pulled
             // from the running per-civ snapshots. Cohesion shown as
@@ -1300,12 +1302,12 @@ impl<W: Write> ViewportEmitter<W> {
             .civs
             .values()
             .flat_map(|c| c.cell_populations_q32.values())
-            .map(|p| crate::q32::q32_to_f64(*p))
+            .map(|p| crate::q32::pop_q32_to_f64(*p))
             .sum();
         let total_pop = (civ_pop + self.nomad_total_pop).max(0.0);
         let caption = format!(
-            "Y{} M{} · {} civ · {}F/{}C · {:.0}p",
-            year, month, active, self.civ_founded_count, self.civ_collapsed_count, total_pop,
+            "Y{} M{} · {} civ · {}F/{}C · {}p",
+            year, month, active, self.civ_founded_count, self.civ_collapsed_count, fmt_pop(total_pop),
         );
         // Pick the render variant based on the (use_color,
         // compact) pair. An empty caption string is passed in —

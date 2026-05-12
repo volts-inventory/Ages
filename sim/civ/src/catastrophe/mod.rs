@@ -14,7 +14,7 @@ pub use factors::{disease_severity_factor, ice_age_severity_factor, volcanic_coo
 
 use crate::cosmology::Cosmology;
 use crate::Civ;
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_physics::{PhysicsState, Substance};
 use sim_world::Planet;
 
@@ -119,8 +119,8 @@ pub fn check_and_apply(
             // For civs without claimed_cells (legacy / tests),
             // fall back to the aggregate-fraction loss so the
             // catastrophe still has an effect.
-            if lost_in_region == Real::ZERO {
-                let target = (civ.cohort.total() * (Real::ONE - frac)).max(Real::ZERO);
+            if lost_in_region == Pop::ZERO {
+                let target = (civ.cohort.total() * (Real::ONE - frac)).max(Pop::ZERO);
                 civ.cohort.shrink_to(target);
             }
             civ.last_volcanic_tick = Some(tick);
@@ -177,7 +177,7 @@ pub fn check_and_apply(
             // Fallback for civs without per-cell cohorts (legacy /
             // tests): apply uniform fraction to aggregate.
             let before = civ.cohort.total();
-            let target = (before * (Real::ONE - frac)).max(Real::from_int(10));
+            let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
             civ.cohort.shrink_to(target)
         };
         let _ = lost;
@@ -229,7 +229,7 @@ pub fn check_and_apply(
             )
         } else {
             let before = civ.cohort.total();
-            let target = (before * (Real::ONE - frac)).max(Real::from_int(10));
+            let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
             civ.cohort.shrink_to(target)
         };
         let _ = lost;
@@ -264,7 +264,7 @@ pub fn check_and_apply(
         let raw_frac = Real::from_ratio(SOLAR_FLARE_POP_LOSS.0, SOLAR_FLARE_POP_LOSS.1);
         let frac = civ.apply_catastrophe_resistance(raw_frac);
         let before = civ.cohort.total();
-        let target = (before * (Real::ONE - frac)).max(Real::from_int(10));
+        let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
         civ.last_solar_flare_tick = Some(tick);
         civ.last_catastrophe_tick = Some(tick);
@@ -299,7 +299,7 @@ pub fn check_and_apply(
             .min(Real::from_ratio(60, 100));
         let frac = civ.apply_catastrophe_resistance(severity_frac);
         let before = civ.cohort.total();
-        let target = (before * (Real::ONE - frac)).max(Real::from_int(10));
+        let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
         civ.last_ice_age_tick = Some(tick);
         civ.last_catastrophe_tick = Some(tick);
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn no_catastrophe_on_quiet_state() {
-        let mut civ = Civ::new(1, 0, Real::from_int(50));
+        let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let mut state = well_fed_state();
         let r = check_and_apply(&mut civ, &mut state, &earth_like_planet(), 100);
         assert!(r.is_none());
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn volcanic_fires_on_extreme_signature() {
-        let mut civ = Civ::new(1, 0, Real::from_int(100));
+        let mut civ = Civ::new(1, 0, Pop::from_int(100));
         let mut state = well_fed_state();
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
@@ -396,7 +396,7 @@ mod tests {
         // Cell 0 fuel reset, temperature dropped, civ pop dropped.
         assert_eq!(state.substance(Substance::Fuel.idx())[0], Real::ZERO);
         assert!(state.temperature()[0] < Real::from_int(700));
-        assert!(civ.cohort.total() < Real::from_int(100));
+        assert!(civ.cohort.total() < Pop::from_int(100));
         assert_eq!(civ.last_volcanic_tick, Some(50));
         assert_eq!(civ.last_catastrophe_tick, Some(50));
     }
@@ -405,7 +405,7 @@ mod tests {
     fn volcanic_respects_cooldown() {
         // cooldown lengths derive from VOLCANIC_COOLDOWN_TICKS
         // so the test stays correct as the constant scales.
-        let mut civ = Civ::new(1, 0, Real::from_int(100));
+        let mut civ = Civ::new(1, 0, Pop::from_int(100));
         let mut state = well_fed_state();
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
@@ -435,13 +435,13 @@ mod tests {
 
     #[test]
     fn disease_fires_under_crowding_after_age_floor() {
-        let mut civ = Civ::new(1, 0, Real::from_int(50));
+        let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let mut state = empty_state();
         // Tiny capacity (no fuel) → infinite crowding... actually
         // capacity=0 means food_security=0 → other path. Use a
-        // small fuel value.
-        state.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 10);
-        // capacity = 0.1 × 50 × tech_multiplier(1) = 5; pop=50 → crowding=10
+        // small fuel value tuned for the 50_000/fuel-unit baseline:
+        // 0.001 × 50_000 = 50, matching the civ's pop so crowding = 1.0.
+        state.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
         let r = check_and_apply(
             &mut civ,
             &mut state,
@@ -450,16 +450,16 @@ mod tests {
         );
         let rec = r.expect("disease should fire");
         assert_eq!(rec.kind, CatastropheKind::Disease);
-        assert!(civ.cohort.total() < Real::from_int(50));
+        assert!(civ.cohort.total() < Pop::from_int(50));
         // Cosmology pivoted.
         assert!(civ.cosmology.mystical > Real::ZERO);
     }
 
     #[test]
     fn disease_blocked_before_age_floor() {
-        let mut civ = Civ::new(1, 0, Real::from_int(50));
+        let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let mut state = empty_state();
-        state.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 10);
+        state.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
         let r = check_and_apply(
             &mut civ,
             &mut state,
