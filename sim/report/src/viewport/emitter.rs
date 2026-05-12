@@ -1033,14 +1033,16 @@ impl<W: Write> ViewportEmitter<W> {
         // the global key only needs to cover glyphs that aren't
         // surfaced per-civ. `#=war` stays (it's a global glyph
         // for disputed cells, not tied to any one civ). In colored
-        // mode line 1 picks up a `0-9=pop` hint so the reader
+        // mode line 1 picks up a `1-9=fill` hint so the reader
         // knows the per-civ digit reads as cap-relative density
-        // (digit 9 = saturated), with civ identity carried by
-        // colour. Mono mode keeps the legacy line — there the
-        // per-civ digit is the civ-id, not pop.
+        // on a linear scale (digit 9 = ≥90% of cap, digit 1 ≈ 10%
+        // of cap; cells below 10% show terrain in civ colour).
+        // Civ identity is carried by colour. `0` stays mapped to
+        // unclaimed nomadic presence. Mono mode keeps the legacy
+        // line — there the per-civ digit is the civ-id, not pop.
         let mut lines: Vec<String> = if self.cfg.use_color {
             vec![
-                "0-9=pop · 0=nomad · #=war".to_string(),
+                "1-9=fill · 0=nomad · #=war".to_string(),
                 "~sea · ≈deep · ▲peak · △hill".to_string(),
                 "▒land · ░coast · ·=plain".to_string(),
             ]
