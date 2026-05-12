@@ -104,40 +104,53 @@ fn field_sensor_blocked_without_em_medium() {
     ));
 }
 
-/// FluidJet-only species: gets a non-empty tier-1 path
-/// (`RangedMomentumWeapon`, `FoodProcessing`, `FluidGathering`,
-/// `OrganizedHunting`, `FluidControl`) but is blocked from tools
-/// whose `manipulation_prereqs` exclude jet-modes — instrument
-/// sensorium tools, stoneworking, the apparatus, and the entire
-/// tier-5 tree. Replaces the prior "no tool ever unlocks without
-/// ToolExtension" canary, which no longer matches the per-tool
-/// gating semantics.
+/// FluidJet-only species: jet-propulsion biology (squid / salp /
+/// archerfish analogues) reaches a substantial tech surface
+/// through native body-plan affordances. The xenobiology audit
+/// makes jet-propulsion the canonical `MotivePropulsion` path
+/// (squid jet propulsion is literal motive propulsion) and admits
+/// jet species to water-jet stoneworking (industrial water-cutting),
+/// pressure-clamped experiments, lateral-line acoustic sensing,
+/// chemical rocketry, and hydropower. Tools whose physical substrate
+/// has no jet-biology analogue (precision optics, EM field
+/// sensors, magnetic sensors, solid-state computation, the
+/// transcendence trio's lattice / resonator pair) remain blocked.
 #[test]
-fn fluid_jet_species_reaches_tier1_but_not_sensorium_or_tier5() {
+fn fluid_jet_species_reaches_diverse_paths_but_not_optical_or_lattice() {
     let species = species_with(&[ChannelKind::VisualLight, ChannelKind::Tactile]);
     let jet_only: BTreeSet<ManipulationKind> = [ManipulationKind::FluidJet].into_iter().collect();
-    // Tier-1 paths that accept FluidJet should be buildable.
+    // Tier-1 + xenobiology-grounded mid-tier paths that accept
+    // FluidJet should be buildable. (RemoteAcoustic also lists
+    // FluidJet but is gated separately by `prereq_channels` on
+    // AcousticAir / AcousticWater — covered by a separate channel-
+    // gate test, not this one.)
     for tool in [
         ToolKind::RangedMomentumWeapon,
         ToolKind::FoodProcessing,
         ToolKind::FluidGathering,
         ToolKind::OrganizedHunting,
         ToolKind::FluidControl,
+        ToolKind::MotivePropulsion,
+        ToolKind::PowerGeneration,
+        ToolKind::ExperimentApparatus,
     ] {
         assert!(
             is_buildable(tool, &species, &jet_only, true, true, Crust::Basaltic),
             "{tool:?} should accept a FluidJet-only species"
         );
     }
-    // Precision instrument tools and tier-5 narrative tools still
-    // require ToolExtension or a higher-DoF mode; jet-only species
-    // remain locked out of these even after the broader apparatus
-    // and tier-1 gates.
+    // Tools whose physical substrate has no jet-biology analogue
+    // remain blocked: precision optics, EM field / magnetic sensors,
+    // solid-state digital computation, the transcendence trio's
+    // lattice / resonator pair, thermochromic temperature sensing.
     for tool in [
-        ToolKind::StoneWorking,
         ToolKind::ThermalSensor,
+        ToolKind::DistanceImaging,
+        ToolKind::FieldSensor,
+        ToolKind::MagneticSensor,
         ToolKind::DigitalComputation,
-        ToolKind::OrbitalReach,
+        ToolKind::BioelectricResonator,
+        ToolKind::MetamaterialLattice,
     ] {
         assert!(
             !is_buildable(tool, &species, &jet_only, true, true, Crust::Basaltic),
