@@ -104,16 +104,129 @@ fn field_sensor_blocked_without_em_medium() {
     ));
 }
 
+/// FluidJet-only species: gets a non-empty tier-1 path
+/// (`RangedMomentumWeapon`, `FoodProcessing`, `FluidGathering`,
+/// `OrganizedHunting`, `FluidControl`) but is blocked from tools
+/// whose `manipulation_prereqs` exclude jet-modes — instrument
+/// sensorium tools, stoneworking, the apparatus, and the entire
+/// tier-5 tree. Replaces the prior "no tool ever unlocks without
+/// ToolExtension" canary, which no longer matches the per-tool
+/// gating semantics.
 #[test]
-fn no_tools_buildable_without_tool_extension() {
+fn fluid_jet_species_reaches_tier1_but_not_sensorium_or_tier5() {
     let species = species_with(&[ChannelKind::VisualLight, ChannelKind::Tactile]);
-    let no_tools: BTreeSet<ManipulationKind> = [ManipulationKind::FluidJet].into_iter().collect();
-    for tool in ToolKind::ALL {
+    let jet_only: BTreeSet<ManipulationKind> = [ManipulationKind::FluidJet].into_iter().collect();
+    // Tier-1 paths that accept FluidJet should be buildable.
+    for tool in [
+        ToolKind::RangedMomentumWeapon,
+        ToolKind::FoodProcessing,
+        ToolKind::FluidGathering,
+        ToolKind::OrganizedHunting,
+        ToolKind::FluidControl,
+    ] {
         assert!(
-            !is_buildable(tool, &species, &no_tools, true, true, Crust::Basaltic),
-            "{tool:?} should be blocked without ToolExtension"
+            is_buildable(tool, &species, &jet_only, true, true, Crust::Basaltic),
+            "{tool:?} should accept a FluidJet-only species"
         );
     }
+    // Instrument / apparatus / tier-5 tools require ToolExtension or
+    // a higher-DoF mode; jet-only species are still locked out.
+    for tool in [
+        ToolKind::StoneWorking,
+        ToolKind::ThermalSensor,
+        ToolKind::ExperimentApparatus,
+        ToolKind::DigitalComputation,
+        ToolKind::OrbitalReach,
+    ] {
+        assert!(
+            !is_buildable(tool, &species, &jet_only, true, true, Crust::Basaltic),
+            "{tool:?} should be blocked for a FluidJet-only species"
+        );
+    }
+}
+
+/// Coverage canary: every `ManipulationKind` variant must be
+/// accepted by at least one tier-1 tool so no random species
+/// generation outcome leaves a species frozen at zero tools. The
+/// prior global `MANIPULATION_PREREQ = ToolExtension` gate routinely
+/// produced no-tool species on Sparse-biosphere worlds; the per-tool
+/// table guarantees every body plan has an applied-knowledge entry
+/// point.
+#[test]
+fn every_manipulation_kind_has_tier1_path() {
+    let species = species_with(&[ChannelKind::Tactile]);
+    let tier1 = [
+        ToolKind::LocalisedCombustion,
+        ToolKind::ContactWeapon,
+        ToolKind::RangedMomentumWeapon,
+        ToolKind::SimpleShelter,
+        ToolKind::FoodProcessing,
+        ToolKind::FluidGathering,
+        ToolKind::BasicTextiles,
+        ToolKind::StoneWorking,
+        ToolKind::OrganizedHunting,
+        ToolKind::BasicHealing,
+    ];
+    let all_kinds = [
+        ManipulationKind::LimbGrasp,
+        ManipulationKind::Tentacle,
+        ManipulationKind::MouthBeak,
+        ManipulationKind::TonguePrehensile,
+        ManipulationKind::Trunk,
+        ManipulationKind::Mandible,
+        ManipulationKind::FluidJet,
+        ManipulationKind::ToolExtension,
+        ManipulationKind::WebConstruct,
+        ManipulationKind::Burrow,
+        ManipulationKind::ElectricDischarge,
+        ManipulationKind::ChemicalSecretion,
+    ];
+    for kind in all_kinds {
+        let manips: BTreeSet<ManipulationKind> = [kind].into_iter().collect();
+        let reachable = tier1.iter().any(|tool| {
+            is_buildable(*tool, &species, &manips, true, true, Crust::Basaltic)
+        });
+        assert!(
+            reachable,
+            "{kind:?} must have at least one tier-1 tool path — the \
+             per-tool manipulation_prereqs table left this body plan \
+             with zero tier-1 entries"
+        );
+    }
+}
+
+/// ExperimentApparatus retains the strict `ToolExtension`-only
+/// requirement even after the broader tier-1 unlock. A
+/// chemical-secretion species develops tier-1 applied knowledge
+/// but is still locked out of controlled experimentation — the
+/// "different sciences" boundary now lives on the apparatus tool
+/// instead of the whole tree.
+#[test]
+fn apparatus_still_requires_tool_extension() {
+    let species = species_with(&[ChannelKind::Tactile]);
+    let secretion_only: BTreeSet<ManipulationKind> =
+        [ManipulationKind::ChemicalSecretion].into_iter().collect();
+    assert!(
+        !is_buildable(
+            ToolKind::ExperimentApparatus,
+            &species,
+            &secretion_only,
+            true,
+            true,
+            Crust::Basaltic,
+        ),
+        "ExperimentApparatus must keep its strict ToolExtension gate"
+    );
+    // But tier-1 healing IS reachable for the same species —
+    // pharmacology is a natural fit for chemical-secretion biology.
+    assert!(is_buildable(
+        ToolKind::BasicHealing,
+        &species,
+        &secretion_only,
+        true,
+        true,
+        Crust::Basaltic,
+    ));
 }
 
 #[test]

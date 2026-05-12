@@ -87,12 +87,15 @@ exist concurrently or sequentially; the species continues.
     weighting + `experimental_count_by_relation` sidecar marks
     every relation that received apparatus contributions, surfacing
     on `ConfirmedMeasurement.is_experimental` and the protocol
-    event flag of the same name. Tool gate is universal
-    `MANIPULATION_PREREQ = ToolExtension` + literacy 0.30 + obs
+    event flag of the same name. Tool gate is per-tool
+    `manipulation_prereqs` (ExperimentApparatus keeps the strict
+    `ToolExtension`-only requirement) + literacy 0.30 + obs
     pressure 30k + confirmed `fire` so a tool-using species moves
     from observation-only to controlled-conditions intervention
     once it has done enough science to build the apparatus, while
-    a tool-less species stays observational forever.
+    a species without `ToolExtension` stays observational forever
+    on this particular tool — though tier-1 applied-knowledge tools
+    remain reachable through other manipulation modes.
   - **Transcendence run-end** — fires when the species has
     sustained at-least-one-civ-with-all-tier-5-tools for
     `TRANSCENDENCE_SUSTAINED_TICKS` (currently 2000 ticks).

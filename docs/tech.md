@@ -35,15 +35,21 @@ Each tool carries a set of per-tool gating functions on `ToolKind`
 (in [`sim/civ/src/tech/specs.rs`](../sim/civ/src/tech/specs.rs))
 and contributes to eight effect categories
 (in [`sim/civ/src/tech/effects.rs`](../sim/civ/src/tech/effects.rs)).
-A global `MANIPULATION_PREREQ = ToolExtension` in
-[`sim/civ/src/tech/mod.rs`](../sim/civ/src/tech/mod.rs) excludes
-chemical-secretion / pseudopod-only species from instrumented
-science across the entire tech tree.
+Per-tool `manipulation_prereqs` express which body-plan modes
+suffice to fabricate each tool — replacing the prior global
+`ToolExtension`-only gate. Tier-1 applied-knowledge tools accept
+a broad palette (limbs, tentacles, mandibles, web-construct,
+chemical-secretion, electric-discharge, etc.) so every body plan
+has at least one tier-1 entry point; tier-2+ instrument tools and
+`ExperimentApparatus` keep the strict `ToolExtension` requirement
+so the "different sciences for different bodies" boundary lives
+on instrument science rather than the entire tree.
 
 ### Gates
 
 | Function | Meaning |
 |----------|---------|
+| `manipulation_prereqs` | Body-plan modes the species must possess at least one of. Empty slice = no manipulation gate. |
 | `relation_prereqs` | `(template_id, channel)` pairs that must be confirmed in the civ's knowledge state. |
 | `tool_prereqs` | Other `ToolKind`s that must already be unlocked. |
 | `observation_threshold` | Minimum cumulative observation count on the civ's hypothesizer. |
@@ -114,9 +120,12 @@ intervention, not only observation.
 
 ### Unlock prereqs
 
-- The global `MANIPULATION_PREREQ = ToolExtension` gate (which
-  every tool sits behind) excludes pseudopod / chemical-secretion
-  species from this and every other tool.
+- Strict `manipulation_prereqs = [ToolExtension]` — the apparatus
+  is the most demanding tier-2 instrument and keeps the prior
+  global rule for itself. Pseudopod / chemical-secretion / web /
+  burrow / jet species are excluded from this tool even though
+  they can reach tier-1 applied knowledge through their native
+  manipulation modes.
 - Cumulative observation count ≥ 30 000.
 - Literacy ≥ 0.30.
 - Confirmed `fire` relation.

@@ -27,10 +27,13 @@
 //!   per-channel constant; the per-tick step index is `tick % 4`.
 //!   No `thread_rng`, no float, no `HashMap` iteration.
 //! - **Bounded scope.** One apparatus per civ at unlock. The
-//!   tier-2 tool gate (`MANIPULATION_PREREQ = ToolExtension`,
+//!   tier-2 tool gate (`manipulation_prereqs` keeps the strict
+//!   `ToolExtension`-only requirement for the apparatus, plus
 //!   literacy floor 0.30, observation threshold 30k, confirmed
-//!   `fire` law) keeps non-tool species permanently locked out
-//!   per the "different sciences" project goal.
+//!   `fire` law) keeps non-tool species permanently locked out of
+//!   controlled experimentation per the "different sciences"
+//!   project goal — tier-1 applied-knowledge tools remain
+//!   reachable for them through other manipulation modes.
 //! - **Substrate respect.** The clamp ladder is in raw physics
 //!   units, not fit-space. A 250–500 K temperature ladder works on
 //!   any habitable substrate (silicate worlds run at 800+ K so
@@ -290,9 +293,10 @@ mod tests {
 
     #[test]
     fn experiment_apparatus_tool_is_buildable_with_tool_extension() {
-        // The tool requires `ToolExtension` manipulation
-        // (enforced via the global `MANIPULATION_PREREQ`); a species
-        // without it can't build the apparatus regardless of every
+        // The apparatus keeps a strict
+        // `manipulation_prereqs = [ToolExtension]` even after the
+        // broader per-tool gate replaced the global rule. A species
+        // without ToolExtension can't build it regardless of every
         // other gate.
         assert!(crate::tech::is_buildable(
             ToolKind::ExperimentApparatus,
@@ -302,12 +306,25 @@ mod tests {
             true,
             Crust::Basaltic,
         ));
-        // Without ToolExtension the tool is locked out.
+        // No manipulations at all → locked out.
         let no_tools: BTreeSet<ManipulationKind> = BTreeSet::new();
         assert!(!crate::tech::is_buildable(
             ToolKind::ExperimentApparatus,
             &species_channels(),
             &no_tools,
+            true,
+            true,
+            Crust::Basaltic,
+        ));
+        // ChemicalSecretion alone is also insufficient for the
+        // apparatus (tier-1 healing accepts secretion; the apparatus
+        // does not).
+        let secretion: BTreeSet<ManipulationKind> =
+            [ManipulationKind::ChemicalSecretion].into_iter().collect();
+        assert!(!crate::tech::is_buildable(
+            ToolKind::ExperimentApparatus,
+            &species_channels(),
+            &secretion,
             true,
             true,
             Crust::Basaltic,

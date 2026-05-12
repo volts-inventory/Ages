@@ -8,6 +8,7 @@ use super::ToolKind;
 use sim_arith::Real;
 use sim_physics::Substance;
 use sim_recognition::ChannelKind;
+use sim_species::ManipulationKind;
 use sim_world::Crust;
 
 // ─── resource_prereqs threshold tables ───────────────────────────
@@ -887,6 +888,489 @@ impl ToolKind {
             // fire) which already requires the civ's hypothesizer
             // to have done some real fitting work.
             ToolKind::ExperimentApparatus => &[],
+        }
+    }
+
+    /// Per-tool manipulation-mode prereq: the body-plan modes that
+    /// suffice to fabricate this tool. The species must contain at
+    /// least one of the listed kinds in its `manipulation_modes`
+    /// for `is_buildable` to pass. Empty slice means "no
+    /// manipulation gate" — pure social / cognitive tools that any
+    /// sapient body plan can develop (e.g. `TradeNetworks`).
+    ///
+    /// Replaces the prior global `MANIPULATION_PREREQ = ToolExtension`
+    /// gate. The old gate made every chemical-secretion / web /
+    /// burrow / jet species permanently observation-only across the
+    /// whole tree — collapsing "different sciences for different
+    /// bodies" into "no science for most bodies." Per-tool prereqs
+    /// preserve substrate divergence (tier-2+ instrument tools and
+    /// `ExperimentApparatus` still demand `ToolExtension`) while
+    /// letting any body plan reach tier-1 applied knowledge.
+    ///
+    /// Coverage guarantee — every `ManipulationKind` variant is
+    /// accepted by at least one tier-1 tool, so no body-plan draw
+    /// leaves a species frozen at zero tools. Verified by the
+    /// `every_manipulation_kind_has_tier1_path` test.
+    #[allow(clippy::match_same_arms)]
+    #[allow(clippy::too_many_lines)]
+    pub fn manipulation_prereqs(self) -> &'static [ManipulationKind] {
+        match self {
+            // ─── tier-1: applied-knowledge / animal-level tech ───
+            //
+            // LocalisedCombustion: handling fire — placing a brand,
+            // building a pyre, transporting embers. Needs a grasp-
+            // or shape-capable manipulator; ChemicalSecretion qualifies
+            // via secreted-oxidiser ignition paths (a pyrophoric body
+            // chemistry is a real-world template).
+            ToolKind::LocalisedCombustion => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // ContactWeapon: melee predation — biting, stinging,
+            // clubbing, stunning. Every predator-mode manipulator
+            // qualifies.
+            ToolKind::ContactWeapon => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // RangedMomentumWeapon: throwing / spitting / spraying /
+            // net-flinging. Needs propulsion or grasp-and-release.
+            ToolKind::RangedMomentumWeapon => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::FluidJet,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // SimpleShelter: dwellings — burrows, web-nests,
+            // secreted shells, leaned-stick lean-tos, packed mud.
+            ToolKind::SimpleShelter => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // FoodProcessing: butchering / chewing / external
+            // digestion / fire-cooking. Mouthparts, limbs, jetted
+            // enzymes, secreted digestive fluids — most modes
+            // qualify.
+            ToolKind::FoodProcessing => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::FluidJet,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::Burrow,
+            ],
+            // FluidGathering: carrying / channelling water —
+            // containers, jetted-collection, web-traps, secreted
+            // vessels.
+            ToolKind::FluidGathering => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::FluidJet,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // BasicTextiles: cordage / silk / weaving. WebConstruct
+            // and ChemicalSecretion (silk-producing glands) are the
+            // canonical body-plan paths; limbs / mandibles weave
+            // plant fibre.
+            ToolKind::BasicTextiles => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // StoneWorking: knapping / shaping stone. Needs
+            // percussive striking + precision-grip. Excludes
+            // fluid / web / chemical / electric paths (none of
+            // them can knap obsidian).
+            ToolKind::StoneWorking => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+            ],
+            // OrganizedHunting: coordinated predation. The work is
+            // social coordination + any predatory affordance — open
+            // to every body plan.
+            ToolKind::OrganizedHunting => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::FluidJet,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // BasicHealing: herbal / pharmaceutical first aid.
+            // ChemicalSecretion is the natural strength (venom-
+            // bearing species are already pharmacologists);
+            // ElectricDischarge enables stun-cure traditions.
+            ToolKind::BasicHealing => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+
+            // ─── tier-2: settlement-tier tools ───
+            //
+            // BulkCultivation: agriculture at scale.
+            ToolKind::BulkCultivation => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // AnimalSymbiosis: herding — grip-based, pheromone-
+            // controlled, or electric-herded.
+            ToolKind::AnimalSymbiosis => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // BulkStorage: pottery / silos / chitin granaries /
+            // woven baskets.
+            ToolKind::BulkStorage => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // MaterialRefining: smelting / metallurgy. Demands
+            // fire-handling + precision; secretion qualifies via
+            // secreted flux / smelting agents.
+            ToolKind::MaterialRefining => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // CulturalEncoding: writing / mark-making. Any mode
+            // that leaves persistent signals — scratches, pheromone
+            // trails, bioelectric impressions, woven knot-records.
+            ToolKind::CulturalEncoding => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // FluidControl: irrigation — ditches, dams, bored pipes,
+            // jet-driven channels, secreted aqueducts.
+            ToolKind::FluidControl => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::FluidJet,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // WatercraftConstruction: hulls — shaped, woven, or
+            // secreted.
+            ToolKind::WatercraftConstruction => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // PermanentMasonry: stone construction. Same precision-
+            // grip requirement as StoneWorking plus secreted
+            // mortar / cement paths.
+            ToolKind::PermanentMasonry => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // TradeNetworks: pure economic / social institution —
+            // no manipulation gate.
+            ToolKind::TradeNetworks => &[],
+            // UrbanConstruction: city-scale building. Many paths.
+            ToolKind::UrbanConstruction => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+            ],
+
+            // ─── sensorium instruments (tier 2 / 3 / 4) ───
+            //
+            // Precision optical / acoustic / field instrumentation
+            // — needs ToolExtension or a high-DoF flexible
+            // manipulator. The work is sub-mm machining, not body
+            // chemistry, so secretion / web / jet are excluded.
+            ToolKind::ThermalSensor
+            | ToolKind::RemoteAcoustic
+            | ToolKind::DistanceImaging
+            | ToolKind::FieldSensor
+            | ToolKind::MagneticSensor => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+            // AmphibiousConstruction: cross-domain habitats —
+            // diverse paths (limbed, tentacled, burrowing, web-built,
+            // or secreted shells).
+            ToolKind::AmphibiousConstruction => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // ExperimentApparatus: controlled-conditions intervention.
+            // The most demanding tier-2 instrument — keeps the strict
+            // ToolExtension-only gate from the prior global rule, since
+            // a clamp-and-measure rig genuinely needs fabricated
+            // valves / sensors / linkages.
+            ToolKind::ExperimentApparatus => &[ManipulationKind::ToolExtension],
+
+            // ─── tier-3: pre-industrial ───
+            //
+            // ChemicalProjectile: gunpowder weaponry — precision
+            // metallurgy + chemistry.
+            ToolKind::ChemicalProjectile => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // PrecisionTimekeeping: clocks — high-precision
+            // mechanical fabrication.
+            ToolKind::PrecisionTimekeeping => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+            // MechanicalAdvantage: levers / pulleys / wheels — broad
+            // precision-shape work.
+            ToolKind::MechanicalAdvantage => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+            ],
+            // LongRangeNavigation: instruments + charts.
+            ToolKind::LongRangeNavigation => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+            // WrittenJurisprudence + AbstractMathematics + MassLiteracy:
+            // notation-bound — same broad palette as CulturalEncoding.
+            ToolKind::WrittenJurisprudence | ToolKind::AbstractMathematics => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // ArtisanalSpecialisation: crafts — most modes qualify.
+            ToolKind::ArtisanalSpecialisation => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // DefensiveFortification: large earthworks / walls.
+            ToolKind::DefensiveFortification => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::Burrow,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // MotivePropulsion: sails / wheels / paddles —
+            // mechanical shaping.
+            ToolKind::MotivePropulsion => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+            ],
+
+            // ─── tier-4: industrial ───
+            //
+            // Industrial tools narrow toward instrument-grade
+            // precision. ToolExtension is universally accepted;
+            // LimbGrasp / Tentacle qualify as high-DoF biological
+            // substitutes; ElectricDischarge unlocks EM-native
+            // branches; ChemicalSecretion unlocks the wet-chemistry
+            // branches.
+            ToolKind::Mechanisation => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+            ToolKind::LongRangeCommunication => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ElectricDischarge,
+            ],
+            ToolKind::ChemicalSynthesis => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            ToolKind::MedicalIntervention => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            ToolKind::AdvancedMaterials => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+            ToolKind::HeavyTransport => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+            ],
+            ToolKind::PowerGeneration => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ElectricDischarge,
+            ],
+            ToolKind::AnalyticalEngines => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+            ToolKind::MassLiteracy => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            ToolKind::AerialTransport => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+            ],
+
+            // ─── tier-5: information-age + transcendence trio ───
+            //
+            // The tightest tier — engineered solids, atomic-precision
+            // lattices, fabricated chips, rockets. ToolExtension is
+            // mandatory for the narrative trio + the most demanding
+            // engineering tools. EM-coupled tools (Bioelectric,
+            // InfoNetworking, EnergyStorage) admit ElectricDischarge;
+            // biochemistry tools (Genetic, AdvancedMedicine, Organic)
+            // admit ChemicalSecretion.
+            ToolKind::BioelectricResonator => &[
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ElectricDischarge,
+            ],
+            ToolKind::FieldPropulsionEngine | ToolKind::MetamaterialLattice => {
+                &[ManipulationKind::ToolExtension]
+            }
+            ToolKind::DigitalComputation
+            | ToolKind::OrbitalReach
+            | ToolKind::MaterialFabrication
+            | ToolKind::AutonomousSystems
+            | ToolKind::CryogenicEngineering => &[ManipulationKind::ToolExtension],
+            ToolKind::InformationNetworking | ToolKind::EnergyStorage => &[
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ElectricDischarge,
+            ],
+            ToolKind::GeneticManipulation
+            | ToolKind::AdvancedMedicine
+            | ToolKind::OrganicSynthesis => &[
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+            ],
         }
     }
 }
