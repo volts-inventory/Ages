@@ -70,8 +70,10 @@ pub struct WorldFrame {
 ///    capital, `B` = civ 2's, …). Founder attention focus.
 /// 2. **Claimed by exactly one civ** → in monochrome, the civ's
 ///    digit (`1`–`9`, then `*` for civs ≥ 10); in colored mode, a
-///    pop-scaled digit `0`–`9` (see `pop_digit`) with the civ's
-///    palette colour identifying *which* civ owns the cell.
+///    linear pop-saturation digit `1`–`9` (see `pop_digit`) — or
+///    the underlying terrain glyph in the civ's colour for cells
+///    below 10% of cap (ownership by colour, "barely settled" by
+///    the landform showing through).
 /// 3. **Claimed by multiple civs** → `#` (territory dispute).
 /// 4. **Unclaimed** → terrain symbol from `terrain_symbol`.
 ///
@@ -268,7 +270,11 @@ fn render_world_frame_inner(
                 let civ_id = claims[0];
                 // Colored mode: civ identity is conveyed by colour,
                 // so the digit is freed up to encode per-cell
-                // population on a √10 log scale (`pop_digit`).
+                // population on a linear scale (`pop_digit`). Cells
+                // under 10% of cap return `None` from `pop_digit`;
+                // fall back to the terrain glyph so a barely-settled
+                // claim reads as the civ's colour spreading across
+                // the landform (▒/·/△) rather than as a `0`.
                 // Monochrome mode (markdown post-run report): keep
                 // the civ-id digit so civs are still distinguishable
                 // when ANSI colours aren't rendered.
@@ -289,6 +295,9 @@ fn render_world_frame_inner(
                         // saturation but keeps digits readable.
                         .unwrap_or(frame_max_pop);
                     pop_digit(pop, cap)
+                        .unwrap_or_else(|| {
+                            crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                        })
                 } else {
                     claim_symbol(civ_id)
                 };
@@ -394,15 +403,18 @@ pub(crate) fn centroid_symbol(civ_id: u32) -> char {
     (b'A' + idx as u8) as char
 }
 
-/// Map a per-cell population to a single digit 0..9 on a log
+/// Map a per-cell population to a single digit 1..9 on a linear
 /// scale relative to the cell's own carrying capacity. Used by
 /// the colored frame variants — each civ's identity is carried
 /// by colour, so the digit is freed up to encode "how full is
 /// this cell" at a glance:
 ///
-/// - digit `9` ≈ pop at cap (saturated)
-/// - digit `0` ≈ pop ≤ cap × 10⁻³ (nearly empty)
-/// - digit step ≈ ³√10× population (~2.15× per step)
+/// - digit `9` ≈ ≥90% of cap (saturated)
+/// - digit `5` ≈ 50–60% of cap
+/// - digit `1` ≈ 10–20% of cap
+/// - `None` ≈ < 10% of cap (caller renders the terrain glyph
+///   in civ colour — ownership by colour, "barely settled" by
+///   the landform showing through).
 ///
 /// Each civ's cap depends on tech, terrain, season, and
 /// biosphere — so as a civ unlocks better food tools the cap
@@ -414,18 +426,22 @@ pub(crate) fn centroid_symbol(civ_id: u32) -> char {
 /// caller should pass a frame-relative max-pop fallback, which
 /// degrades the scale to "this cell vs. densest cell in the
 /// frame" while keeping digits readable.
-pub(crate) fn pop_digit(pop: f64, cap: f64) -> char {
+pub(crate) fn pop_digit(pop: f64, cap: f64) -> Option<char> {
     if pop <= 0.0 || cap <= 0.0 {
-        return '0';
+        return None;
     }
-    // Saturation reading: `pop / cap` ∈ (0, ∞]. log10(ratio)
-    // reads 0 at saturation, negative below. Map the last 3
-    // decades to digits 0..9 (so 9 = at-cap, 6 = 10% of cap,
-    // 3 = 1%, 0 = 0.1%-and-below). Above-cap pops (rare
-    // overshoot of the logistic step) clamp to 9.
-    let ratio = pop / cap;
-    let bucket = (9.0 + (ratio.log10() * 3.0).floor()).clamp(0.0, 9.0) as i32;
-    (b'0' + bucket as u8) as char
+    // Linear saturation: each digit = 10% of cap. Above-cap pops
+    // (rare overshoot of the logistic step) clamp to 9. Cells under
+    // 10% of cap return `None` so the renderer falls back to the
+    // terrain glyph (in civ colour) — frontier claims read as the
+    // civ's colour spreading across the landscape rather than as
+    // a sea of indistinguishable `0`s.
+    let ratio = (pop / cap).clamp(0.0, 1.0);
+    let bucket = (ratio * 10.0).floor() as i32;
+    if bucket < 1 {
+        return None;
+    }
+    Some((b'0' + bucket.min(9) as u8) as char)
 }
 
 /// Territory marker for civ N: digit 1..9 then `*` for civs ≥ 10.
@@ -642,33 +658,44 @@ mod tests {
     #[test]
     fn pop_digit_saturation_buckets() {
         // pop / cap = 1.0 → 9 (saturated)
-        assert_eq!(pop_digit(100.0, 100.0), '9');
+        assert_eq!(pop_digit(100.0, 100.0), Some('9'));
         // 10× over cap clamps at 9
-        assert_eq!(pop_digit(1_000.0, 100.0), '9');
-        // 10% of cap → 6 (one decade below saturation)
-        assert_eq!(pop_digit(10.0, 100.0), '6');
-        // 1% of cap → 3
-        assert_eq!(pop_digit(1.0, 100.0), '3');
-        // 0.1% of cap → 0
-        assert_eq!(pop_digit(0.1, 100.0), '0');
-        // pop=0 → 0 regardless of cap
-        assert_eq!(pop_digit(0.0, 1_000.0), '0');
-        // cap missing/zero → 0
-        assert_eq!(pop_digit(50.0, 0.0), '0');
+        assert_eq!(pop_digit(1_000.0, 100.0), Some('9'));
+        // 95% of cap → 9
+        assert_eq!(pop_digit(95.0, 100.0), Some('9'));
+        // 80% of cap → 8
+        assert_eq!(pop_digit(80.0, 100.0), Some('8'));
+        // 50% of cap → 5
+        assert_eq!(pop_digit(50.0, 100.0), Some('5'));
+        // 25% of cap → 2
+        assert_eq!(pop_digit(25.0, 100.0), Some('2'));
+        // 10% of cap → 1 (exactly on the 10% boundary)
+        assert_eq!(pop_digit(10.0, 100.0), Some('1'));
+        // Under 10% → None (caller renders the terrain glyph
+        // in civ colour instead of a digit).
+        assert_eq!(pop_digit(9.0, 100.0), None);
+        assert_eq!(pop_digit(1.0, 100.0), None);
+        assert_eq!(pop_digit(0.1, 100.0), None);
+        // pop=0 → None regardless of cap
+        assert_eq!(pop_digit(0.0, 1_000.0), None);
+        // cap missing/zero → None
+        assert_eq!(pop_digit(50.0, 0.0), None);
     }
 
     #[test]
     fn colored_render_uses_pop_digits_relative_to_cap() {
         // Civ 1 owns three cells. Cap is the same across cells;
-        // pop varies. Colored mode should show each cell's
-        // saturation digit (9 = at cap, lower = farther below).
-        // Cell 0 is the centroid → still the letter `A`.
+        // pop varies. Colored mode shows each cell's saturation
+        // digit (9 = at cap). Cell 0 is the centroid → letter `A`.
+        // Cell 2 sits below the 10% floor, so its digit slot falls
+        // back to the terrain glyph rendered in the civ's colour —
+        // ownership by colour, "barely settled" by the landform.
         let cap = 1_000.0_f64;
         let scale = (1u64 << 32) as f64;
         let mut pops = BTreeMap::new();
         pops.insert(0u32, (cap * scale) as i128); // centroid; digit irrelevant
         pops.insert(1u32, (cap * scale) as i128); // saturated → '9'
-        pops.insert(2u32, (1.0 * scale) as i128); // 0.1% of cap → '0'
+        pops.insert(2u32, (1.0 * scale) as i128); // 0.1% of cap → terrain
         let mut caps = BTreeMap::new();
         caps.insert(0u32, (cap * scale) as i128);
         caps.insert(1u32, (cap * scale) as i128);
@@ -689,8 +716,13 @@ mod tests {
         // Civ-color escape applied to the saturated `9`.
         let civ_color = civ_color_code(1);
         assert!(s.contains(&format!("\x1b[1;38;5;{civ_color}m9")));
-        // Sparse cell renders as a colored `0`.
-        assert!(s.contains(&format!("\x1b[1;38;5;{civ_color}m0")));
+        // Sparse cell renders as a civ-colored terrain glyph
+        // (depth=0, elevation=0, terrain_peak=0 on the test
+        // PlanetMap → `≡` gas-band from `terrain_symbol`).
+        assert!(s.contains(&format!("\x1b[1;38;5;{civ_color}m\u{2261}")));
+        // The under-10% bucket no longer emits a `0` digit for the
+        // civ — only the terrain-glyph fallback.
+        assert!(!s.contains(&format!("\x1b[1;38;5;{civ_color}m0")));
     }
 
     #[test]
