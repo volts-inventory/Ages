@@ -309,6 +309,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             &mut total_confirmed_relations,
             &mut total_refinements,
             &state,
+            &planet,
         )?;
 
         phases::tech_unlock_phase(
@@ -462,10 +463,13 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             // Trigger v1: stateless-pop + recent-remnant + min dark age.
             let parent_collapse = last_collapse_tick;
             let elapsed_collapse = parent_collapse.map(|t| tick.saturating_sub(t));
-            let v1_eligible = elapsed_collapse.is_some_and(|e| {
-                (sim_civ::FOUNDING_MIN_DARK_AGE_TICKS..=sim_civ::RECENT_REMNANT_WINDOW_TICKS)
-                    .contains(&e)
-            });
+            let metabolism = planet.metabolic_substrate.metabolism();
+            let dark_age_min =
+                sim_civ::streak_ticks_for_metabolism(sim_civ::FOUNDING_MIN_DARK_AGE_TICKS, metabolism);
+            let remnant_window =
+                sim_civ::streak_ticks_for_metabolism(sim_civ::RECENT_REMNANT_WINDOW_TICKS, metabolism);
+            let v1_eligible =
+                elapsed_collapse.is_some_and(|e| (dark_age_min..=remnant_window).contains(&e));
             // Trigger v2: charismatic-founder + post-catastrophe.
             // Probe what the next civ's founding band would look
             // like to see if any figure clears charisma >= 0.8.
@@ -547,6 +551,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         planet.gravity,
                         new_civ.effective_cognition(&species),
                         new_civ.effective_sociality(&species),
+                        planet.metabolic_substrate.metabolism(),
                     );
                     // Successor's territory sized to its own
                     // founding population, centred on its first
@@ -693,11 +698,15 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // to fork off. Takes precedence over the dogmatic path when
         // both candidates exist on the same tick (fragmentation is
         // the more urgent failure mode).
+        let cohesion_breakaway_streak_metabolised = sim_civ::streak_ticks_for_metabolism(
+            sim_civ::COHESION_BREAKAWAY_STREAK_TICKS,
+            planet.metabolic_substrate.metabolism(),
+        );
         let cohesion_parent_id: Option<u32> = if breakaway_cooldown_ok {
             civs.iter()
                 .find(|c| {
                     c.is_active()
-                        && c.cohesion_breakaway_streak >= sim_civ::COHESION_BREAKAWAY_STREAK_TICKS
+                        && c.cohesion_breakaway_streak >= cohesion_breakaway_streak_metabolised
                 })
                 .map(|c| c.id)
         } else {
@@ -914,6 +923,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         planet.gravity,
                         new_civ.effective_cognition(&species),
                         new_civ.effective_sociality(&species),
+                        planet.metabolic_substrate.metabolism(),
                     );
                     // Breakaway sized to its half-share of the
                     // parent's population; centred on the seized
@@ -1441,6 +1451,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     planet.gravity,
                     new_civ.effective_cognition(&species),
                     new_civ.effective_sociality(&species),
+                    planet.metabolic_substrate.metabolism(),
                 );
                 new_civ.territory_centroid = emerge_cell;
                 let target = target_cell_count(&new_civ, state.grid().n_cells());

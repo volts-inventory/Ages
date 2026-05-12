@@ -201,6 +201,20 @@ pub fn is_emergence_tick(tick: u64) -> bool {
     tick > 0 && tick.is_multiple_of(EMERGENCE_CHECK_PERIOD_TICKS)
 }
 
+/// Substrate-aware variant: stretches the emergence-check period by
+/// the inverse of the planet's metabolism so slow-substrate worlds
+/// run the same number of checks per generation as fast ones. Used by
+/// sim/core's production path; the bare `is_emergence_tick` stays for
+/// callers that don't have a planet in scope (tests).
+#[must_use]
+pub fn is_emergence_tick_for_metabolism(tick: u64, metabolism: sim_arith::Real) -> bool {
+    let period = crate::demographics::streak_ticks_for_metabolism(
+        EMERGENCE_CHECK_PERIOD_TICKS,
+        metabolism,
+    );
+    tick > 0 && tick.is_multiple_of(period)
+}
+
 /// Scan a civ's confirmed relations for emergent-template proposals.
 /// Returns the new templates the species should adopt. Caller is
 /// responsible for inserting into `Species::discovered_templates`,

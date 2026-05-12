@@ -218,25 +218,33 @@ pub const DRIVE_W_DOMINANCE: (i64, i64) = (30, 100);
 
 /// Multiplicative dampener: `belligerence = drive ×
 /// (1 − KINSHIP_DAMPENER · kinship)`. Identical civs (kinship = 1)
-/// see drive multiplied by `1 − 0.2 = 0.8`; totally alien civs
-/// (kinship = 0) see drive at full strength. Calibrated against
-/// the seed-100 / 8000-tick smoke run: with single-species seeds
-/// where every civ inherits the same species cosmology bias,
-/// kinship sits near 1.0 the whole run. Higher dampener values
-/// (0.4, 0.6) crushed every war; 0.2 lets pressure + dominance
-/// breakthroughs fire without erasing kinship's effect.
-pub const KINSHIP_DAMPENER: (i64, i64) = (20, 100);
+/// see drive multiplied by `1 − 0.1 = 0.9`; totally alien civs
+/// (kinship = 0) see drive at full strength.
+///
+/// Lowered from 0.2 → 0.1 after the 5× cap raise. In single-species
+/// runs kinship sits ~0.98 the whole simulation (no second species
+/// to dilute it via cosmology / religion / tech distance), so the
+/// dampener acts at near-full strength on every pair forever.
+/// Real history says same-species civs war constantly; the 0.2
+/// value was over-pacifying single-species runs in particular.
+pub const KINSHIP_DAMPENER: (i64, i64) = (10, 100);
 
 /// At-peace pair becomes at-war once `belligerence ≥` this.
-/// Lowered from the initial 0.55 because realistic drive values
-/// in capacity-driven-expansion runs cap around 0.5 even in
-/// strong-vs-weak matchups; 0.55 produced zero wars at seed 100.
-pub const WAR_DECLARE_THRESHOLD: (i64, i64) = (35, 100);
+///
+/// Lowered 0.35 → 0.25 after the 5× cap raise. `pressure = pop /
+/// (cap × 1.25)` is the dominant drive term; with cap at 2500
+/// instead of 500, an established civ at ~70% of cap reads
+/// pressure ~0.56 instead of the much higher saturation it'd hit
+/// under the old cap, so belligerence lands ~0.31 even for
+/// well-matched pairs in contact — just below the prior 0.35 line.
+/// 0.25 clears those marginal pairs into war without crushing the
+/// pressure → dominance → opportunity signal mix.
+pub const WAR_DECLARE_THRESHOLD: (i64, i64) = (25, 100);
 
 /// At-war pair becomes at-peace once `belligerence <` this.
-/// Hysteresis (declare 0.35 / end 0.20) prevents flapping when
+/// Hysteresis (declare 0.25 / end 0.15) prevents flapping when
 /// pop crosses capacity tick-to-tick.
-pub const WAR_END_THRESHOLD: (i64, i64) = (20, 100);
+pub const WAR_END_THRESHOLD: (i64, i64) = (15, 100);
 
 /// Per-pair belligerence assessment. Computed each conflict check
 /// for every overlapping pair that has met contact prerequisites;
@@ -514,28 +522,28 @@ mod tests {
 
     #[test]
     fn decide_war_respects_declare_threshold_when_at_peace() {
-        // Just below 0.35 → still peaceful.
-        let just_below = Real::from_ratio(34, 100);
+        // Just below 0.25 → still peaceful.
+        let just_below = Real::from_ratio(24, 100);
         assert_eq!(decide_war(false, just_below), WarDecision::StayPeaceful);
-        // At 0.35 → declare.
-        let at_threshold = Real::from_ratio(35, 100);
+        // At 0.25 → declare.
+        let at_threshold = Real::from_ratio(25, 100);
         assert_eq!(decide_war(false, at_threshold), WarDecision::DeclareWar);
-        // Above 0.35 → declare.
+        // Above 0.25 → declare.
         let above = Real::from_ratio(70, 100);
         assert_eq!(decide_war(false, above), WarDecision::DeclareWar);
     }
 
     #[test]
     fn decide_war_respects_end_threshold_when_at_war() {
-        // Above 0.20 → keep fighting (covers the 0.20–0.35
+        // Above 0.15 → keep fighting (covers the 0.15–0.25
         // hysteresis band).
-        let mid_band = Real::from_ratio(28, 100);
+        let mid_band = Real::from_ratio(20, 100);
         assert_eq!(decide_war(true, mid_band), WarDecision::ContinueWar);
-        // Just below 0.20 → conclude.
-        let just_below = Real::from_ratio(19, 100);
+        // Just below 0.15 → conclude.
+        let just_below = Real::from_ratio(14, 100);
         assert_eq!(decide_war(true, just_below), WarDecision::ConcludePeace);
-        // At 0.20 (boundary) → still fighting.
-        let at_threshold = Real::from_ratio(20, 100);
+        // At 0.15 (boundary) → still fighting.
+        let at_threshold = Real::from_ratio(15, 100);
         assert_eq!(decide_war(true, at_threshold), WarDecision::ContinueWar);
     }
 

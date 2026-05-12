@@ -394,6 +394,16 @@ impl Civ {
         if self.region_cohorts.is_empty() {
             return newly_claimed;
         }
+        // Substrate-derived claim cadence: on Aqueous (metabolism=1)
+        // we attempt expansion every tick; on slow substrates the
+        // cadence stretches so claim activity tracks the planet's
+        // biological time. Tick 0 never claims (consistent with the
+        // pre-existing `tick > 0` invariants elsewhere).
+        let metabolism = planet.metabolic_substrate.metabolism();
+        let cadence = crate::demographics::streak_ticks_for_metabolism(1, metabolism);
+        if cadence > 1 && !tick.is_multiple_of(cadence) {
+            return newly_claimed;
+        }
         // Per-tick claim ceiling: 1 cell as a baseline, plus
         // `floor(10 × tool_expansion_rate_bonus)` extras. A vanilla
         // civ claims ≤ 1 new cell per tick; HeavyTransport (+0.20

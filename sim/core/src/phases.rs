@@ -268,6 +268,7 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
     total_confirmed_relations: &mut u32,
     total_refinements: &mut u32,
     state: &PhysicsState,
+    planet: &Planet,
 ) -> Result<(), E::Error> {
     emitter.emit(&Event::Tick(TickEvent {
         tick,
@@ -527,7 +528,10 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
     // subsequent scans. Iteration order: civs sorted by id;
     // confirmed relations sorted by relation_id (BTreeMap order)
     // — preserves the determinism contract.
-    if sim_civ::discovery::emergence::is_emergence_tick(tick) {
+    if sim_civ::discovery::emergence::is_emergence_tick_for_metabolism(
+        tick,
+        planet.metabolic_substrate.metabolism(),
+    ) {
         let mut new_proposals: Vec<sim_civ::discovery::emergence::EmergentTemplateProposal> =
             Vec::new();
         // Borrow species immutably while scanning so the proposal
@@ -576,7 +580,10 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
     // EMERGENT_TOOL_CLUSTER_SIZE confirmed relations. Tools
     // graduate into the species' dynamic_tool_registry; the
     // proposing civ unlocks them immediately.
-    if sim_civ::discovery::tool_emergence::is_tool_emergence_tick(tick) {
+    if sim_civ::discovery::tool_emergence::is_tool_emergence_tick_for_metabolism(
+        tick,
+        planet.metabolic_substrate.metabolism(),
+    ) {
         let mut new_tool_proposals: Vec<sim_civ::discovery::tool_emergence::EmergentToolProposal> =
             Vec::new();
         let mut working_next_tool_id = species.next_dynamic_tool_id;

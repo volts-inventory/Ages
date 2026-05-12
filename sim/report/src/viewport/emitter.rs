@@ -3,7 +3,7 @@
 //! `Write` (typically stdout) at the configured frame cadence.
 
 use super::ansi::{
-    divider, pad_to, split_divider, write_centered_line,
+    divider, pad_to, split_divider, visible_width, write_centered_line,
     ANSI_ALT_SCREEN_OFF, ANSI_ALT_SCREEN_ON, ANSI_ERASE_LINE, ANSI_ERASE_TO_END, ANSI_HIDE_CURSOR,
     ANSI_SHOW_CURSOR, MAP_WIDTH,
 };
@@ -120,6 +120,37 @@ pub struct ViewportEmitter<W: Write> {
     /// `ConflictResolved` cell-overlap noise. Pair key is
     /// normalised `(min, max)`.
     wars_active: BTreeSet<(u32, u32)>,
+    /// Per-civ highest tech tier unlocked. Updated on each
+    /// `TechUnlocked` event by taking the max of the prior tier
+    /// (default 0 — stone-age) and the unlocked tool's tier.
+    /// Surfaces on the civ panel header line so the reader can
+    /// see "Karnan · t3" at a glance.
+    civ_tech_tier: BTreeMap<u32, u8>,
+    /// Per-civ set of tool names unlocked. Sized by `len()` to
+    /// surface "23 tools" on the civ panel identity line so the
+    /// reader can see breadth-of-tech-tree alongside the peak-tier
+    /// indicator. Set-keyed (rather than a bare counter) so any
+    /// double-emit of `TechUnlocked` for the same tool doesn't
+    /// inflate the count.
+    civ_tools_unlocked: BTreeMap<u32, BTreeSet<String>>,
+    /// Per-civ latest cohesion in `[0.0, 1.0]` from
+    /// `CohesionShifted`. Sidebar surfaces this so the reader can
+    /// tell which civs are near civil-war / breakaway thresholds
+    /// before the collapse event fires.
+    civ_cohesion: BTreeMap<u32, f64>,
+    /// Per-civ latest life expectancy in months from
+    /// `CivLifeExpectancyChanged`. Sidebar renders this as years
+    /// (months / planet's orbital period) so the reader sees the
+    /// effective lifespan a civ's drift / tools / catastrophes
+    /// have moved them to relative to their species baseline.
+    civ_life_expectancy_months: BTreeMap<u32, f64>,
+    /// `relation_id` → `template_name` map populated on the first
+    /// `RelationConfirmed` we see for each relation. Log lines for
+    /// downstream relation events (falsified / lapsed / rival /
+    /// displaced / mythologized) look up the template name here
+    /// so they read as `lost "water flows downhill"` instead of
+    /// the cryptic `lost r438`.
+    relation_template_names: BTreeMap<u32, String>,
 }
 
 impl<W: Write> ViewportEmitter<W> {
@@ -149,6 +180,22 @@ impl<W: Write> ViewportEmitter<W> {
             relations_lapsed_logged: BTreeSet::new(),
             transmissions_logged: BTreeSet::new(),
             wars_active: BTreeSet::new(),
+            civ_tech_tier: BTreeMap::new(),
+            civ_tools_unlocked: BTreeMap::new(),
+            civ_cohesion: BTreeMap::new(),
+            civ_life_expectancy_months: BTreeMap::new(),
+            relation_template_names: BTreeMap::new(),
+        }
+    }
+
+    /// Resolve a relation_id to a human-readable name. Falls back
+    /// to the bare `r{id}` form if the relation hasn't fired a
+    /// `RelationConfirmed` yet (transient — most downstream events
+    /// arrive after confirmation).
+    fn relation_label(&self, relation_id: u32) -> String {
+        match self.relation_template_names.get(&relation_id) {
+            Some(name) => format!("`{name}`"),
+            None => format!("r{relation_id}"),
         }
     }
 
@@ -163,6 +210,20 @@ impl<W: Write> ViewportEmitter<W> {
         "mystical",
         "hierarchical",
     ];
+
+    /// Resolve a civ_id to its human-readable name for log lines.
+    /// Falls back to `civ N` when the name hasn't arrived yet (the
+    /// first events on a freshly-founded civ may race the
+    /// `CivFounded` name capture). The post-collapse cleanup
+    /// removes the name, so log lines for a recently-collapsed civ
+    /// also fall back — fine, the collapse log line itself logged
+    /// the name while it was still present.
+    fn civ_label(&self, civ_id: u32) -> String {
+        self.civ_names
+            .get(&civ_id)
+            .cloned()
+            .unwrap_or_else(|| format!("civ {civ_id}"))
+    }
 
     /// Classify an event for the scrolling log. Returns the
     /// formatted message (without the `[year N]` prefix) when the
@@ -183,16 +244,31 @@ impl<W: Write> ViewportEmitter<W> {
     fn log_message(&mut self, ev: &Event) -> Option<String> {
         use crate::q32::q32_to_f64;
         match ev {
-            Event::CivFounded(f) => Some(format!(
-                "civ {} founded ({} cell{})",
-                f.civ_id,
-                f.claimed_cells.len(),
-                if f.claimed_cells.len() == 1 { "" } else { "s" }
+            Event::CivFounded(f) => {
+                // CivFounded races the name capture — fall back to
+                // `civ N` if the event arrives with an empty name
+                // (some test fixtures do, and the deterministic
+                // founding-band reseed could in principle too).
+                let label = if f.name.is_empty() {
+                    format!("civ {}", f.civ_id)
+                } else {
+                    f.name.clone()
+                };
+                Some(format!(
+                    "{label} founded ({} cell{})",
+                    f.claimed_cells.len(),
+                    if f.claimed_cells.len() == 1 { "" } else { "s" }
+                ))
+            }
+            Event::CivCollapsed(c) => Some(format!(
+                "{} collapsed ({})",
+                self.civ_label(c.civ_id),
+                c.reason
             )),
-            Event::CivCollapsed(c) => Some(format!("civ {} collapsed ({})", c.civ_id, c.reason)),
             Event::CatastropheFired(c) => Some(format!(
-                "catastrophe: {} on civ {}",
-                c.catastrophe_kind, c.civ_id
+                "{} hit by {} catastrophe",
+                self.civ_label(c.civ_id),
+                c.catastrophe_kind
             )),
             // Per-pair coalescing: after two civs first establish
             // contact, dozens of relations stream across in a burst.
@@ -204,8 +280,9 @@ impl<W: Write> ViewportEmitter<W> {
                     return None;
                 }
                 Some(format!(
-                    "civ {} → civ {} began transmitting knowledge",
-                    k.source_civ_id, k.dest_civ_id
+                    "{} → {} sharing knowledge",
+                    self.civ_label(k.source_civ_id),
+                    self.civ_label(k.dest_civ_id)
                 ))
             }
             // Suppress mid-war skirmishes. Multi-tick wars emit a
@@ -225,13 +302,15 @@ impl<W: Write> ViewportEmitter<W> {
                     return None;
                 }
                 Some(format!(
-                    "conflict resolved (civ {} vs civ {} — civ {} defeated)",
-                    c.winner_civ_id, c.loser_civ_id, c.loser_civ_id
+                    "{} defeated {}",
+                    self.civ_label(c.winner_civ_id),
+                    self.civ_label(c.loser_civ_id),
                 ))
             }
             Event::WarDeclared(w) => Some(format!(
-                "civ {} declared war on civ {}",
-                w.aggressor_civ_id, w.defender_civ_id
+                "{} declared war on {}",
+                self.civ_label(w.aggressor_civ_id),
+                self.civ_label(w.defender_civ_id)
             )),
             Event::PeaceConcluded(p) => {
                 let reason = match p.reason {
@@ -240,8 +319,9 @@ impl<W: Write> ViewportEmitter<W> {
                     protocol::PeaceReason::TerritoryResolved => "borders settled",
                 };
                 Some(format!(
-                    "peace between civ {} and civ {} ({reason})",
-                    p.civ_a, p.civ_b
+                    "peace: {} and {} ({reason})",
+                    self.civ_label(p.civ_a),
+                    self.civ_label(p.civ_b)
                 ))
             }
             Event::TechUnlocked(t) => {
@@ -253,13 +333,17 @@ impl<W: Write> ViewportEmitter<W> {
                 } else {
                     "unlocked"
                 };
-                Some(format!("civ {} {} {}", t.civ_id, verb, t.tool_name))
+                Some(format!("{} {} {}", self.civ_label(t.civ_id), verb, t.tool_name))
             }
             // Surface first-contact + cosmology-shift events
             // in the log too. Both fire rarely (a few times per
             // run) and add narrative beats without the per-tick
             // flooding that filters out the other event kinds.
-            Event::CivContact(c) => Some(format!("civ {} met civ {}", c.civ_a, c.civ_b)),
+            Event::CivContact(c) => Some(format!(
+                "{} met {}",
+                self.civ_label(c.civ_a),
+                self.civ_label(c.civ_b)
+            )),
             // Name the dominant axis with signed magnitude.
             // The `axes_q32` vector packs 5 axes; we compute
             // the delta against the previous snapshot, find the
@@ -270,7 +354,7 @@ impl<W: Write> ViewportEmitter<W> {
             // dominant axis (the absolute position).
             Event::CosmologyShifted(s) => {
                 if s.axes_q32.len() < 5 {
-                    return Some(format!("civ {} cosmology shift", s.civ_id));
+                    return Some(format!("{} worldview shifting", self.civ_label(s.civ_id)));
                 }
                 let mut curr = [0.0_f64; 5];
                 for (i, raw) in s.axes_q32.iter().take(5).enumerate() {
@@ -294,8 +378,8 @@ impl<W: Write> ViewportEmitter<W> {
                 }
                 let sign = if best_delta >= 0.0 { "+" } else { "-" };
                 Some(format!(
-                    "civ {} cosmology shift: {}{}{:.2}",
-                    s.civ_id,
+                    "{} drifts {}{}{:.2}",
+                    self.civ_label(s.civ_id),
                     Self::COSMOLOGY_AXIS_NAMES[best_idx],
                     sign,
                     best_abs
@@ -310,12 +394,14 @@ impl<W: Write> ViewportEmitter<W> {
             // tool) that deserve mention alongside founding /
             // collapse / contact / cosmology-shift events.
             Event::TemplateDiscovered(t) => Some(format!(
-                "civ {} discovered template `{}` (threshold ≈ {:.2})",
-                t.civ_id, t.template_name, t.threshold_si
+                "{} discovered `{}`",
+                self.civ_label(t.civ_id),
+                t.template_name
             )),
             Event::ToolDiscovered(t) => Some(format!(
-                "civ {} invented tool `{}` (cluster of {})",
-                t.civ_id, t.tool_name, t.cluster_size
+                "{} invented `{}`",
+                self.civ_label(t.civ_id),
+                t.tool_name
             )),
             // Surface the species starting cosmology bias as a
             // one-shot tick-0 log line. Names the dominant axis
@@ -351,17 +437,26 @@ impl<W: Write> ViewportEmitter<W> {
                 ))
             }
             // A rival hypothesis was proposed for an already-
-            // confirmed relation. Compact: "civ X rival Linear vs
-            // ThresholdStep r42".
+            // confirmed relation. Surfaces the form contest in
+            // plain language ("Linear vs ThresholdStep") + the
+            // relation's template name when known so the reader
+            // sees a paradigm shift in progress rather than a
+            // cryptic `r42` id.
             Event::RivalHypothesisProposed(r) => Some(format!(
-                "civ {} rival {} vs {} r{}",
-                r.civ_id, r.primary_form, r.rival_form, r.relation_id
+                "{} debates {} vs {} for {}",
+                self.civ_label(r.civ_id),
+                r.primary_form,
+                r.rival_form,
+                self.relation_label(r.relation_id),
             )),
             // Primary-hypothesis displacement — a rival's
             // confidence exceeded the primary's, swapped.
             Event::PrimaryHypothesisDisplaced(p) => Some(format!(
-                "civ {} replaced {} with {} (r{})",
-                p.civ_id, p.old_form, p.new_form, p.relation_id
+                "{} replaced {} with {} for {}",
+                self.civ_label(p.civ_id),
+                p.old_form,
+                p.new_form,
+                self.relation_label(p.relation_id),
             )),
             // Mythologization line. A relation didn't quite
             // make it across the comprehension gate but left a
@@ -376,8 +471,9 @@ impl<W: Write> ViewportEmitter<W> {
                     _ => "hierarchical",
                 };
                 Some(format!(
-                    "civ {} mythologized r{} → {}",
-                    m.dest_civ_id, m.relation_id, axis_name
+                    "{} mythologized {} → {axis_name}",
+                    self.civ_label(m.dest_civ_id),
+                    self.relation_label(m.relation_id),
                 ))
             }
             // Cohesion-shift line. Lets the user see when a
@@ -386,10 +482,11 @@ impl<W: Write> ViewportEmitter<W> {
                 use crate::q32::q32_to_f64;
                 let cur = q32_to_f64(c.cohesion_q32);
                 let prev = q32_to_f64(c.previous_q32);
-                let dir = if cur > prev { "up" } else { "down" };
+                let dir = if cur > prev { "rising" } else { "falling" };
                 Some(format!(
-                    "civ {} cohesion {} {:.2}",
-                    c.civ_id, dir, cur
+                    "{} cohesion {dir} ({:.0}%)",
+                    self.civ_label(c.civ_id),
+                    cur * 100.0
                 ))
             }
             // Per-civ species drift line. Shows the largest-
@@ -397,10 +494,10 @@ impl<W: Write> ViewportEmitter<W> {
             // gradual subspecies divergence.
             Event::SpeciesDrift(d) => {
                 let channels = [
-                    ("cog", q32_to_f64(d.cognition_delta_q32)),
-                    ("soc", q32_to_f64(d.sociality_delta_q32)),
-                    ("life", q32_to_f64(d.lifespan_delta_years_q32)),
-                    ("comm", q32_to_f64(d.communication_fidelity_delta_q32)),
+                    ("cognition", q32_to_f64(d.cognition_delta_q32)),
+                    ("sociality", q32_to_f64(d.sociality_delta_q32)),
+                    ("lifespan", q32_to_f64(d.lifespan_delta_years_q32)),
+                    ("comms", q32_to_f64(d.communication_fidelity_delta_q32)),
                 ];
                 let mut best_idx = 0usize;
                 let mut best_abs = 0.0_f64;
@@ -411,14 +508,16 @@ impl<W: Write> ViewportEmitter<W> {
                     }
                 }
                 let sign = if channels[best_idx].1 >= 0.0 { "+" } else { "" };
-                let unit = if channels[best_idx].0 == "life" {
+                let unit = if channels[best_idx].0 == "lifespan" {
                     "y"
                 } else {
                     ""
                 };
                 Some(format!(
-                    "civ {} drift {}{:.2}{} {}",
-                    d.civ_id, sign, channels[best_idx].1, unit, channels[best_idx].0
+                    "{} drifted {} {sign}{:.2}{unit}",
+                    self.civ_label(d.civ_id),
+                    channels[best_idx].0,
+                    channels[best_idx].1,
                 ))
             }
             // Per-kind first-only: each `relation_id` logs once when
@@ -435,14 +534,17 @@ impl<W: Write> ViewportEmitter<W> {
                 Some(format!("species confirmed `{}`", r.template_name))
             }
             // Per-kind first-only on `relation_id`: the species'
-            // first refutation of each law.
+            // first refutation of each law. Quotes the template
+            // name (the *what*) rather than the cryptic `r42` id.
             Event::RelationFalsified(f) => {
                 if !self.relations_falsified_logged.insert(f.relation_id) {
                     return None;
                 }
                 Some(format!(
-                    "civ {} falsified r{} ({})",
-                    f.civ_id, f.relation_id, f.old_form
+                    "{} rejected {} as {}",
+                    self.civ_label(f.civ_id),
+                    self.relation_label(f.relation_id),
+                    f.old_form
                 ))
             }
             // Per-kind first-only: surface the first time each law
@@ -453,8 +555,10 @@ impl<W: Write> ViewportEmitter<W> {
                     return None;
                 }
                 Some(format!(
-                    "civ {} lapsed r{} (from civ {})",
-                    l.civ_id, l.relation_id, l.from_civ_id
+                    "{} lost {} (from {})",
+                    self.civ_label(l.civ_id),
+                    self.relation_label(l.relation_id),
+                    self.civ_label(l.from_civ_id)
                 ))
             }
             // Magnitude / threshold: only surface high-charisma
@@ -468,8 +572,10 @@ impl<W: Write> ViewportEmitter<W> {
                     return None;
                 }
                 Some(format!(
-                    "civ {} figure {} born (charisma {:.2})",
-                    f.civ_id, f.name, charisma
+                    "{} born in {} (charisma {:.2})",
+                    f.name,
+                    self.civ_label(f.civ_id),
+                    charisma
                 ))
             }
             _ => None,
@@ -766,6 +872,10 @@ impl<W: Write> ViewportEmitter<W> {
                 // should compare against zero, not stale state.
                 self.civ_cosmology.remove(&c.civ_id);
                 self.civ_religion.remove(&c.civ_id);
+                self.civ_tech_tier.remove(&c.civ_id);
+                self.civ_tools_unlocked.remove(&c.civ_id);
+                self.civ_cohesion.remove(&c.civ_id);
+                self.civ_life_expectancy_months.remove(&c.civ_id);
                 // Drop any war pairs touching this civ so a
                 // re-emerged civ_id can re-trigger a fresh
                 // "conflict resolved" line. Pairs are stored as
@@ -794,6 +904,36 @@ impl<W: Write> ViewportEmitter<W> {
             }
             Event::Tick(t) => {
                 self.current_tick = t.tick;
+            }
+            Event::TechUnlocked(t) => {
+                let entry = self.civ_tech_tier.entry(t.civ_id).or_insert(0);
+                if t.tier > *entry {
+                    *entry = t.tier;
+                }
+                self.civ_tools_unlocked
+                    .entry(t.civ_id)
+                    .or_default()
+                    .insert(t.tool_name.clone());
+            }
+            Event::CohesionShifted(c) => {
+                use crate::q32::q32_to_f64;
+                self.civ_cohesion
+                    .insert(c.civ_id, q32_to_f64(c.cohesion_q32));
+            }
+            Event::CivLifeExpectancyChanged(l) => {
+                use crate::q32::q32_to_f64;
+                self.civ_life_expectancy_months
+                    .insert(l.civ_id, q32_to_f64(l.life_expectancy_months_q32));
+            }
+            Event::RelationConfirmed(r) => {
+                // First-confirmation wins; later civs confirming
+                // the same relation_id (across collapse boundaries)
+                // would just re-insert the same name, but a stable
+                // first-write avoids needless map churn on every
+                // confirmation.
+                self.relation_template_names
+                    .entry(r.relation_id)
+                    .or_insert_with(|| r.template_name.clone());
             }
             _ => {}
         }
@@ -963,22 +1103,34 @@ impl<W: Write> ViewportEmitter<W> {
                 format!("─── {open}{name}{close} ───")
             };
             lines.push(header);
+            // Tech tier sits on the identity line next to the
+            // capital-letter / pop-digit swatch so the reader can
+            // scan "what marker, which population, what era" in
+            // one row. Tier defaults to 0 until the first
+            // `TechUnlocked` event arrives.
+            let tier = self.civ_tech_tier.get(civ_id).copied().unwrap_or(0);
+            let tool_count = self
+                .civ_tools_unlocked
+                .get(civ_id)
+                .map_or(0, BTreeSet::len);
             // Identity line: capital letter (still A..Z by civ_id)
             // is the on-map marker for this civ's centroid; the
             // `0-9` is a colored swatch standing in for the
             // pop-scaled digits the civ's territory cells render
             // as. In monochrome mode there's no colour, so fall
             // back to the legacy `{letter}=cap · {digit}=civ` line.
+            // Tier + tool count surface era + breadth-of-tech-tree
+            // in one row alongside the cap/pop swatch.
             let identity = if self.cfg.use_color {
                 format!(
-                    "{open}{cap}{close}=cap · {open}0-9{close}=pop",
+                    "{open}{cap}{close}=cap · {open}0-9{close}=pop · t{tier} · {tool_count} tools",
                     open = open,
                     close = close,
                     cap = centroid_symbol(*civ_id),
                 )
             } else {
                 format!(
-                    "{}=cap · {}=civ",
+                    "{}=cap · {}=civ · t{tier} · {tool_count} tools",
                     centroid_symbol(*civ_id),
                     claim_symbol(*civ_id),
                 )
@@ -1006,24 +1158,84 @@ impl<W: Write> ViewportEmitter<W> {
                 claim.claimed_cells.len(),
                 civ_pop.max(0.0),
             ));
-            // Religion vector summary line. Names each
-            // axis with a sign suffix when its absolute value
-            // crosses 0.20; suppressed entirely when the civ has
-            // no religion drift on file (no `ReligionShifted`
-            // emitted yet — typical for very young civs).
-            if let Some(rel) = self.civ_religion.get(civ_id) {
-                let mut parts: Vec<String> = Vec::new();
-                let label = ["theol", "rit", "esch"];
-                for (i, v) in rel.iter().enumerate() {
-                    if v.abs() < 0.20 {
-                        continue;
+            // Stats line: cohesion + life expectancy, both pulled
+            // from the running per-civ snapshots. Cohesion shown as
+            // a 0-100 percentage so the reader can read it against
+            // the civil-war floor (~10) and breakaway band
+            // (10-35). Life expectancy from months → years using
+            // the planet's actual orbital period (matches the
+            // year display in the caption). Always emitted so the
+            // panel keeps a fixed line count per civ.
+            let cohesion_pct = self
+                .civ_cohesion
+                .get(civ_id)
+                .copied()
+                .map_or(100, |c| (c * 100.0).round().clamp(0.0, 100.0) as i64);
+            let period_months = self
+                .planet
+                .as_ref()
+                .map_or(protocol::BASELINE_MONTHS_PER_YEAR as u32, |p| {
+                    p.orbital_period_months
+                });
+            let life_y = self
+                .civ_life_expectancy_months
+                .get(civ_id)
+                .copied()
+                .map_or(0.0, |m| m / f64::from(period_months));
+            if life_y > 0.5 {
+                lines.push(format!("cohesion {cohesion_pct}% · life {life_y:.0}y"));
+            } else {
+                lines.push(format!("cohesion {cohesion_pct}%"));
+            }
+            // Religion + cosmology dominant-axis line. Names the
+            // strongest-magnitude axis on each side with signed
+            // magnitude so the reader sees what this civ's belief
+            // system *is*, not just abbreviated suffixes. Hidden
+            // entirely when both vectors are still neutral
+            // (newborn civ, no drift yet).
+            let cosmo_axis: Option<(usize, f64)> =
+                self.civ_cosmology.get(civ_id).and_then(|c| {
+                    let mut best = None;
+                    for (i, v) in c.iter().enumerate() {
+                        if v.abs() < 0.20 {
+                            continue;
+                        }
+                        if best.map_or(true, |(_, ba): (usize, f64)| v.abs() > ba.abs()) {
+                            best = Some((i, *v));
+                        }
                     }
-                    let sign = if *v >= 0.0 { '+' } else { '-' };
-                    parts.push(format!("{}{}", label[i], sign));
-                }
-                if !parts.is_empty() {
-                    lines.push(format!("rel: {}", parts.join(" ")));
-                }
+                    best
+                });
+            let rel_axis: Option<(usize, f64)> =
+                self.civ_religion.get(civ_id).and_then(|r| {
+                    let mut best = None;
+                    for (i, v) in r.iter().enumerate() {
+                        if v.abs() < 0.20 {
+                            continue;
+                        }
+                        if best.map_or(true, |(_, ba): (usize, f64)| v.abs() > ba.abs()) {
+                            best = Some((i, *v));
+                        }
+                    }
+                    best
+                });
+            let rel_labels = ["theology", "ritual", "afterlife"];
+            let mut belief_parts: Vec<String> = Vec::new();
+            if let Some((i, v)) = cosmo_axis {
+                let sign = if v >= 0.0 { '+' } else { '-' };
+                belief_parts.push(format!(
+                    "{}{}{:.1}",
+                    Self::COSMOLOGY_AXIS_NAMES[i],
+                    sign,
+                    v.abs()
+                ));
+            }
+            if let Some((i, v)) = rel_axis {
+                let sign = if v >= 0.0 { '+' } else { '-' };
+                belief_parts.push(format!("{}{}{:.1}", rel_labels[i], sign, v.abs()));
+            }
+            if !belief_parts.is_empty() {
+                lines.push(belief_parts.join(" · "));
             }
             // List active wars this civ is in (rivals listed by
             // id ascending). The pair set is mirrored from
@@ -1046,7 +1258,7 @@ impl<W: Write> ViewportEmitter<W> {
             if !rivals.is_empty() {
                 let label = rivals
                     .iter()
-                    .map(|id| format!("civ {id}"))
+                    .map(|id| self.civ_label(*id))
                     .collect::<Vec<_>>()
                     .join(", ");
                 lines.push(format!("\u{2694} war: {label}"));
@@ -1151,13 +1363,41 @@ impl<W: Write> ViewportEmitter<W> {
                 }
                 let mut planet_lines: Vec<String> = card.lines().map(str::to_string).collect();
                 planet_lines.push(caption.clone());
+                // Block-center: every line gets the same left
+                // padding computed from the widest line, so the
+                // card reads as one centered block where every
+                // entry starts at the same column. Independent
+                // per-line centering put each line at its own
+                // offset, which looked off-center even though each
+                // line was technically balanced.
+                let widest = planet_lines
+                    .iter()
+                    .map(|l| visible_width(l))
+                    .max()
+                    .unwrap_or(0);
+                let block_left = MAP_WIDTH.saturating_sub(widest) / 2;
+                // Compose each line as `<block_left spaces><line><right pad>`
+                // so it pads out to MAP_WIDTH while sharing a single
+                // left margin with every other line of the card.
+                let render_line = |line: &str| -> String {
+                    let mut s = String::with_capacity(MAP_WIDTH + 8);
+                    for _ in 0..block_left {
+                        s.push(' ');
+                    }
+                    s.push_str(line);
+                    let used = block_left + visible_width(line);
+                    for _ in used..MAP_WIDTH {
+                        s.push(' ');
+                    }
+                    s
+                };
                 if log_rides_top {
                     let log_lines: Vec<&str> =
                         self.recent_events.iter().map(String::as_str).collect();
                     let row_count = planet_lines.len().max(log_lines.len());
                     for i in 0..row_count {
                         let p_row = planet_lines.get(i).map_or("", String::as_str);
-                        let p_padded = pad_to(p_row, MAP_WIDTH);
+                        let p_padded = render_line(p_row);
                         let l_row = log_lines.get(i).copied().unwrap_or("");
                         buf.write_all(p_padded.as_bytes())?;
                         buf.write_all(b" |")?;
@@ -1170,7 +1410,7 @@ impl<W: Write> ViewportEmitter<W> {
                     }
                 } else {
                     for line in &planet_lines {
-                        buf.write_all(line.as_bytes())?;
+                        buf.write_all(render_line(line).as_bytes())?;
                         buf.write_all(ANSI_ERASE_LINE.as_bytes())?;
                         buf.write_all(b"\n")?;
                     }

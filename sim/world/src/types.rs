@@ -171,4 +171,31 @@ impl MetabolicSubstrate {
             MetabolicSubstrate::Silicate => "silicate",
         }
     }
+
+    /// Substrate-derived **biological time-scale factor**. Slow
+    /// chemistries unfold over geological time: a silicate crystal
+    /// lattice's "generation" is glacial compared to an aqueous one's.
+    /// This factor multiplies every per-tick biological / societal
+    /// rate (birth, claim, tech, cohesion drift, religion drift) and
+    /// inversely scales every streak / cooldown measured in ticks, so
+    /// the integer tick count of the sim covers proportionally more
+    /// substrate-internal time on slow substrates. Physics catastrophe
+    /// cadences (asteroid, ice age, solar flare, volcanism) are *not*
+    /// scaled — they're external to biology.
+    ///
+    /// Returns a multiplier in (0, 1]. Aqueous is the calibration
+    /// baseline (1.0). The conservative initial spread (0.5 / 0.4 /
+    /// 0.2) gives slow-chemistry worlds two- to five-times-longer
+    /// civilizational arcs without compressing into a single tick what
+    /// used to span a century.
+    #[must_use]
+    pub fn metabolism(self) -> sim_arith::Real {
+        use sim_arith::Real;
+        match self {
+            MetabolicSubstrate::Aqueous => Real::ONE,
+            MetabolicSubstrate::Ammoniacal => Real::from_ratio(5, 10),
+            MetabolicSubstrate::Hydrocarbon => Real::from_ratio(4, 10),
+            MetabolicSubstrate::Silicate => Real::from_ratio(2, 10),
+        }
+    }
 }

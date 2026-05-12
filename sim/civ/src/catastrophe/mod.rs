@@ -135,10 +135,22 @@ pub fn check_and_apply(
     // and spreads to adjacent claimed cells. Pre- it was a
     // uniform civ-wide pop drop, which read as artificial: a
     // plague hits cities first, not equally everywhere.
+    //
+    // Disease is biology-driven (crowding-disease dynamics tied to
+    // generational time), so its cooldown stretches with substrate
+    // metabolism — a silicate civ doesn't experience the same plague
+    // cadence as an aqueous one in absolute ticks. The physics-
+    // driven kinds (volcanic / asteroid / solar / ice age) keep raw
+    // cooldowns: those are external to biology.
+    let metabolism = planet.metabolic_substrate.metabolism();
+    let disease_cooldown = crate::demographics::streak_ticks_for_metabolism(
+        DISEASE_COOLDOWN_TICKS,
+        metabolism,
+    );
     let disease_ready = civ
         .last_disease_tick
-        .is_none_or(|t| tick.saturating_sub(t) >= DISEASE_COOLDOWN_TICKS);
-    if disease_ready && disease_fires(civ, state, tick) {
+        .is_none_or(|t| tick.saturating_sub(t) >= disease_cooldown);
+    if disease_ready && disease_fires(civ, state, planet, tick) {
         // severity scales with biosphere richness. :
         // BasicHealing / MedicalIntervention / AdvancedMedicine /
         // GeneticManipulation reduce the realised loss via

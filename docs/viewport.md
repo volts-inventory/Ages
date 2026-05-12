@@ -155,7 +155,6 @@ simulation.
 ## Frame cadence
 
 `--frame-every-ticks` controls how often a frame paints. Default
-is 6 ticks (half a sim-year at the default 12-month calendar).
-`--tick-rate-ms` adds a real-time delay between ticks for
-watchability — both knobs are decorative and don't affect the
-NDJSON.
+50 ticks. `--tick-rate-ms` adds a real-time delay between ticks
+for watchability — both knobs are decorative and don't affect
+the NDJSON.

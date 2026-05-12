@@ -77,9 +77,10 @@ drifts toward an equilibrium driven by:
   but punishes heretical confirmations.
 - **Literacy** — record-keeping holds the polity together.
 
-When cohesion stays below 0.10 for 75 baseline-years, the civ
-collapses with reason `civil_war`. `CohesionShifted` events emit on
-≥ 0.05 absolute drift.
+When cohesion stays below 0.10 for 75 baseline-years (stretched by
+substrate metabolism — see [population.md](population.md#substrate-metabolism--biological-time-scale)),
+the civ collapses with reason `civil_war`. `CohesionShifted` events
+emit on ≥ 0.05 absolute drift.
 
 ## Breakaway
 
@@ -121,10 +122,10 @@ Stateless re-founding admits a new civ centred on a remnant cohort
 when:
 
 - Stateless cohort population ≥ founding floor.
-- Most recent collapse within `RECENT_REMNANT_WINDOW` (currently
-  3000 ticks = 250 baseline-years).
-- At least `FOUNDING_MIN_DARK_AGE` (600 ticks = 50 baseline-years)
-  have passed since collapse.
+- Most recent collapse within `RECENT_REMNANT_WINDOW` (250
+  baseline-years, stretched by substrate metabolism).
+- At least `FOUNDING_MIN_DARK_AGE` (50 baseline-years, stretched
+  by substrate metabolism) have passed since collapse.
 
 ## Active law engagement
 

@@ -66,12 +66,20 @@ campaigns, ~1000 lines of report.
 
 ## Last change
 
-Documentation rewrite: de-Q-ified the whole repo, split
-current-state behavior into per-feature docs in `docs/`, archived
-`docs/decisions/` as historical-rationale only. Then split scope
-across surfaces — added `docs/PROJECT.md` for vision-vs-state,
-tightened README to entry-point shape, tightened this file to
-resumption-anchor shape.
+Pacing retune — substrate-derived biological time + spatial
+densification. Added `MetabolicSubstrate::metabolism()` (Aqueous
+1.0 / Ammoniacal 0.5 / Hydrocarbon 0.4 / Silicate 0.2) threaded
+through birth rate, civ-claim cadence, hypothesis cadence,
+emergence-check cadence, cohesion drift, civil-war / cultural-lock
+/ food-crisis / knowledge-plateau / breakaway / dark-age streaks,
+and the disease catastrophe cooldown (physics catastrophes left
+unscaled). Raised base `carrying_capacity_per_unit` from 500 to
+2500 (5× spatial densification) and lowered
+`migration_pressure_threshold` to the 0.55–0.75 band so claim
+activity continues. Auto-scaled the live viewport's
+`--frame-every-ticks` default for long runs (~1200 frames target,
+floor 50). Conservative initial spread per substrate; iterate
+values from seed-495-equivalent observation.
 
 ## How to use this file
 
@@ -116,9 +124,7 @@ direction shifts and a concrete consumer surfaces:
 
 ## Historical
 
-For substantive PRs landed via Claude in chronological order
-see [CLAUDE_HISTORY.md](CLAUDE_HISTORY.md). For the design-
-decision log (Q-record archive), see
-[docs/decisions/INDEX.md](docs/decisions/INDEX.md). Neither is
+For the design-decision log (Q-record archive), see
+[docs/decisions/INDEX.md](docs/decisions/INDEX.md). It is not
 a source of truth for current behavior — the per-feature docs
 in `docs/*.md` are.
