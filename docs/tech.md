@@ -35,15 +35,27 @@ Each tool carries a set of per-tool gating functions on `ToolKind`
 (in [`sim/civ/src/tech/specs.rs`](../sim/civ/src/tech/specs.rs))
 and contributes to eight effect categories
 (in [`sim/civ/src/tech/effects.rs`](../sim/civ/src/tech/effects.rs)).
-A global `MANIPULATION_PREREQ = ToolExtension` in
-[`sim/civ/src/tech/mod.rs`](../sim/civ/src/tech/mod.rs) excludes
-chemical-secretion / pseudopod-only species from instrumented
-science across the entire tech tree.
+Per-tool `manipulation_prereqs` express which body-plan modes
+suffice to fabricate each tool — replacing the prior global
+`ToolExtension`-only gate. Tier-1 applied-knowledge tools accept
+a broad palette (limbs, tentacles, mandibles, web-construct,
+chemical-secretion, electric-discharge, etc.) so every body plan
+has at least one tier-1 entry point. `ExperimentApparatus` is also
+broad — a clamp-and-measure rig is a function (hold a channel at
+a known value, observe response), and every manipulation mode can
+build one with its native affordance. Tier-2+ precision instrument
+sensorium tools (`ThermalSensor`, `RemoteAcoustic`, `DistanceImaging`,
+`FieldSensor`, `MagneticSensor`) and the tier-5 narrative trio keep
+tighter gates (mostly `ToolExtension` plus a couple of high-DoF
+biological substitutes), so "different sciences for different
+bodies" plays out on which late-game branches a species can
+fabricate rather than whether it does science at all.
 
 ### Gates
 
 | Function | Meaning |
 |----------|---------|
+| `manipulation_prereqs` | Body-plan modes the species must possess at least one of. Empty slice = no manipulation gate. |
 | `relation_prereqs` | `(template_id, channel)` pairs that must be confirmed in the civ's knowledge state. |
 | `tool_prereqs` | Other `ToolKind`s that must already be unlocked. |
 | `observation_threshold` | Minimum cumulative observation count on the civ's hypothesizer. |
@@ -114,9 +126,14 @@ intervention, not only observation.
 
 ### Unlock prereqs
 
-- The global `MANIPULATION_PREREQ = ToolExtension` gate (which
-  every tool sits behind) excludes pseudopod / chemical-secretion
-  species from this and every other tool.
+- `manipulation_prereqs` accepts every `ManipulationKind` — a
+  clamp-and-measure rig is a function, not a body-plan-specific
+  form. ChemicalSecretion runs controlled-concentration baths,
+  WebConstruct weaves a calibrated chamber, FluidJet holds a
+  pressure clamp, ElectricDischarge clamps field strength, Burrow
+  excavates a controlled-volume cell. The substrate gate
+  (confirmed `fire`) plus the per-channel clamp ladders below do
+  the real "which experiments are meaningful here" work.
 - Cumulative observation count ≥ 30 000.
 - Literacy ≥ 0.30.
 - Confirmed `fire` relation.

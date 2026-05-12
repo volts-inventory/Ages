@@ -24,8 +24,6 @@
 //!    have unlocked. Empty for the original 9 tools (they were
 //!    standalone); future capability tools form longer chains.
 
-use sim_species::ManipulationKind;
-
 mod consumption;
 mod effects;
 mod gating;
@@ -445,22 +443,29 @@ pub enum ToolKind {
     /// planetary heterogeneity passive observation provides.
     ///
     /// Tier 2; same gates as the established sensorium tier-2
-    /// tools (observation 30k, literacy 0.30) plus the universal
-    /// `MANIPULATION_PREREQ = ToolExtension` enforced in
-    /// `is_buildable`. Substrate gate: confirmed `fire` law (the
-    /// civ has fit *something* about controlled physical conditions
-    /// before it builds a controlled-conditions device). No
-    /// tool prereq, no granted channel — the effect is on the
-    /// discovery layer (faster + cleaner law recovery), not on
-    /// perception or capacity.
+    /// tools (observation 30k, literacy 0.30). `manipulation_prereqs`
+    /// accepts every `ManipulationKind` — a clamp-and-measure rig
+    /// is a function (hold a channel at a known value, observe the
+    /// response), not a body-plan-specific form: every manipulation
+    /// mode can build one with its own native affordance
+    /// (ChemicalSecretion runs controlled-concentration baths,
+    /// WebConstruct weaves a calibrated chamber, FluidJet holds a
+    /// pressure clamp, ElectricDischarge clamps field strength,
+    /// Burrow excavates a controlled-volume cell). Substrate gate:
+    /// confirmed `fire` law (the civ has fit *something* about
+    /// controlled physical conditions before it builds a controlled-
+    /// conditions device). No tool prereq, no granted channel —
+    /// the effect is on the discovery layer (faster + cleaner law
+    /// recovery), not on perception or capacity.
     ///
-    /// Vision-aligned: a tactile-only ToolExtension-bearing species
-    /// with a confirmed thermal law builds an apparatus and starts
-    /// recovering its planet's `α` from clean diffusion experiments
-    /// — that's the "Galileo, not Aristotle" upgrade the project
-    /// has been missing. A no-tool species (chemical-modality
-    /// floaters, etc.) stays observation-only forever, sustaining
-    /// the "different sciences" goal.
+    /// Vision-aligned: any species with a confirmed thermal law
+    /// builds an apparatus and starts recovering its planet's `α`
+    /// from clean diffusion experiments — that's the "Galileo, not
+    /// Aristotle" upgrade the project has been missing.
+    /// "Different sciences for different bodies" plays out on
+    /// which late-game branches a species can fabricate
+    /// (tier-2+ precision instruments, tier-5 narrative trio),
+    /// not on whether it does science at all.
     ExperimentApparatus,
 }
 
@@ -470,9 +475,12 @@ pub enum ToolKind {
 /// literacy via `is_unlocked`.
 /// scaled ×12 (year-meant: "tier × 200 years").
 pub const TIER_UNLOCK_PERIOD_TICKS: u64 = 200 * protocol::MONTHS_PER_YEAR;
-/// Manipulation mode prereq for every tool. Constructing a
-/// sensorium-extending instrument needs a tool-using body plan;
-/// species lacking `ToolExtension` are permanently locked out of
-/// the entire registry. This is the central mechanism by which
-/// non-tool-using species reach genuinely different sciences.
-pub const MANIPULATION_PREREQ: ManipulationKind = ManipulationKind::ToolExtension;
+
+// Manipulation prereqs are now per-tool — see
+// `ToolKind::manipulation_prereqs`. The retired global
+// `MANIPULATION_PREREQ = ToolExtension` constant collapsed
+// "different sciences for different bodies" into "no sciences for
+// most bodies"; the per-tool table preserves substrate divergence
+// (tier-2+ instruments and `ExperimentApparatus` still demand
+// `ToolExtension`) while letting any body plan reach tier-1
+// applied knowledge.

@@ -5,7 +5,7 @@
 //! serendipity-path helpers (`serendipity_missing_prereqs`,
 //! `serendipity_roll`).
 
-use super::{ToolKind, MANIPULATION_PREREQ, TIER_UNLOCK_PERIOD_TICKS};
+use super::{ToolKind, TIER_UNLOCK_PERIOD_TICKS};
 use crate::discovery::ConfirmedRelation;
 use sim_arith::Real;
 use sim_physics::{PhysicsState, Substance};
@@ -82,7 +82,23 @@ pub fn is_buildable(
     has_atmosphere_or_ocean: bool,
     crust: Crust,
 ) -> bool {
-    if !species_manipulations.contains(&MANIPULATION_PREREQ) {
+    // Per-tool manipulation gate. The species must possess at
+    // least one manipulation mode the tool accepts; an empty
+    // `manipulation_prereqs` slice means "no manipulation gate"
+    // (purely social / cognitive tools like `TradeNetworks`).
+    //
+    // Replaces the prior global `ToolExtension`-only gate so that
+    // chemical-secretion / web / burrow / jet body plans can reach
+    // tier-1 applied knowledge instead of being frozen at zero
+    // tools forever. Substrate divergence still holds — high-
+    // precision instrument tools (sensorium tier-2+, apparatus,
+    // tier-5 narrative tools) keep tight manipulation prereqs.
+    let manip_prereqs = tool.manipulation_prereqs();
+    if !manip_prereqs.is_empty()
+        && !manip_prereqs
+            .iter()
+            .any(|m| species_manipulations.contains(m))
+    {
         return false;
     }
     let prereqs = tool.prereq_channels();

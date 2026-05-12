@@ -104,16 +104,164 @@ fn field_sensor_blocked_without_em_medium() {
     ));
 }
 
+/// FluidJet-only species: jet-propulsion biology (squid / salp /
+/// archerfish analogues) reaches a substantial tech surface
+/// through native body-plan affordances. The xenobiology audit
+/// makes jet-propulsion the canonical `MotivePropulsion` path
+/// (squid jet propulsion is literal motive propulsion) and admits
+/// jet species to water-jet stoneworking (industrial water-cutting),
+/// pressure-clamped experiments, lateral-line acoustic sensing,
+/// chemical rocketry, and hydropower. Tools whose physical substrate
+/// has no jet-biology analogue (precision optics, EM field
+/// sensors, magnetic sensors, solid-state computation, the
+/// transcendence trio's lattice / resonator pair) remain blocked.
 #[test]
-fn no_tools_buildable_without_tool_extension() {
+fn fluid_jet_species_reaches_diverse_paths_but_not_optical_or_lattice() {
     let species = species_with(&[ChannelKind::VisualLight, ChannelKind::Tactile]);
-    let no_tools: BTreeSet<ManipulationKind> = [ManipulationKind::FluidJet].into_iter().collect();
-    for tool in ToolKind::ALL {
+    let jet_only: BTreeSet<ManipulationKind> = [ManipulationKind::FluidJet].into_iter().collect();
+    // Tier-1 + xenobiology-grounded mid-tier paths that accept
+    // FluidJet should be buildable. (RemoteAcoustic also lists
+    // FluidJet but is gated separately by `prereq_channels` on
+    // AcousticAir / AcousticWater — covered by a separate channel-
+    // gate test, not this one.)
+    for tool in [
+        ToolKind::RangedMomentumWeapon,
+        ToolKind::FoodProcessing,
+        ToolKind::FluidGathering,
+        ToolKind::OrganizedHunting,
+        ToolKind::FluidControl,
+        ToolKind::MotivePropulsion,
+        ToolKind::PowerGeneration,
+        ToolKind::ExperimentApparatus,
+    ] {
         assert!(
-            !is_buildable(tool, &species, &no_tools, true, true, Crust::Basaltic),
-            "{tool:?} should be blocked without ToolExtension"
+            is_buildable(tool, &species, &jet_only, true, true, Crust::Basaltic),
+            "{tool:?} should accept a FluidJet-only species"
         );
     }
+    // Tools whose physical substrate has no jet-biology analogue
+    // remain blocked: precision optics, EM field / magnetic sensors,
+    // solid-state digital computation, the transcendence trio's
+    // lattice / resonator pair, thermochromic temperature sensing.
+    for tool in [
+        ToolKind::ThermalSensor,
+        ToolKind::DistanceImaging,
+        ToolKind::FieldSensor,
+        ToolKind::MagneticSensor,
+        ToolKind::DigitalComputation,
+        ToolKind::BioelectricResonator,
+        ToolKind::MetamaterialLattice,
+    ] {
+        assert!(
+            !is_buildable(tool, &species, &jet_only, true, true, Crust::Basaltic),
+            "{tool:?} should be blocked for a FluidJet-only species"
+        );
+    }
+}
+
+/// Coverage canary: every `ManipulationKind` variant must be
+/// accepted by at least one tier-1 tool so no random species
+/// generation outcome leaves a species frozen at zero tools. The
+/// prior global `MANIPULATION_PREREQ = ToolExtension` gate routinely
+/// produced no-tool species on Sparse-biosphere worlds; the per-tool
+/// table guarantees every body plan has an applied-knowledge entry
+/// point.
+#[test]
+fn every_manipulation_kind_has_tier1_path() {
+    let species = species_with(&[ChannelKind::Tactile]);
+    let tier1 = [
+        ToolKind::LocalisedCombustion,
+        ToolKind::ContactWeapon,
+        ToolKind::RangedMomentumWeapon,
+        ToolKind::SimpleShelter,
+        ToolKind::FoodProcessing,
+        ToolKind::FluidGathering,
+        ToolKind::BasicTextiles,
+        ToolKind::StoneWorking,
+        ToolKind::OrganizedHunting,
+        ToolKind::BasicHealing,
+    ];
+    let all_kinds = [
+        ManipulationKind::LimbGrasp,
+        ManipulationKind::Tentacle,
+        ManipulationKind::MouthBeak,
+        ManipulationKind::TonguePrehensile,
+        ManipulationKind::Trunk,
+        ManipulationKind::Mandible,
+        ManipulationKind::FluidJet,
+        ManipulationKind::ToolExtension,
+        ManipulationKind::WebConstruct,
+        ManipulationKind::Burrow,
+        ManipulationKind::ElectricDischarge,
+        ManipulationKind::ChemicalSecretion,
+    ];
+    for kind in all_kinds {
+        let manips: BTreeSet<ManipulationKind> = [kind].into_iter().collect();
+        let reachable = tier1.iter().any(|tool| {
+            is_buildable(*tool, &species, &manips, true, true, Crust::Basaltic)
+        });
+        assert!(
+            reachable,
+            "{kind:?} must have at least one tier-1 tool path — the \
+             per-tool manipulation_prereqs table left this body plan \
+             with zero tier-1 entries"
+        );
+    }
+}
+
+/// ExperimentApparatus accepts every manipulation mode. A clamp-
+/// and-measure rig is a function (hold a channel at a known
+/// value, observe response), not a specific physical form: every
+/// body plan can build one with its native affordance —
+/// ChemicalSecretion runs controlled-concentration baths,
+/// WebConstruct weaves a calibrated chamber, FluidJet holds a
+/// pressure clamp, ElectricDischarge clamps field strength,
+/// Burrow excavates a controlled-volume cell. The substrate gate
+/// (confirmed `fire`) plus the per-channel clamp ladders already
+/// encode "which experiments are meaningful here."
+#[test]
+fn apparatus_accepts_every_manipulation_kind() {
+    let species = species_with(&[ChannelKind::Tactile]);
+    let all_kinds = [
+        ManipulationKind::LimbGrasp,
+        ManipulationKind::Tentacle,
+        ManipulationKind::MouthBeak,
+        ManipulationKind::TonguePrehensile,
+        ManipulationKind::Trunk,
+        ManipulationKind::Mandible,
+        ManipulationKind::FluidJet,
+        ManipulationKind::ToolExtension,
+        ManipulationKind::WebConstruct,
+        ManipulationKind::Burrow,
+        ManipulationKind::ElectricDischarge,
+        ManipulationKind::ChemicalSecretion,
+    ];
+    for kind in all_kinds {
+        let manips: BTreeSet<ManipulationKind> = [kind].into_iter().collect();
+        assert!(
+            is_buildable(
+                ToolKind::ExperimentApparatus,
+                &species,
+                &manips,
+                true,
+                true,
+                Crust::Basaltic,
+            ),
+            "ExperimentApparatus must accept {kind:?} — a clamp-and-\
+             measure rig is a function, not a body-plan-specific form"
+        );
+    }
+    // Empty manipulation set is still rejected — the species needs
+    // *some* deliberate-state affordance.
+    let empty: BTreeSet<ManipulationKind> = BTreeSet::new();
+    assert!(!is_buildable(
+        ToolKind::ExperimentApparatus,
+        &species,
+        &empty,
+        true,
+        true,
+        Crust::Basaltic,
+    ));
 }
 
 #[test]
