@@ -678,16 +678,18 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
     // Sensorium-extending tech for the active civ. Collect
     // unlocks first (mutable borrow on civ), then emit events.
     // Production gate: tools unlock when manipulation +
-    // native-channel + planet-feature prereqs hold AND
-    // accumulated firings on relevant templates clear the
-    // observation threshold AND civ literacy clears the floor.
-    // M5: per-civ tool unlock checks.
+    // native-channel + planet-feature prereqs hold AND the civ
+    // itself has fit enough confirmed (and experimentally-confirmed)
+    // relations AND civ literacy clears the floor. M5: per-civ
+    // tool unlock checks.
     let mut unlocks_to_emit: Vec<(tech::ToolKind, Vec<u32>, u32, bool)> = Vec::new();
     for civ in civs.iter_mut().filter(|c| c.is_active()) {
         let civ_literacy = civ.literacy_score(tick);
-        // Union of confirmed relations across the civ's
-        // active figures, keyed on relation_id. The clone is
-        // shallow (BTreeMap of references would require lifetime
+        // Union of confirmed firing relations across the civ's
+        // active figures, keyed on relation_id. Used both for the
+        // per-tool `relation_prereqs` template-match check and as
+        // an input to the civ-maturity total count below. The clone
+        // is shallow (BTreeMap of references would require lifetime
         // shenanigans through `is_unlocked`'s many call sites);
         // the per-tick cost is negligible relative to the
         // candidate-fit work the hypothesizer already does.
@@ -698,6 +700,36 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
             .flat_map(|f| f.hypothesizer.confirmed.iter())
             .map(|(k, v)| (*k, v.clone()))
             .collect();
+        // Civ-maturity counts. `civ_confirmed_count` totals
+        // confirmed firing-relations + confirmed measurement-
+        // relations the civ has fit; gates the per-tier
+        // `min_civ_confirmed_relations` floor. `civ_experimental_count`
+        // is the subset of measurement relations whose fit-pool
+        // included at least one apparatus sample
+        // (`ConfirmedMeasurement.is_experimental`); gates
+        // `min_civ_experimental_relations`. Replaces the previous
+        // observation-threshold gate, which counted raw template
+        // firings (environment) rather than confirmed laws (work).
+        let civ_measurement_count: u32 = civ
+            .figures
+            .iter()
+            .filter(|f| f.retired_tick.is_none())
+            .map(|f| {
+                u32::try_from(f.hypothesizer.confirmed_measurements.len()).unwrap_or(u32::MAX)
+            })
+            .fold(0u32, u32::saturating_add);
+        let civ_confirmed_count: u32 = u32::try_from(civ_confirmed.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(civ_measurement_count);
+        let civ_experimental_count: u32 = u32::try_from(
+            civ.figures
+                .iter()
+                .filter(|f| f.retired_tick.is_none())
+                .flat_map(|f| f.hypothesizer.confirmed_measurements.values())
+                .filter(|m| m.is_experimental)
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
         for tool in tech::ToolKind::ALL {
             if civ.unlocked_tools.contains(&tool) {
                 continue;
@@ -711,7 +743,6 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
             if !tech::resource_prereqs_satisfied(tool, state, &civ.claimed_cells) {
                 continue;
             }
-            let observed = civ.observed_count_for_channels(recognition, tool.obs_channel_filter());
             let strict_pass = tech::is_unlocked(
                 tool,
                 species_channels,
@@ -719,7 +750,8 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
                 has_magnetosphere,
                 has_em_medium,
                 planet.crust,
-                observed,
+                civ_confirmed_count,
+                civ_experimental_count,
                 civ_literacy,
                 &civ_confirmed,
                 &civ.unlocked_tools,
@@ -740,7 +772,8 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
                 has_magnetosphere,
                 has_em_medium,
                 planet.crust,
-                observed,
+                civ_confirmed_count,
+                civ_experimental_count,
                 civ_literacy,
                 &civ_confirmed,
                 &civ.unlocked_tools,

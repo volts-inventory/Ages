@@ -8,7 +8,7 @@
 use crate::apparatus::{pick_apparatus_cell, pick_apparatus_channels, Apparatus};
 use crate::{tech, tech::ToolKind, Civ};
 use sim_arith::Real;
-use sim_recognition::{ChannelKind, RecognitionLibrary};
+use sim_recognition::RecognitionLibrary;
 use std::collections::BTreeSet;
 
 impl Civ {
@@ -315,27 +315,6 @@ impl Civ {
             .tool_catastrophe_resistance_bonus()
             .min(Real::from_ratio(80, 100));
         base_frac * (Real::ONE - resistance)
-    }
-
-    /// observation-pressure helper consumed by. Sums the
-    /// civ's lifetime firing counts across templates whose channels
-    /// intersect `channel_filter`. When `channel_filter` is empty
-    /// (tool with no native-channel prereq), sums over every
-    /// template.
-    pub fn observed_count_for_channels(
-        &self,
-        recognition_lib: &RecognitionLibrary,
-        channel_filter: &[ChannelKind],
-    ) -> u64 {
-        if channel_filter.is_empty() {
-            return self.firings_by_template.values().sum();
-        }
-        recognition_lib
-            .templates
-            .iter()
-            .filter(|t| t.channels.iter().any(|c| channel_filter.contains(c)))
-            .map(|t| self.firings_by_template.get(&t.id).copied().unwrap_or(0))
-            .sum()
     }
 
     /// `true` if this civ can claim a cell with the given
