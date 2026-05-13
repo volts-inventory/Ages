@@ -1491,21 +1491,23 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     gained.clone(),
                     &species.biology,
                 );
-                // Drain per-template observations from the
-                // claimed cells into the new civ's observations
-                // map. The civ inherits *what* its nomadic
-                // ancestors learnt — fire, water, lightning,
-                // whatever fired in those cells — so the civ's
-                // tool-unlock pipeline (which gates
-                // ThermalSensor/MagneticSensor/RemoteAcoustic on
-                // cumulative template observations) starts
-                // mid-progress on tools whose firing templates
-                // the founding region had been observing.
-                let inherited =
+                // Per-template *firing counts* from the nomadic
+                // phase are NOT inherited. The previous design
+                // dumped 100+ years of pre-emergence nomad
+                // observation pressure onto a fresh civ, which —
+                // combined with low per-civ observation thresholds
+                // — let 12-year-old civs unlock tier-5 tools. Under
+                // the experiment-driven gate, tech comes from the
+                // civ's own confirmed relations and apparatus work,
+                // not from inherited environmental pressure.
+                //
+                // The nomad-observations map is still drained (so
+                // the cells stop being scored as densely-observed
+                // for emergence purposes), but the counts are
+                // discarded rather than folded into
+                // `new_civ.observations`.
+                let _drained =
                     nomads::drain_observations_for_cells(&mut nomad_observations, gained);
-                for (template_id, count) in inherited {
-                    *new_civ.observations.entry(template_id).or_insert(0) += count;
-                }
                 new_civ.refresh_available_forms(&species_baseline, &recognition);
                 let initial_pop_q32 = new_civ.cohort.total().raw().to_bits();
                 let band = u32::try_from(new_civ.figures.len()).unwrap_or(0);

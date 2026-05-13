@@ -1,9 +1,17 @@
 //! Tool unlock evaluation: `is_buildable` (species + planet hard
 //! gates), `time_gate_open` (legacy wall-clock gate kept for tests),
-//! `is_unlocked` ( production gate: observation pressure +
-//! literacy + relation prereqs + tool prereqs), and
-//! serendipity-path helpers (`serendipity_missing_prereqs`,
-//! `serendipity_roll`).
+//! `is_unlocked` (production gate: civ-maturity counts + literacy +
+//! relation prereqs + tool prereqs), and serendipity-path helpers
+//! (`serendipity_missing_prereqs`, `serendipity_roll`).
+//!
+//! The civ-maturity counts (`min_civ_confirmed_relations` +
+//! `min_civ_experimental_relations`) replaced the earlier
+//! `observation_threshold` gate. Tools come from confirmed laws
+//! the civ has fit through its hypothesizer, not from raw template
+//! firings — environment doesn't unlock tech, science does. The
+//! experimental count is gated additionally on apparatus-supported
+//! confirmations, so a civ that never builds `ExperimentApparatus`
+//! tops out at tier-2 by construction.
 
 use super::{ToolKind, TIER_UNLOCK_PERIOD_TICKS};
 use crate::discovery::ConfirmedRelation;
@@ -127,21 +135,28 @@ pub fn time_gate_open(tool: ToolKind, current_tick: u64) -> bool {
     current_tick >= u64::from(tool.tier()) * TIER_UNLOCK_PERIOD_TICKS
 }
 
-/// production unlock gate. Tool unlocks iff:
+/// Production unlock gate. Tool unlocks iff:
 /// - `is_buildable` (manipulation prereq + native-channel prereq +
 ///   planet feature) holds, AND
-/// - civ has accumulated `observation_threshold` firings on
-///   relevant templates, AND
+/// - civ has fit at least `min_civ_confirmed_relations` confirmed
+///   relations of its own (firing + measurement), AND
+/// - of those, at least `min_civ_experimental_relations` were
+///   experimentally confirmed via `ExperimentApparatus`, AND
 /// - civ's `literacy_score()` reaches `literacy_floor`, AND
-/// - : every `(template_id, _)` in `relation_prereqs` has at
-///   least one matching confirmed relation in
-///   `confirmed_relations`, AND
-/// - : every `ToolKind` in `tool_prereqs` is present in
+/// - every `(template_id, _)` in `relation_prereqs` has at least
+///   one matching confirmed relation in `confirmed_relations`, AND
+/// - every `ToolKind` in `tool_prereqs` is present in
 ///   `unlocked_tools`.
 ///
 /// `confirmed_relations` is the union of `Hypothesizer.confirmed`
-/// across the civ's active figures, indexed by `relation_id`; the
-/// caller (`sim/core/src/lib.rs`) is responsible for collecting it.
+/// (firing relations) across the civ's active figures, indexed by
+/// `relation_id`; the caller (`sim/core/src/lib.rs`) is responsible
+/// for collecting it. `civ_confirmed_count` is the total confirmed
+/// relations (firing + measurement) across the civ; passed
+/// separately so the gate can read it without paying for a second
+/// union over measurement maps. `civ_experimental_count` is the
+/// subset of *measurement* relations whose
+/// `ConfirmedMeasurement.is_experimental == true`.
 /// `unlocked_tools` is the civ's `unlocked_tools` set.
 #[allow(clippy::too_many_arguments)]
 pub fn is_unlocked(
@@ -151,7 +166,8 @@ pub fn is_unlocked(
     has_magnetosphere: bool,
     has_atmosphere_or_ocean: bool,
     crust: Crust,
-    observed_count: u64,
+    civ_confirmed_count: u32,
+    civ_experimental_count: u32,
     civ_literacy: Real,
     confirmed_relations: &BTreeMap<u32, ConfirmedRelation>,
     unlocked_tools: &std::collections::BTreeSet<ToolKind>,
@@ -166,7 +182,10 @@ pub fn is_unlocked(
     ) {
         return false;
     }
-    if observed_count < tool.observation_threshold() {
+    if civ_confirmed_count < tool.min_civ_confirmed_relations() {
+        return false;
+    }
+    if civ_experimental_count < tool.min_civ_experimental_relations() {
         return false;
     }
     if civ_literacy < tool.literacy_floor() {
@@ -228,7 +247,8 @@ pub fn serendipity_missing_prereqs(
     has_magnetosphere: bool,
     has_atmosphere_or_ocean: bool,
     crust: Crust,
-    observed_count: u64,
+    civ_confirmed_count: u32,
+    civ_experimental_count: u32,
     civ_literacy: Real,
     confirmed_relations: &BTreeMap<u32, ConfirmedRelation>,
     unlocked_tools: &std::collections::BTreeSet<ToolKind>,
@@ -246,13 +266,19 @@ pub fn serendipity_missing_prereqs(
     ) {
         return None;
     }
-    // Observation + literacy gates are softer — represent the
-    // civ's general scientific maturity. Allow serendipity to fire
-    // at 75% of the strict thresholds, but no lower.
-    let obs_floor = (tool.observation_threshold() * 3) / 4;
-    if observed_count < obs_floor {
+    // Civ-maturity floors are hard — serendipity is a lucky
+    // leap from "one prereq away," not a free pass past
+    // experimentation + time. A civ short on confirmed work
+    // doesn't accidentally invent quantum computing.
+    if civ_confirmed_count < tool.min_civ_confirmed_relations() {
         return None;
     }
+    if civ_experimental_count < tool.min_civ_experimental_relations() {
+        return None;
+    }
+    // Literacy gate is softer (represents the civ's general
+    // scribal infrastructure). Allow serendipity at 75% of strict
+    // floor.
     let lit_floor = tool.literacy_floor() * Real::from_ratio(75, 100);
     if civ_literacy < lit_floor {
         return None;

@@ -1,8 +1,14 @@
-//! Per-tool unlock prereqs: `observation_threshold`, `literacy_floor`,
-//! `species_maturity_floor`, `obs_channel_filter`, `crust_prereqs`,
-//! `relation_prereqs`, `tool_prereqs`. The big match arms that
-//! describe what the species must observe, learn, and have built
-//! before each tool becomes conceivable.
+//! Per-tool unlock prereqs: `min_civ_confirmed_relations`,
+//! `min_civ_experimental_relations`, `literacy_floor`,
+//! `species_maturity_floor`, `crust_prereqs`, `relation_prereqs`,
+//! `tool_prereqs`. The big match arms that describe what the civ
+//! and species must have done before each tool becomes conceivable.
+//!
+//! The unlock pipeline is built on *what the civ has confirmed*
+//! (relations the hypothesizer has fit and verified), not *what
+//! the cells have seen* (raw template firings). Tools come from
+//! experimentation and time, not from inherited environmental
+//! pressure.
 
 use super::ToolKind;
 use sim_arith::Real;
@@ -32,119 +38,199 @@ const MATERIAL_FAB_RES: [(Substance, Real); 1] = [(Substance::Fossil, Real::from
 const ORGANIC_SYNTH_RES: [(Substance, Real); 1] = [(Substance::Fossil, Real::from_int(5))];
 
 impl ToolKind {
-    /// observation-pressure threshold (cumulative firings of
-    /// `prereq_channels`-matching templates required for the tool
-    /// to be conceivable). Per-tool placeholders under; sized
-    /// so the progression spans a typical civ's ~500-tick window
-    /// rather than firing trivially in the first few ticks (with a
-    /// dev-grid 8×6 = 48 cells, water + ice + vapour templates
-    /// alone can produce ~150 firings/tick, so thresholds need to
-    /// be in the tens-of-thousands range to be a real gate).
+    /// Minimum count of confirmed relations the *civ itself* must
+    /// have fit before this tool unlocks. Sum of confirmed firing-
+    /// relations plus confirmed measurement-relations across the
+    /// civ's active figures.
+    ///
+    /// This is the "civ experimentation" half of the gate: tech
+    /// emerges from the civ's own scientific work, not from
+    /// inherited environmental pressure. Successors do *not*
+    /// inherit confirmed-relation counts — each civ has to do its
+    /// own science.
+    ///
+    /// Tier ladder:
+    /// - tier-1: 0 — pre-literate, foraging, just `relation_prereqs`
+    ///   for the specific phenomenon (fire, water, prey).
+    /// - tier-2: 5 — the civ has fit a handful of basic laws and is
+    ///   ready for settlement-era tools. `ExperimentApparatus` sits
+    ///   here too — it's the gateway to "real" science.
+    /// - tier-3: 25 — pre-industrial. Sustained scientific
+    ///   accumulation across ~250 ticks of figure-hypothesizer work.
+    /// - tier-4: 75 — industrial. Multi-generation canon required.
+    /// - tier-5: 200 — information-age. Sustained scientific
+    ///   tradition across many figure generations. Combined with
+    ///   `min_civ_experimental_relations`, demands intervention-
+    ///   supported epistemology, not just passive observation.
     #[allow(clippy::match_same_arms)]
-    pub fn observation_threshold(self) -> u64 {
+    pub fn min_civ_confirmed_relations(self) -> u32 {
         match self {
-            ToolKind::ThermalSensor => 30_000,
-            ToolKind::RemoteAcoustic => 30_000,
-            ToolKind::FieldSensor => 75_000,
-            ToolKind::DistanceImaging => 75_000,
-            ToolKind::MagneticSensor => 140_000,
-            // Tier-5 per-civ obs thresholds are intentionally
-            // modest — the heavy lifting of "thousands of years"
-            // happens at the species-cumulative maturity gate
-            // (`species_maturity_floor`), not the per-civ obs
-            // gate. The per-civ obs check just ensures the
-            // unlocking civ itself has done some science.
-            ToolKind::BioelectricResonator => 50_000,
-            ToolKind::FieldPropulsionEngine => 8_000,
-            ToolKind::MetamaterialLattice => 50_000,
-            // AmphibiousConstruction: tier-3 obs threshold so
-            // a civ has done meaningful science before it earns the
-            // cross-domain expansion. Same scale as DistanceImaging
-            // (also tier-3, no native-channel prereq).
-            ToolKind::AmphibiousConstruction => 75_000,
-            // tier-1 thresholds: low compared with sensorium
-            // tools because tier-1 capabilities are pre-literate
-            // technologies (campfire, club, knapped stone). The
-            // `obs_channel_filter` for each tier-1 tool narrows
-            // observations to the relevant template family, so a
-            // civ with no fire-template firings can't unlock
-            // LocalisedCombustion regardless of how much science
-            // it does on water / fertile_land. Numbers calibrated
-            // to fire over the first ~50-150 ticks on a typical
-            // habitable seed.
-            ToolKind::LocalisedCombustion => 5_000,
-            ToolKind::ContactWeapon => 1_000,
-            ToolKind::RangedMomentumWeapon => 1_500,
-            ToolKind::SimpleShelter => 500,
-            ToolKind::FoodProcessing => 2_000,
-            ToolKind::FluidGathering => 1_000,
-            ToolKind::BasicTextiles => 1_500,
-            ToolKind::StoneWorking => 1_000,
-            ToolKind::OrganizedHunting => 1_000,
-            ToolKind::BasicHealing => 1_500,
-            // tier-2 thresholds: same scale as the existing
-            // sensorium tier-2 (ThermalSensor / RemoteAcoustic at
-            // 30k) — settlements take meaningful science before
-            // they coalesce. Calibrated to fire over the first
-            // ~500-1500 ticks once a tier-1 tool that gates on
-            // the same substrate has unlocked.
-            ToolKind::BulkCultivation => 30_000,
-            ToolKind::AnimalSymbiosis => 25_000,
-            ToolKind::BulkStorage => 25_000,
-            ToolKind::MaterialRefining => 30_000,
-            ToolKind::CulturalEncoding => 20_000,
-            ToolKind::FluidControl => 30_000,
-            ToolKind::WatercraftConstruction => 25_000,
-            ToolKind::PermanentMasonry => 20_000,
-            ToolKind::TradeNetworks => 25_000,
-            ToolKind::UrbanConstruction => 35_000,
-            // tier-3: 50k-75k range, matching the existing
-            // sensorium tier-3 (DistanceImaging / FieldSensor at
-            // 75k). Pre-industrial science requires meaningful
-            // accumulated observation pressure.
-            ToolKind::ChemicalProjectile => 75_000,
-            ToolKind::PrecisionTimekeeping => 60_000,
-            ToolKind::MechanicalAdvantage => 60_000,
-            ToolKind::LongRangeNavigation => 75_000,
-            ToolKind::WrittenJurisprudence => 50_000,
-            ToolKind::AbstractMathematics => 60_000,
-            ToolKind::ArtisanalSpecialisation => 50_000,
-            ToolKind::DefensiveFortification => 50_000,
-            ToolKind::MotivePropulsion => 60_000,
-            // tier-4: 80k-140k range, matching MagneticSensor's
-            // existing tier-4 of 140k. Industrial-era tools demand
-            // sustained scientific accumulation.
-            ToolKind::Mechanisation => 140_000,
-            ToolKind::LongRangeCommunication => 100_000,
-            ToolKind::ChemicalSynthesis => 100_000,
-            ToolKind::MedicalIntervention => 80_000,
-            ToolKind::AdvancedMaterials => 100_000,
-            ToolKind::HeavyTransport => 100_000,
-            ToolKind::PowerGeneration => 120_000,
-            ToolKind::AnalyticalEngines => 100_000,
-            ToolKind::MassLiteracy => 80_000,
-            ToolKind::AerialTransport => 130_000,
-            // tier-5: information-age — sustained scientific
-            // accumulation in the 80k-200k range. OrbitalReach is
-            // the heavy hitter (200k) reflecting the difficulty
-            // of escape velocity. Lower thresholds for biological
-            // chemical tools that follow naturally from tier-4
-            // chemistry.
-            ToolKind::DigitalComputation => 80_000,
-            ToolKind::InformationNetworking => 100_000,
-            ToolKind::GeneticManipulation => 100_000,
-            ToolKind::OrbitalReach => 200_000,
-            ToolKind::AdvancedMedicine => 80_000,
-            ToolKind::MaterialFabrication => 100_000,
-            ToolKind::AutonomousSystems => 100_000,
-            ToolKind::EnergyStorage => 100_000,
-            ToolKind::CryogenicEngineering => 80_000,
-            ToolKind::OrganicSynthesis => 80_000,
-            // tier-2 capability — same observation-pressure
-            // gate as the established sensorium tier-2 tools so a
-            // civ that reaches ThermalSensor's window also reaches
-            // the apparatus.
-            ToolKind::ExperimentApparatus => 30_000,
+            // tier-1: no civ-maturity gate. `relation_prereqs` for
+            // the relevant phenomenon (fire, water, prey, …) is the
+            // only "science" prereq.
+            ToolKind::LocalisedCombustion
+            | ToolKind::ContactWeapon
+            | ToolKind::RangedMomentumWeapon
+            | ToolKind::SimpleShelter
+            | ToolKind::FoodProcessing
+            | ToolKind::FluidGathering
+            | ToolKind::BasicTextiles
+            | ToolKind::StoneWorking
+            | ToolKind::OrganizedHunting
+            | ToolKind::BasicHealing => 0,
+            // tier-2: settlement-era. A handful of confirmed
+            // relations — the civ has begun structured science.
+            ToolKind::BulkCultivation
+            | ToolKind::AnimalSymbiosis
+            | ToolKind::BulkStorage
+            | ToolKind::MaterialRefining
+            | ToolKind::CulturalEncoding
+            | ToolKind::FluidControl
+            | ToolKind::WatercraftConstruction
+            | ToolKind::PermanentMasonry
+            | ToolKind::TradeNetworks
+            | ToolKind::UrbanConstruction
+            // tier-2 sensorium + apparatus
+            | ToolKind::ThermalSensor
+            | ToolKind::RemoteAcoustic
+            | ToolKind::ExperimentApparatus => 5,
+            // tier-3: pre-industrial. ~250-500 ticks of sustained
+            // hypothesizer activity, plus the experimental gate
+            // below ensures the apparatus is being used.
+            ToolKind::ChemicalProjectile
+            | ToolKind::PrecisionTimekeeping
+            | ToolKind::MechanicalAdvantage
+            | ToolKind::LongRangeNavigation
+            | ToolKind::WrittenJurisprudence
+            | ToolKind::AbstractMathematics
+            | ToolKind::ArtisanalSpecialisation
+            | ToolKind::DefensiveFortification
+            | ToolKind::MotivePropulsion
+            | ToolKind::AmphibiousConstruction
+            // tier-3 sensorium
+            | ToolKind::FieldSensor
+            | ToolKind::DistanceImaging => 25,
+            // tier-4: industrial. Multi-generation canon. Pairs
+            // with a 20-experimental floor below.
+            ToolKind::Mechanisation
+            | ToolKind::LongRangeCommunication
+            | ToolKind::ChemicalSynthesis
+            | ToolKind::MedicalIntervention
+            | ToolKind::AdvancedMaterials
+            | ToolKind::HeavyTransport
+            | ToolKind::PowerGeneration
+            | ToolKind::AnalyticalEngines
+            | ToolKind::MassLiteracy
+            | ToolKind::AerialTransport
+            // tier-4 sensorium
+            | ToolKind::MagneticSensor => 75,
+            // tier-5: information-age + transcendence. Combined
+            // with the 80-experimental floor and the 3000 species-
+            // maturity floor, demands a long-lived civ standing on
+            // a deeply-matured species.
+            ToolKind::DigitalComputation
+            | ToolKind::InformationNetworking
+            | ToolKind::GeneticManipulation
+            | ToolKind::OrbitalReach
+            | ToolKind::AdvancedMedicine
+            | ToolKind::MaterialFabrication
+            | ToolKind::AutonomousSystems
+            | ToolKind::EnergyStorage
+            | ToolKind::CryogenicEngineering
+            | ToolKind::OrganicSynthesis
+            // tier-5 transcendence trio
+            | ToolKind::BioelectricResonator
+            | ToolKind::FieldPropulsionEngine
+            | ToolKind::MetamaterialLattice => 200,
+        }
+    }
+
+    /// Minimum count of *experimentally-confirmed* relations the
+    /// civ itself must have fit. A measurement relation counts here
+    /// only if at least one apparatus sample contributed to its fit
+    /// pool (`ConfirmedMeasurement.is_experimental == true`).
+    ///
+    /// This is the "experimentation" half of the gate: passive
+    /// observation gets a civ to tier-2 (just enough to build the
+    /// apparatus). Past tier-2, real science requires intervention
+    /// — clamp x, measure y. A civ that never builds
+    /// `ExperimentApparatus` tops out at tier-2 by construction.
+    ///
+    /// Tier ladder:
+    /// - tier-1 / tier-2: 0 — the apparatus isn't yet unlocked, so
+    ///   experimental confirmations aren't possible.
+    /// - tier-3: 5 — a handful of intervention-supported laws.
+    /// - tier-4: 20 — industrial-era requires sustained
+    ///   experimental work.
+    /// - tier-5: 80 — information-age epistemology.
+    #[allow(clippy::match_same_arms)]
+    pub fn min_civ_experimental_relations(self) -> u32 {
+        match self {
+            // tier-1 + tier-2: no experimental gate (apparatus
+            // unlocks at tier-2).
+            ToolKind::LocalisedCombustion
+            | ToolKind::ContactWeapon
+            | ToolKind::RangedMomentumWeapon
+            | ToolKind::SimpleShelter
+            | ToolKind::FoodProcessing
+            | ToolKind::FluidGathering
+            | ToolKind::BasicTextiles
+            | ToolKind::StoneWorking
+            | ToolKind::OrganizedHunting
+            | ToolKind::BasicHealing
+            | ToolKind::BulkCultivation
+            | ToolKind::AnimalSymbiosis
+            | ToolKind::BulkStorage
+            | ToolKind::MaterialRefining
+            | ToolKind::CulturalEncoding
+            | ToolKind::FluidControl
+            | ToolKind::WatercraftConstruction
+            | ToolKind::PermanentMasonry
+            | ToolKind::TradeNetworks
+            | ToolKind::UrbanConstruction
+            | ToolKind::ThermalSensor
+            | ToolKind::RemoteAcoustic
+            | ToolKind::ExperimentApparatus => 0,
+            // tier-3: a few apparatus-supported confirmations.
+            ToolKind::ChemicalProjectile
+            | ToolKind::PrecisionTimekeeping
+            | ToolKind::MechanicalAdvantage
+            | ToolKind::LongRangeNavigation
+            | ToolKind::WrittenJurisprudence
+            | ToolKind::AbstractMathematics
+            | ToolKind::ArtisanalSpecialisation
+            | ToolKind::DefensiveFortification
+            | ToolKind::MotivePropulsion
+            | ToolKind::AmphibiousConstruction
+            | ToolKind::FieldSensor
+            | ToolKind::DistanceImaging => 5,
+            // tier-4: sustained experimental tradition.
+            ToolKind::Mechanisation
+            | ToolKind::LongRangeCommunication
+            | ToolKind::ChemicalSynthesis
+            | ToolKind::MedicalIntervention
+            | ToolKind::AdvancedMaterials
+            | ToolKind::HeavyTransport
+            | ToolKind::PowerGeneration
+            | ToolKind::AnalyticalEngines
+            | ToolKind::MassLiteracy
+            | ToolKind::AerialTransport
+            | ToolKind::MagneticSensor => 20,
+            // tier-5: information-age + transcendence — the
+            // civ has built a mature experimental epistemology.
+            ToolKind::DigitalComputation
+            | ToolKind::InformationNetworking
+            | ToolKind::GeneticManipulation
+            | ToolKind::OrbitalReach
+            | ToolKind::AdvancedMedicine
+            | ToolKind::MaterialFabrication
+            | ToolKind::AutonomousSystems
+            | ToolKind::EnergyStorage
+            | ToolKind::CryogenicEngineering
+            | ToolKind::OrganicSynthesis
+            | ToolKind::BioelectricResonator
+            | ToolKind::FieldPropulsionEngine
+            | ToolKind::MetamaterialLattice => 80,
         }
     }
 
@@ -248,44 +334,48 @@ impl ToolKind {
     }
 
     /// Species-cumulative maturity floor. Tier-5 tools demand the
-    /// species has been doing science long enough that a transcendence-
-    /// tier capability is conceivable. Returns the minimum
-    /// `total_confirmed_relations` (cumulative across every civ
-    /// in the run) that must hold before this tool is buildable.
-    /// Tier-≤ 4 tools return `0` (no species-maturity gate).
+    /// species has been doing science long enough that an
+    /// information-age / transcendence capability is conceivable.
+    /// Returns the minimum `total_confirmed_relations` (cumulative
+    /// across every civ in the run) that must hold before this
+    /// tool is buildable. Tier-≤ 4 tools return `0` (no species-
+    /// maturity gate; per-civ confirmed + experimental floors
+    /// suffice).
     ///
-    /// Set to 3000: a typical civ on a habitable planet confirms
-    /// ~50-200 relations over its lifetime; 3000 across the species
-    /// requires ~15-60 civ generations of accumulated science.
-    /// At typical civ lifespans of 500-1500 ticks each, this
-    /// pushes transcendence into the multi-thousand-year range
-    /// (often year 5000-15000), emergent from the sim's own
-    /// dynamics rather than from any authored progression rule.
+    /// 3000 across the species ≈ 15–60 civ generations of
+    /// accumulated science (typical civ confirms ~50–200 relations
+    /// over its 500–1500-tick lifespan). On a 9-month planet that
+    /// puts tier-5 in the y3,000–y15,000 range, emergent from the
+    /// sim's own dynamics rather than from any authored
+    /// progression rule.
+    ///
+    /// Earlier this gated only the three transcendence-tier tools
+    /// (BioelectricResonator / FieldPropulsionEngine /
+    /// MetamaterialLattice); the 10 information-age tier-5 tools
+    /// fell through at 0, letting fresh civs speedrun tier-5 once
+    /// their per-civ observation thresholds cleared. Extended to
+    /// all 13 tier-5 tools so the species-wide "thousands of years"
+    /// anchor applies uniformly across the tier.
+    #[allow(clippy::match_same_arms)]
     pub fn species_maturity_floor(self) -> u32 {
         match self {
+            // tier-5 transcendence trio
             ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
             | ToolKind::MetamaterialLattice => 3_000,
-            // falls through the wildcard at 0 — the apparatus
-            // is mid-civ, not species-summit; per-civ gates
-            // (observation + literacy + relation prereq) suffice.
+            // tier-5 information-age
+            ToolKind::DigitalComputation
+            | ToolKind::InformationNetworking
+            | ToolKind::GeneticManipulation
+            | ToolKind::OrbitalReach
+            | ToolKind::AdvancedMedicine
+            | ToolKind::MaterialFabrication
+            | ToolKind::AutonomousSystems
+            | ToolKind::EnergyStorage
+            | ToolKind::CryogenicEngineering
+            | ToolKind::OrganicSynthesis => 3_000,
+            // tier-≤ 4: per-civ gates carry the work.
             _ => 0,
-        }
-    }
-
-    /// Channels used to compute the observation-pressure threshold.
-    /// Defaults to `prereq_channels` (the buildability filter) but
-    /// some tier-5 tools want to gate buildability on a sense type
-    /// while measuring observation pressure across all channels —
-    /// e.g. `BioelectricResonator` requires the species to natively
-    /// possess `ElectricField` or `MagneticSense` (because the work
-    /// is engineering on the species' own bioelectric body), but
-    /// the observation-pressure measure is "the species has done
-    /// enough science of any kind," not "enough field-firings."
-    pub fn obs_channel_filter(self) -> &'static [ChannelKind] {
-        match self {
-            ToolKind::BioelectricResonator => &[],
-            other => other.prereq_channels(),
         }
     }
 

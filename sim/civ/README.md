@@ -57,11 +57,18 @@ exist concurrently or sequentially; the species continues.
     tools: `bioelectric_resonator` (engineering on the species'
     own field signatures), `field_propulsion_engine`,
     `metamaterial_lattice`. Each tool carries `(prereq_channels,
-    prereq_manipulation, granted_channels, tier, crust_prereqs,
-    obs_channel_filter, observation_threshold, literacy_floor,
-    species_maturity_floor)`. Tools unlock when the prereqs hold
-    AND the cumulative observation pressure clears its threshold
-    AND civ literacy clears its floor AND (tier-5 only) the
+    manipulation_prereqs, granted_channels, tier, crust_prereqs,
+    min_civ_confirmed_relations, min_civ_experimental_relations,
+    literacy_floor, species_maturity_floor, relation_prereqs,
+    tool_prereqs, resource_prereqs)`. Tools unlock when the
+    species + planet prereqs hold AND the civ has fit at least
+    `min_civ_confirmed_relations` confirmed relations of its own
+    AND at least `min_civ_experimental_relations` of those came
+    through `ExperimentApparatus` (intervention-supported
+    epistemology, not passive observation) AND civ literacy clears
+    its floor AND every `(template_id, _)` in `relation_prereqs`
+    has a matching confirmed relation AND every tool in
+    `tool_prereqs` is already unlocked AND (tier-5 only) the
     species has accumulated `species_maturity_floor` confirmed
     relations across all civs. `Civ::apply_tool_unlock` unions
     granted channels into `Civ::unlocked_channels`, marks newly-
