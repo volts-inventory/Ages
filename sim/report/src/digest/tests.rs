@@ -34,6 +34,7 @@ fn aggregates_civ_chapter_with_discovery_attribution() {
             initial_population_q32: 0,
             founding_figure_count: 1,
             claimed_cells: vec![0, 1, 2, 3],
+            cell_capacities_q32: Vec::new(),
         }),
         Event::RelationConfirmed(RelationConfirmed {
             tick: 42,

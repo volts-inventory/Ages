@@ -920,10 +920,23 @@ pub(crate) fn population_phase<E: Emitter>(
         let prev_cells = civ.claimed_cells.clone();
         let gained = civ.expand_via_overflow(state, tick, planet, grid_w, grid_h, &others);
         let _removed = civ.prune_empty_cells();
-        if civ.claimed_cells == prev_cells {
+        let cells_changed = civ.claimed_cells != prev_cells;
+        // Re-emit `CivTerritoryChanged` whenever the claim set
+        // changes (the natural trigger) and also every
+        // `TERRITORY_REFRESH_TICKS` even for stable territory.
+        // Without the periodic refresh, per-cell caps go stale as
+        // tech multipliers, seasonal factors, and biosphere fuel
+        // drift — the viewport's pop-digit scale keeps reading
+        // against the at-founding cap until the civ next expands
+        // or contracts, which can be many decades on dense seeds.
+        let stale = tick.saturating_sub(civ.last_territory_emit_tick)
+            >= TERRITORY_REFRESH_TICKS;
+        if !cells_changed && !stale {
             continue;
         }
-        nomads::absorb_into_civ(nomad_pops, civ, gained, &species.biology);
+        if cells_changed {
+            nomads::absorb_into_civ(nomad_pops, civ, gained, &species.biology);
+        }
         let claimed_sorted = claimed_cells_for_event(civ);
         let cell_populations_q32: Vec<i128> = claimed_sorted
             .iter()
@@ -945,6 +958,7 @@ pub(crate) fn population_phase<E: Emitter>(
             .iter()
             .map(|&c| civ.cell_capacity(state, c, tick, planet).raw().to_bits())
             .collect();
+        civ.last_territory_emit_tick = tick;
         territory_events.push(CivTerritoryChanged {
             tick,
             civ_id: civ.id,
@@ -959,6 +973,14 @@ pub(crate) fn population_phase<E: Emitter>(
     }
     Ok(())
 }
+
+/// Re-emit cadence for `CivTerritoryChanged` on civs whose claim
+/// set hasn't changed since the last emission. ~50 baseline years
+/// at the default 9–12 ticks/year — frequent enough that
+/// pop-digit + cap drift stays visible in the viewport, infrequent
+/// enough to keep total event volume bounded (≤ N_civs × ticks/500
+/// extra emissions across a run).
+const TERRITORY_REFRESH_TICKS: u64 = 500;
 
 /// Phase J: emit `CulturalDrift` marker, then emit one
 /// `CosmologyShifted` event per civ whose cosmology has drifted
@@ -1187,7 +1209,7 @@ pub(crate) fn culture_flip_phase<E: Emitter>(
     // Emit CivTerritoryChanged for each touched civ so consumers
     // see both sides of the transfer in the same tick.
     let mut events: Vec<CivTerritoryChanged> = Vec::new();
-    for civ in civs.iter().filter(|c| touched.contains(&c.id)) {
+    for civ in civs.iter_mut().filter(|c| touched.contains(&c.id)) {
         let claimed_sorted = claimed_cells_for_event(civ);
         let cell_pops: Vec<i128> = claimed_sorted
             .iter()
@@ -1201,6 +1223,7 @@ pub(crate) fn culture_flip_phase<E: Emitter>(
             .iter()
             .map(|&c| civ.cell_capacity(state, c, tick, planet).raw().to_bits())
             .collect();
+        civ.last_territory_emit_tick = tick;
         events.push(CivTerritoryChanged {
             tick,
             civ_id: civ.id,

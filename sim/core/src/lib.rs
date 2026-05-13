@@ -616,6 +616,10 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         emitter.emit(&Event::FigureBorn(figure_born_event(new_civ.id, f)))?;
                     }
                     let new_cells = claimed_cells_for_event(&new_civ);
+                    let new_caps: Vec<i128> = new_cells
+                        .iter()
+                        .map(|&c| new_civ.cell_capacity(&state, c, tick, &planet).raw().to_bits())
+                        .collect();
                     emitter.emit(&Event::CivFounded(CivFounded {
                         tick,
                         civ_id: new_civ.id,
@@ -624,7 +628,9 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         initial_population_q32: initial_pop_q32,
                         founding_figure_count: band,
                         claimed_cells: new_cells,
+                        cell_capacities_q32: new_caps,
                     }))?;
+                    new_civ.last_territory_emit_tick = tick;
                     emit_species_drift_if_meaningful(emitter, &new_civ)?;
 
                     // Inter-civ transmission: comprehend
@@ -874,6 +880,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                             cell_populations_q32: parent_cell_pops,
                             cell_capacities_q32: parent_cell_caps,
                         }))?;
+                        civs[parent_idx].last_territory_emit_tick = tick;
                     }
                     // Breakaway founding cohort: migrating dissidents
                     // from the rest of parent territory + the full
@@ -973,6 +980,10 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         emitter.emit(&Event::FigureBorn(figure_born_event(new_civ.id, f)))?;
                     }
                     let new_cells = claimed_cells_for_event(&new_civ);
+                    let new_caps: Vec<i128> = new_cells
+                        .iter()
+                        .map(|&c| new_civ.cell_capacity(&state, c, tick, &planet).raw().to_bits())
+                        .collect();
                     emitter.emit(&Event::CivFounded(CivFounded {
                         tick,
                         civ_id: new_civ.id,
@@ -981,7 +992,9 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         initial_population_q32: initial_pop_q32,
                         founding_figure_count: band,
                         claimed_cells: new_cells,
+                        cell_capacities_q32: new_caps,
                     }))?;
+                    new_civ.last_territory_emit_tick = tick;
                     emit_species_drift_if_meaningful(emitter, &new_civ)?;
 
                     // Inter-civ transmission for the breakaway
@@ -1515,6 +1528,10 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     emitter.emit(&Event::FigureBorn(figure_born_event(new_civ.id, f)))?;
                 }
                 let claimed = claimed_cells_for_event(&new_civ);
+                let claimed_caps: Vec<i128> = claimed
+                    .iter()
+                    .map(|&c| new_civ.cell_capacity(&state, c, tick, &planet).raw().to_bits())
+                    .collect();
                 emitter.emit(&Event::CivFounded(CivFounded {
                     tick,
                     civ_id: new_civ.id,
@@ -1523,7 +1540,9 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     initial_population_q32: initial_pop_q32,
                     founding_figure_count: band,
                     claimed_cells: claimed,
+                    cell_capacities_q32: claimed_caps,
                 }))?;
+                new_civ.last_territory_emit_tick = tick;
                 emit_species_drift_if_meaningful(emitter, &new_civ)?;
                 civs.push(new_civ);
                 next_civ_id += 1;
