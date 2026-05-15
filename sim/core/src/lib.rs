@@ -356,6 +356,16 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         let mut collapse_events: Vec<CivCollapsed> = Vec::new();
         let mut cohesion_events: Vec<protocol::CohesionShifted> = Vec::new();
         let mut life_expectancy_events: Vec<protocol::CivLifeExpectancyChanged> = Vec::new();
+        let mut surplus_events: Vec<protocol::CivSurplusChanged> = Vec::new();
+        // M8: per-civ at-war count for the surplus drain. Read
+        // from `war_state` (keyed by normalised (low, high) pairs).
+        // Pre-computed here so the civ-step loop stays mutable.
+        let mut at_war_counts: std::collections::BTreeMap<u32, u64> =
+            std::collections::BTreeMap::new();
+        for (a, b) in war_state.keys() {
+            *at_war_counts.entry(*a).or_insert(0) += 1;
+            *at_war_counts.entry(*b).or_insert(0) += 1;
+        }
         for civ in civs.iter_mut().filter(|c| c.is_active()) {
             // Terrain-aware food security so a civ stranded
             // on peaks / shallow sea starves on the schedule its
@@ -423,6 +433,39 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 });
                 civ.last_emitted_life_expectancy_months = current_life;
             }
+            // M8: step the per-civ surplus accumulator. Utilisation
+            // = aggregate_pop / aggregate_cap (terrain-aware). A civ
+            // running at high fill accumulates surplus; a civ at war
+            // drains it.
+            let pop = civ.aggregate_population();
+            let cap = civ.carrying_capacity_with_terrain(&state, &planet);
+            let utilisation = if cap.raw().to_num::<i64>() > 0 {
+                let pop_r = sim_arith::Real::from_int(pop.raw().to_num::<i64>().max(0));
+                let cap_r = sim_arith::Real::from_int(cap.raw().to_num::<i64>().max(1));
+                (pop_r / cap_r)
+                    .max(sim_arith::Real::ZERO)
+                    .min(sim_arith::Real::ONE)
+            } else {
+                sim_arith::Real::ZERO
+            };
+            let at_war_count = at_war_counts.get(&civ.id).copied().unwrap_or(0);
+            sim_civ::economy::step_surplus(civ, utilisation, at_war_count);
+            // Emit a CivSurplusChanged event when the absolute
+            // delta crosses the emit floor, OR when this is the
+            // civ's first non-zero emission so the founding state
+            // surfaces in the log.
+            let emit_floor =
+                sim_arith::Real::from_int(sim_civ::economy::SURPLUS_EMIT_DELTA_FLOOR);
+            let delta = civ.surplus - civ.last_emitted_surplus;
+            if delta.abs() >= emit_floor {
+                surplus_events.push(protocol::CivSurplusChanged {
+                    tick,
+                    civ_id: civ.id,
+                    surplus_q32: civ.surplus.raw().to_bits(),
+                    previous_q32: civ.last_emitted_surplus.raw().to_bits(),
+                });
+                civ.last_emitted_surplus = civ.surplus;
+            }
         }
         if !collapse_events.is_empty() {
             last_collapse_tick = Some(tick);
@@ -436,6 +479,9 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         for ev in life_expectancy_events {
             emitter.emit(&Event::CivLifeExpectancyChanged(ev))?;
         }
+        for ev in surplus_events {
+            emitter.emit(&Event::CivSurplusChanged(ev))?;
+        }
 
         // Catastrophe check on every active civ.
         let mut cat_events: Vec<(u32, catastrophe::CatastropheRecord)> = Vec::new();
@@ -448,6 +494,10 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 // correlated traits — passed to successors via
                 // `inherit_species_drift_with_environment`.
                 civ.record_catastrophe_selection_bias(rec.kind, rec.fraction_lost);
+                // M8: catastrophes consume stored surplus first —
+                // grain reserves feed the displaced, the polity
+                // diverts public works to rescue + repair.
+                sim_civ::economy::drain_surplus_on_catastrophe(civ);
                 cat_events.push((civ_id, rec));
             }
         }

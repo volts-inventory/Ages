@@ -167,6 +167,12 @@ pub enum Event {
     /// `CIVIL_WAR_STREAK_TICKS` (75 years) the civ collapses with
     /// reason `civil_war`.
     CohesionShifted(CohesionShifted),
+    /// M8 — civ's economic surplus accumulator shifted by at
+    /// least `SURPLUS_EMIT_DELTA_FLOOR` pop-equivalents since the
+    /// last emission. Buffer of stored productive output;
+    /// modulates food-crisis collapse + war strength + catastrophe
+    /// resilience.
+    CivSurplusChanged(CivSurplusChanged),
     /// A relation almost crossed the inter-civ
     /// transmission gate but didn't quite — the comprehension
     /// score landed in the mythologization band so the relation's

@@ -364,6 +364,20 @@ pub struct CohesionShifted {
     pub previous_q32: i64,
 }
 
+/// M8 — civ's surplus accumulator shifted by at least
+/// `SURPLUS_EMIT_DELTA_FLOOR` (currently 50 pop-equivalents)
+/// since the last emission. Carries the new `surplus_q32` raw
+/// (Q32.32 fixed-point) and the `previous_q32` for narration.
+/// Emitted on civ founding + any subsequent shift; consumers
+/// timeline the economic-buffer history.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CivSurplusChanged {
+    pub tick: u64,
+    pub civ_id: u32,
+    pub surplus_q32: i64,
+    pub previous_q32: i64,
+}
+
 /// Emergent dynamic-tool event.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ToolDiscovered {
