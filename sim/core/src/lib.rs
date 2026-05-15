@@ -442,6 +442,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         for civ in civs.iter_mut().filter(|c| c.is_active()) {
             let civ_id = civ.id;
             if let Some(rec) = catastrophe::check_and_apply(civ, &mut state, &planet, tick) {
+                // M7: bump the civ's selection bias from the
+                // catastrophe's per-kind weights so survivors'
+                // trait distribution shifts toward the survival-
+                // correlated traits — passed to successors via
+                // `inherit_species_drift_with_environment`.
+                civ.record_catastrophe_selection_bias(rec.kind, rec.fraction_lost);
                 cat_events.push((civ_id, rec));
             }
         }
@@ -543,7 +549,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     // Done before `dynamics_for_civ` so the per-tick
                     // birth/death rates reflect the inherited drift.
                     if let Some(parent_civ) = civs.iter().find(|c| c.id == parent_id) {
-                        new_civ.inherit_species_drift(parent_civ, planet.seed);
+                        new_civ.inherit_species_drift_with_environment(
+                            parent_civ,
+                            planet.seed,
+                            planet.metabolic_substrate.metabolism(),
+                            planet.biosphere,
+                        );
                         new_civ.inherit_lineage_from(parent_civ);
                     }
                     new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
@@ -910,7 +921,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     // point on as separate civs.
                     {
                         let parent_civ = &civs[parent_idx];
-                        new_civ.inherit_species_drift(parent_civ, planet.seed);
+                        new_civ.inherit_species_drift_with_environment(
+                            parent_civ,
+                            planet.seed,
+                            planet.metabolic_substrate.metabolism(),
+                            planet.biosphere,
+                        );
                         new_civ.inherit_lineage_from(parent_civ);
                     }
                     // Cohesion-driven breakaway starts at a
@@ -1469,7 +1485,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     .filter(|c| c.collapsed_tick.is_some())
                     .max_by_key(|c| c.collapsed_tick.unwrap_or(0))
                 {
-                    new_civ.inherit_species_drift(parent_civ, planet.seed);
+                    new_civ.inherit_species_drift_with_environment(
+                            parent_civ,
+                            planet.seed,
+                            planet.metabolic_substrate.metabolism(),
+                            planet.biosphere,
+                        );
                     new_civ.inherit_lineage_from(parent_civ);
                 }
                 new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
