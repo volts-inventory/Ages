@@ -153,6 +153,20 @@ pub struct ViewportEmitter<W: Write> {
     /// so they read as `lost "water flows downhill"` instead of
     /// the cryptic `lost r438`.
     relation_template_names: BTreeMap<u32, String>,
+    /// Per-civ snapshot of total population (raw Q96.32 bits)
+    /// captured at the end of the previous render. Compared
+    /// against the new total at render time so the sidebar's pop
+    /// line gets a ↑ / ↓ / → trend arrow. ±0.5% threshold keeps
+    /// the arrow stable under sub-tick noise. Cleared on
+    /// `CivCollapsed`.
+    civ_last_emitted_pop_q32: BTreeMap<u32, i128>,
+    /// Per-civ most-recent tool unlocked, from `TechUnlocked`.
+    /// Surfaces on the sidebar identity line as
+    /// `… · last: BulkCultivation` so a reader can scan which
+    /// civ just leveled up without diffing the tool count.
+    /// Stays until the next unlock overwrites it; cleared on
+    /// `CivCollapsed`.
+    civ_last_unlocked_tool: BTreeMap<u32, String>,
 }
 
 impl<W: Write> ViewportEmitter<W> {
@@ -187,6 +201,8 @@ impl<W: Write> ViewportEmitter<W> {
             civ_cohesion: BTreeMap::new(),
             civ_life_expectancy_months: BTreeMap::new(),
             relation_template_names: BTreeMap::new(),
+            civ_last_emitted_pop_q32: BTreeMap::new(),
+            civ_last_unlocked_tool: BTreeMap::new(),
         }
     }
 
@@ -896,6 +912,8 @@ impl<W: Write> ViewportEmitter<W> {
                 self.civ_tools_unlocked.remove(&c.civ_id);
                 self.civ_cohesion.remove(&c.civ_id);
                 self.civ_life_expectancy_months.remove(&c.civ_id);
+                self.civ_last_emitted_pop_q32.remove(&c.civ_id);
+                self.civ_last_unlocked_tool.remove(&c.civ_id);
                 // Drop any war pairs touching this civ so a
                 // re-emerged civ_id can re-trigger a fresh
                 // "conflict resolved" line. Pairs are stored as
@@ -934,6 +952,8 @@ impl<W: Write> ViewportEmitter<W> {
                     .entry(t.civ_id)
                     .or_default()
                     .insert(t.tool_name.clone());
+                self.civ_last_unlocked_tool
+                    .insert(t.civ_id, t.tool_name.clone());
             }
             Event::CohesionShifted(c) => {
                 use crate::q32::q32_to_f64;
@@ -1043,7 +1063,7 @@ impl<W: Write> ViewportEmitter<W> {
     /// breathing room. Returns the line vector unwrapped — caller
     /// pads each to `SIDEBAR_WIDTH` cols when zipping with the
     /// map rows.
-    fn build_sidebar_lines(&self) -> Vec<String> {
+    fn build_sidebar_lines(&mut self) -> Vec<String> {
         // Legend: all fallback glyphs included; split across 3
         // lines so each fits in ~28 cols. The redundant
         // `A=cap · 1=civ` entries were dropped — every per-civ
@@ -1058,17 +1078,23 @@ impl<W: Write> ViewportEmitter<W> {
         // Civ identity is carried by colour. `0` stays mapped to
         // unclaimed nomadic presence. Mono mode keeps the legacy
         // line — there the per-civ digit is the civ-id, not pop.
+        // Colored mode: per-cell digit is pop fill-%; civ identity
+        // is carried by colour. Mono mode (markdown / no ANSI): the
+        // digit is the civ-id, `*` covers civ ids ≥ 10. Same
+        // glyphs surface for nomads + disputes in both. The
+        // line-1 disambiguation matters because the digit reads
+        // *very* differently between the two modes.
         let mut lines: Vec<String> = if self.cfg.use_color {
             vec![
-                "1-9=fill · 0=nomad · #=war".to_string(),
+                "1-9=fill% · 0=nomad · #=war".to_string(),
                 "~sea · ≈deep · ▲peak · △hill".to_string(),
                 "▒land · ░coast · ·=plain".to_string(),
             ]
         } else {
             vec![
-                "#=war · 0=nomads · ~sea".to_string(),
-                "≈deep · ▲peak · △hill".to_string(),
-                "▒land · ░coast · ·=plain".to_string(),
+                "1-9=civ-id · *=civ≥10".to_string(),
+                "0=nomad · #=war · ~sea · ≈deep".to_string(),
+                "▲peak · △hill · ▒land · ░coast · ·=plain".to_string(),
             ]
         };
         // Species sub-block (3 lines from species_card()).
@@ -1090,16 +1116,29 @@ impl<W: Write> ViewportEmitter<W> {
         // Sums use i64 saturating add on the raw Q32.32 fixed-point
         // values so ranking is exact rather than depending on f64
         // round-off across many cells.
-        let mut civ_order: Vec<(&u32, &CivClaim)> = self.civs.iter().collect();
-        civ_order.sort_by(|a, b| {
-            let pop = |claim: &CivClaim| -> i128 {
-                claim
+        //
+        // Capture per-civ Q32 sums into a local map up-front: the
+        // same total drives the panel sort *and* the ↑/↓ trend
+        // arrow on the pop line (compared against the previous
+        // render's snapshot in `civ_last_emitted_pop_q32`). The
+        // snapshot map is replaced at the end of this method.
+        let civ_pop_q32: BTreeMap<u32, i128> = self
+            .civs
+            .iter()
+            .map(|(id, claim)| {
+                let sum = claim
                     .cell_populations_q32
                     .values()
                     .copied()
-                    .fold(0i128, i128::saturating_add)
-            };
-            pop(b.1).cmp(&pop(a.1)).then_with(|| a.0.cmp(b.0))
+                    .fold(0i128, i128::saturating_add);
+                (*id, sum)
+            })
+            .collect();
+        let mut civ_order: Vec<(&u32, &CivClaim)> = self.civs.iter().collect();
+        civ_order.sort_by(|a, b| {
+            let pa = civ_pop_q32.get(a.0).copied().unwrap_or(0);
+            let pb = civ_pop_q32.get(b.0).copied().unwrap_or(0);
+            pb.cmp(&pa).then_with(|| a.0.cmp(b.0))
         });
         for (civ_id, claim) in civ_order {
             lines.push(String::new());
@@ -1158,6 +1197,15 @@ impl<W: Write> ViewportEmitter<W> {
                 )
             };
             lines.push(identity);
+            // Most-recent unlock surfaces underneath the identity
+            // line when present. Skipped on civs that haven't
+            // unlocked anything yet so brand-new founders stay
+            // visually compact. The tool count above already says
+            // "0 tools" in that case, so the missing `last:` line
+            // is unambiguous.
+            if let Some(tool) = self.civ_last_unlocked_tool.get(civ_id) {
+                lines.push(format!("last: {tool}"));
+            }
             let founded_year = self.civ_founded_year.get(civ_id).copied().unwrap_or(0);
             // Per-civ population count alongside founding
             // year + cell count. Sum the per-cell Q32.32
@@ -1174,11 +1222,35 @@ impl<W: Write> ViewportEmitter<W> {
             // tiny negative value, which `{:.0}` then renders as
             // "-0p" in the sidebar. Population can't be negative —
             // clamp before formatting.
+            //
+            // Trend arrow against the previous render's snapshot.
+            // ±0.5% deadband suppresses jitter from monthly
+            // food-cycle noise; first-frame civs get `→` (no prior
+            // sample). Reads `civ_last_emitted_pop_q32`; the
+            // snapshot is rewritten at the end of this method.
+            let cur_q32 = civ_pop_q32.get(civ_id).copied().unwrap_or(0);
+            let trend = match self.civ_last_emitted_pop_q32.get(civ_id).copied() {
+                None => '\u{2192}', // → (newly founded, no prior)
+                Some(prev) => {
+                    // 0.5% of |prev| as a threshold; saturating to
+                    // avoid overflow when prev is near i128::MAX.
+                    let band = prev.saturating_abs() / 200;
+                    let delta = cur_q32.saturating_sub(prev);
+                    if delta > band {
+                        '\u{2191}' // ↑
+                    } else if delta < -band {
+                        '\u{2193}' // ↓
+                    } else {
+                        '\u{2192}' // →
+                    }
+                }
+            };
             lines.push(format!(
-                "y{} · {} cells · {}p",
+                "y{} · {} cells · {}p {}",
                 founded_year,
                 claim.claimed_cells.len(),
                 fmt_pop(civ_pop),
+                trend,
             ));
             // Stats line: cohesion + life expectancy, both pulled
             // from the running per-civ snapshots. Cohesion shown as
@@ -1204,10 +1276,23 @@ impl<W: Write> ViewportEmitter<W> {
                 .get(civ_id)
                 .copied()
                 .map_or(0.0, |m| m / f64::from(period_months));
+            // Quick-scan war status: a single `· at war ⚔` /
+            // `· peace` token rides the cohesion line so the
+            // reader can see "is this civ fighting *anyone*" at
+            // a glance, even when scrolling past dozens of civ
+            // panels. The detail "war: civ X, civ Y" line below
+            // names rivals when there are any.
+            let in_war = self
+                .wars_active
+                .iter()
+                .any(|(a, b)| *a == *civ_id || *b == *civ_id);
+            let war_tag = if in_war { "at war \u{2694}" } else { "peace" };
             if life_y > 0.5 {
-                lines.push(format!("cohesion {cohesion_pct}% · life {life_y:.0}y"));
+                lines.push(format!(
+                    "cohesion {cohesion_pct}% · life {life_y:.0}y · {war_tag}"
+                ));
             } else {
-                lines.push(format!("cohesion {cohesion_pct}%"));
+                lines.push(format!("cohesion {cohesion_pct}% · {war_tag}"));
             }
             // Religion + cosmology dominant-axis line. Names the
             // strongest-magnitude axis on each side with signed
@@ -1286,6 +1371,12 @@ impl<W: Write> ViewportEmitter<W> {
                 lines.push(format!("\u{2694} war: {label}"));
             }
         }
+        // Replace the previous-render snapshot with the totals
+        // we just rendered, so the next frame's trend arrow
+        // compares against this frame. Collapsed civs were pruned
+        // from `self.civs` on `CivCollapsed`, so the new map
+        // already excludes them.
+        self.civ_last_emitted_pop_q32 = civ_pop_q32;
         lines
     }
 
@@ -1335,20 +1426,55 @@ impl<W: Write> ViewportEmitter<W> {
         // rendered separately, in the planet section's tail (or
         // the top of the map section when the planet card is
         // hidden).
-        let body = match (self.cfg.use_color, self.cfg.compact) {
-            (true, true) => crate::frame::render_world_frame_colored_compact(
-                pm,
-                self.planet.as_ref(),
-                &frame,
-                "",
-            ),
-            (true, false) => {
-                crate::frame::render_world_frame_colored(pm, self.planet.as_ref(), &frame, "")
+        let body = if self.cfg.density_mode {
+            match (self.cfg.use_color, self.cfg.compact) {
+                (true, true) => crate::frame::render_world_frame_density_colored_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (true, false) => crate::frame::render_world_frame_density_colored(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, true) => crate::frame::render_world_frame_density_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, false) => crate::frame::render_world_frame_density(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
             }
-            (false, true) => {
-                crate::frame::render_world_frame_compact(pm, self.planet.as_ref(), &frame, "")
+        } else {
+            match (self.cfg.use_color, self.cfg.compact) {
+                (true, true) => crate::frame::render_world_frame_colored_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (true, false) => crate::frame::render_world_frame_colored(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, true) => crate::frame::render_world_frame_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, false) => render_world_frame(pm, self.planet.as_ref(), &frame, ""),
             }
-            (false, false) => render_world_frame(pm, self.planet.as_ref(), &frame, ""),
         };
         // Build the entire frame into an in-memory Vec<u8>, then
         // prepend `\x1b[H\x1b[2J` (home + full-screen clear) and

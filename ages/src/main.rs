@@ -78,7 +78,7 @@ fn main() -> Result<()> {
             };
             run(&cfg, &mut emitter)?;
         }
-        CliVerbosity::Viewport => {
+        CliVerbosity::Viewport | CliVerbosity::ViewportDensity => {
             // Live ASCII viewport. Stdout pipeline mirrors per-civ
             // territorial state from the event stream and re-renders
             // a planet frame every `--frame-every-ticks` ticks via
@@ -91,6 +91,11 @@ fn main() -> Result<()> {
             // cadence — pairing `--tick-rate-ms 16 --frame-every-ticks 50`
             // gives ~3 frames/sec at 1 tick = 1 month; a 5000-year
             // run is 60000 ticks → at 50-tick cadence ~1200 frames.
+            //
+            // `viewport-density` is the same pipeline with the
+            // density-glyph variant of the renderer; everything
+            // else (cadence, alt-screen, log, sidebar) is shared.
+            let density_mode = matches!(args.cli, CliVerbosity::ViewportDensity);
             let viewport = ViewportEmitter::new(
                 std::io::stdout().lock(),
                 ViewportConfig {
@@ -101,6 +106,7 @@ fn main() -> Result<()> {
                     log_lines: args.viewport_log_lines,
                     compact: args.viewport_compact,
                     temperature_unit: args.temperature_unit,
+                    density_mode,
                 },
             );
             let stdout_pipeline = ThrottledEmitter {
@@ -181,6 +187,11 @@ enum CliVerbosity {
     /// using ANSI alternate-screen mode. NDJSON file still
     /// carries the full event log.
     Viewport,
+    /// Same as `Viewport` but renders cells as density block
+    /// glyphs (` ░ ▒ ▓ █`) sized by pop fill-% instead of the
+    /// digit-ladder. Useful for scanning where mass sits rather
+    /// than exact fill-%.
+    ViewportDensity,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -238,8 +249,9 @@ fn parse_args() -> Result<Args> {
                     "all" => CliVerbosity::All,
                     "highlights" => CliVerbosity::Highlights,
                     "viewport" => CliVerbosity::Viewport,
+                    "viewport-density" => CliVerbosity::ViewportDensity,
                     other => anyhow::bail!(
-                        "--cli must be one of {{quiet, all, highlights, viewport}}; got {other:?}"
+                        "--cli must be one of {{quiet, all, highlights, viewport, viewport-density}}; got {other:?}"
                     ),
                 };
             }
@@ -358,11 +370,13 @@ fn print_help() {
              --ticks <u64>          raw tick count (low-level alternative to --years).\n  \
                                     1 tick = 1 month\n  \
              --out <path>           NDJSON event-log path (default: events.ndjson)\n  \
-             --cli <mode>           live CLI verbosity: quiet|all|highlights|viewport (default: all)\n  \
+             --cli <mode>           live CLI verbosity: quiet|all|highlights|viewport|viewport-density (default: all)\n  \
                                     highlights = structural-pin subset (founding, collapse,\n  \
                                     catastrophe, tech, contact, transmission, conflict, run-end)\n  \
                                     viewport   = live ASCII planet+territory map, refreshed in\n  \
                                     alternate-screen mode every --frame-every-ticks years\n  \
+                                    viewport-density = same map, density block glyphs (░▒▓█)\n  \
+                                    instead of pop-fill digits\n  \
              --tick-rate-ms <u64>   wall-clock sleep per tick on stdout streaming\n  \
                                     (default: 0 = no throttling). Useful for human\n  \
                                     readability or pacing a UI consumer. NDJSON file\n  \

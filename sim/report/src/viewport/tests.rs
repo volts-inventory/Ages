@@ -1,5 +1,8 @@
 use super::*;
-use protocol::{CivCollapsed, CivFounded, CivTerritoryChanged, Event, Phase, PlanetMap, TickEvent};
+use protocol::{
+    CivCollapsed, CivFounded, CivTerritoryChanged, Event, PeaceConcluded, PeaceReason, Phase,
+    PlanetMap, TechUnlocked, TickEvent, WarDeclared,
+};
 use sim_events::Emitter;
 
 fn pm() -> PlanetMap {
@@ -20,6 +23,7 @@ fn cfg(frame_every: u64) -> ViewportConfig {
         log_lines: 0,
         compact: false,
         temperature_unit: TempUnit::Fahrenheit,
+        density_mode: false,
     }
 }
 
@@ -248,6 +252,272 @@ fn freshly_founded_civ_sidebar_shows_initial_population() {
 }
 
 #[test]
+fn sidebar_pop_line_carries_trend_arrow() {
+    // The pop line should pick up a ↑/↓/→ arrow comparing each
+    // frame against the previous snapshot. First frame: → (no
+    // prior). Second frame with pop up >0.5%: ↑. Third frame
+    // with pop down >0.5%: ↓.
+    //
+    // Sidebar only renders when `show_planet_card = true`, so
+    // we use a hand-rolled config instead of `cfg()`.
+    let mut buf: Vec<u8> = Vec::new();
+    let q32_one: i128 = 1_i128 << 32;
+    let mut em = ViewportEmitter::new(
+        &mut buf,
+        ViewportConfig {
+            frame_every: 1,
+            use_alt_screen: false,
+            use_color: false,
+            show_planet_card: true,
+            log_lines: 0,
+            compact: false,
+            temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
+        },
+    );
+    em.emit(&Event::PlanetMap(pm())).unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 1,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 100 * q32_one,
+        founding_figure_count: 1,
+        claimed_cells: vec![0],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 1,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
+        tick: 2,
+        civ_id: 1,
+        claimed_cells: vec![0],
+        population_q32: 200 * q32_one,
+        cell_populations_q32: vec![200 * q32_one],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 2,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
+        tick: 3,
+        civ_id: 1,
+        claimed_cells: vec![0],
+        population_q32: 50 * q32_one,
+        cell_populations_q32: vec![50 * q32_one],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 3,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    drop(em);
+    let s = String::from_utf8(buf).unwrap();
+    assert!(
+        s.contains("100p \u{2192}"),
+        "first frame should carry → (no prior snapshot); got:\n{s}"
+    );
+    assert!(
+        s.contains("200p \u{2191}"),
+        "second frame should carry ↑ (pop doubled); got:\n{s}"
+    );
+    assert!(
+        s.contains("50p \u{2193}"),
+        "third frame should carry ↓ (pop dropped); got:\n{s}"
+    );
+}
+
+#[test]
+fn sidebar_surfaces_latest_unlocked_tool() {
+    // After a `TechUnlocked` event, the per-civ panel should
+    // render a `last: {tool_name}` line beneath the identity
+    // line. Subsequent unlocks overwrite. Before the first
+    // unlock the line is suppressed.
+    let mut buf: Vec<u8> = Vec::new();
+    let mut em = ViewportEmitter::new(
+        &mut buf,
+        ViewportConfig {
+            frame_every: 1,
+            use_alt_screen: false,
+            use_color: false,
+            show_planet_card: true,
+            log_lines: 0,
+            compact: false,
+            temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
+        },
+    );
+    em.emit(&Event::PlanetMap(pm())).unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 1,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 1 << 32,
+        founding_figure_count: 1,
+        claimed_cells: vec![0],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    // Pre-unlock frame: no `last:` line.
+    em.emit(&Event::Tick(TickEvent {
+        tick: 1,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::TechUnlocked(TechUnlocked {
+        tick: 2,
+        civ_id: 1,
+        tool_id: 7,
+        tool_name: "Knapping".to_string(),
+        tier: 1,
+        granted_channels: vec![],
+        newly_perceivable_template_ids: vec![],
+        serendipitous: false,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 2,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::TechUnlocked(TechUnlocked {
+        tick: 3,
+        civ_id: 1,
+        tool_id: 12,
+        tool_name: "BulkCultivation".to_string(),
+        tier: 2,
+        granted_channels: vec![],
+        newly_perceivable_template_ids: vec![],
+        serendipitous: false,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 3,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    drop(em);
+    let s = String::from_utf8(buf).unwrap();
+    // Last unlock survives in the most recent frame, earlier
+    // tool is overwritten.
+    assert!(s.contains("last: BulkCultivation"));
+    // The earlier tool name appeared in the middle frame, so a
+    // substring check is too loose to assert "no longer renders".
+    // The strong invariant is that the *final* frame doesn't
+    // mention the earlier tool. Split on the frame divider and
+    // check the last segment.
+    let last_frame = s.rsplit("-- map --").next().unwrap_or("");
+    assert!(!last_frame.contains("Knapping"));
+}
+
+#[test]
+fn sidebar_cohesion_line_carries_war_or_peace_tag() {
+    // The cohesion line should pick up a quick-scan war token
+    // — `at war ⚔` while a WarDeclared pair touching this civ
+    // is active, `peace` otherwise (or after PeaceConcluded).
+    let mut buf: Vec<u8> = Vec::new();
+    let mut em = ViewportEmitter::new(
+        &mut buf,
+        ViewportConfig {
+            frame_every: 1,
+            use_alt_screen: false,
+            use_color: false,
+            show_planet_card: true,
+            log_lines: 0,
+            compact: false,
+            temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
+        },
+    );
+    em.emit(&Event::PlanetMap(pm())).unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 1,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 1 << 32,
+        founding_figure_count: 1,
+        claimed_cells: vec![0],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 2,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 1 << 32,
+        founding_figure_count: 1,
+        claimed_cells: vec![5],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    // Pre-war frame: peace.
+    em.emit(&Event::Tick(TickEvent {
+        tick: 1,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::WarDeclared(WarDeclared {
+        tick: 2,
+        aggressor_civ_id: 1,
+        defender_civ_id: 2,
+        belligerence_q32: 0,
+        drive_q32: 0,
+        kinship_q32: 0,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 2,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::PeaceConcluded(PeaceConcluded {
+        tick: 3,
+        civ_a: 1,
+        civ_b: 2,
+        reason: PeaceReason::BelligerenceDropped,
+        duration_ticks: 1,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 3,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    drop(em);
+    let s = String::from_utf8(buf).unwrap();
+    let frames: Vec<&str> = s.split("-- map --").collect();
+    // 4 splits: prologue + 3 frames.
+    assert!(frames.len() >= 4, "expected >=4 split segments; got {}", frames.len());
+    assert!(
+        frames[1].contains("peace"),
+        "pre-war frame should tag peace; got:\n{}",
+        frames[1]
+    );
+    assert!(
+        frames[2].contains("at war \u{2694}"),
+        "mid-war frame should tag at-war; got:\n{}",
+        frames[2]
+    );
+    assert!(
+        frames[3].contains("peace"),
+        "post-peace frame should tag peace; got:\n{}",
+        frames[3]
+    );
+}
+
+#[test]
 fn log_tail_captures_significant_events_only() {
     // Significant events (founded, collapsed, catastrophe,
     // tech, transmission, conflict) are rendered in the log
@@ -263,6 +533,7 @@ fn log_tail_captures_significant_events_only() {
             log_lines: 3,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
@@ -315,6 +586,7 @@ fn log_tail_caps_at_log_lines() {
             log_lines: 2,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
