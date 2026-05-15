@@ -935,7 +935,15 @@ pub(crate) fn population_phase<E: Emitter>(
             continue;
         }
         if cells_changed {
-            nomads::absorb_into_civ(nomad_pops, civ, gained, &species.biology);
+            // Territory-expansion absorb: existing civ; no founder
+            // reorg tax.
+            nomads::absorb_into_civ(
+                nomad_pops,
+                civ,
+                gained,
+                &species.biology,
+                sim_arith::Real::ZERO,
+            );
         }
         let claimed_sorted = claimed_cells_for_event(civ);
         let cell_populations_q32: Vec<i128> = claimed_sorted

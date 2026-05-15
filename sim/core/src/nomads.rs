@@ -617,14 +617,31 @@ pub(crate) fn ambient_emergence(
 
 /// Absorb every nomad on the listed cells into the civ's cohort.
 /// Runs at civ founding *and* after each `claim_cells` call so
+/// Founder-effect loss fraction applied when nomadic populations
+/// are folded into a fresh civ. Models the institutional-reorg
+/// cost of band → polity: the social structure is being built
+/// from scratch, food distribution + birth-cycle alignment + new
+/// authority rules cost lives during the first decade. The
+/// territory-expansion path (existing civ gaining cells) passes
+/// zero loss — those nomads are joining an existing institutional
+/// scaffold, no reorganisation tax.
+pub(crate) const FOUNDING_ABSORB_LOSS: (i64, i64) = (15, 100);
+
 /// territory expansion converts nomads into civ population. Returns
-/// the absorbed total (tests use this; callers may ignore).
+/// the absorbed total post-loss (tests use this; callers may ignore).
+///
+/// `loss_fraction` is applied bracket-uniformly before the absorbed
+/// pop deposits: a `0.15` value drops 15% across every age bracket
+/// equally. Pass `Real::ZERO` for paths that should preserve full
+/// pop (existing civ gaining territory).
 pub(crate) fn absorb_into_civ(
     pops: &mut BTreeMap<u32, Real>,
     civ: &mut sim_civ::Civ,
     cells: impl IntoIterator<Item = u32>,
     biology: &sim_species::PopulationBiology,
+    loss_fraction: Real,
 ) -> Real {
+    let retained = Real::ONE - loss_fraction.max(Real::ZERO).min(Real::ONE);
     let mut total = Real::ZERO;
     // Deposit the absorbed nomadic pop into the per-cell
     // `region_cohorts` for the gained cell, distributed across
@@ -633,8 +650,9 @@ pub(crate) fn absorb_into_civ(
     // become fertile adults on civ contact.
     for cell in cells {
         if let Some(p) = pops.remove(&cell) {
-            total = total + p;
-            let p_pop = sim_arith::Pop::from_real(p);
+            let after_loss = p * retained;
+            total = total + after_loss;
+            let p_pop = sim_arith::Pop::from_real(after_loss);
             if let Some(cohort) = civ.region_cohorts.get_mut(&cell) {
                 cohort.deposit_distributed(p_pop, biology);
             } else {
@@ -1103,6 +1121,69 @@ mod tests {
         let mut state = sim_physics::PhysicsState::new(HexGrid::new(width, height));
         sim_world::init_planet(&mut state, planet);
         state
+    }
+
+    /// Founder-effect loss: `absorb_into_civ` with the 15% loss
+    /// fraction drops 15% across every bracket before depositing
+    /// into the civ. Zero-loss path preserves full pop (existing
+    /// civ gaining territory).
+    #[test]
+    fn absorb_into_civ_applies_founder_loss_only_at_founding() {
+        // Minimal biology for the deposit_distributed call (only
+        // bracket fractions matter for routing the deposit).
+        let biology = sim_species::PopulationBiology {
+            clutch_size: Real::from_int(2),
+            infant_fraction: Real::from_ratio(10, 100),
+            maturity_fraction: Real::from_ratio(20, 100),
+            eldership_fraction: Real::from_ratio(10, 100),
+            infant_survival: Real::from_ratio(70, 100),
+            juvenile_survival: Real::from_ratio(85, 100),
+            food_multipliers: [
+                Real::from_ratio(3, 10),
+                Real::from_ratio(6, 10),
+                Real::ONE,
+                Real::from_ratio(9, 10),
+            ],
+        };
+        let mut civ = sim_civ::Civ::new(1, 0, sim_arith::Pop::ZERO);
+        // Seed an empty cohort for cell 0 so the deposit lands in
+        // `region_cohorts` rather than the fallback insert branch.
+        civ.region_cohorts
+            .insert(0, sim_civ::Cohort::empty_with_civ(1));
+
+        // Path 1: founder absorb (15% loss). 1000 in → 850 out.
+        let mut pops: BTreeMap<u32, Real> = BTreeMap::new();
+        pops.insert(0, Real::from_int(1000));
+        let founder_loss = Real::from_ratio(FOUNDING_ABSORB_LOSS.0, FOUNDING_ABSORB_LOSS.1);
+        let absorbed = absorb_into_civ(&mut pops, &mut civ, [0u32], &biology, founder_loss);
+        let expected = Real::from_int(850);
+        let drift = if absorbed > expected {
+            absorbed - expected
+        } else {
+            expected - absorbed
+        };
+        assert!(
+            drift < Real::from_int(1),
+            "founder absorb should retain 85%; got {absorbed:?} vs {expected:?}"
+        );
+
+        // Path 2: territory-expansion absorb (zero loss). 1000 in → 1000 out.
+        let mut civ2 = sim_civ::Civ::new(2, 0, sim_arith::Pop::ZERO);
+        civ2.region_cohorts
+            .insert(0, sim_civ::Cohort::empty_with_civ(2));
+        let mut pops2: BTreeMap<u32, Real> = BTreeMap::new();
+        pops2.insert(0, Real::from_int(1000));
+        let absorbed2 = absorb_into_civ(&mut pops2, &mut civ2, [0u32], &biology, Real::ZERO);
+        let expected2 = Real::from_int(1000);
+        let drift2 = if absorbed2 > expected2 {
+            absorbed2 - expected2
+        } else {
+            expected2 - absorbed2
+        };
+        assert!(
+            drift2 < Real::from_int(1),
+            "expansion absorb should keep full pop; got {absorbed2:?}"
+        );
     }
 
     /// `init_pops` concentrates the starting population in

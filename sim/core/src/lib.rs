@@ -1498,11 +1498,19 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 );
                 let gained: Vec<u32> = cells.iter().copied().collect();
                 new_civ.claim_cells(&cells);
+                // Fresh civ — apply the founder-effect bracket-uniform
+                // loss. See `nomads::FOUNDING_ABSORB_LOSS` for the
+                // band → polity reorg-tax rationale.
+                let founder_loss = sim_arith::Real::from_ratio(
+                    nomads::FOUNDING_ABSORB_LOSS.0,
+                    nomads::FOUNDING_ABSORB_LOSS.1,
+                );
                 nomads::absorb_into_civ(
                     &mut nomad_pops,
                     &mut new_civ,
                     gained.clone(),
                     &species.biology,
+                    founder_loss,
                 );
                 // Per-template *firing counts* from the nomadic
                 // phase are NOT inherited. The previous design
