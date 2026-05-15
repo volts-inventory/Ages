@@ -139,6 +139,40 @@ pub fn migration_pressure_threshold(sociality: Real) -> Real {
     Real::from_ratio(55, 100) + Real::from_ratio(2, 10) * s
 }
 
+/// Tech-augmented migration threshold. Tech surplus (urban
+/// planning, irrigation, sanitation) should make a civ tolerate
+/// denser cores before pushing migrants outward — frontier
+/// expansion is a *resource-poor* response. Multiplier is
+/// `min(1.5, sqrt(tool_capacity_multiplier))` so:
+///   - vanilla civ (tech = 1.0): 1.0× → threshold unchanged
+///   - 4× capacity stack: sqrt = 2.0 → capped at 1.5×
+///   - higher tech: still capped at 1.5×
+/// Output is then clamped to ≤ 0.97 so the threshold can't push
+/// above the saturation cliff (a 0.99 threshold would freeze
+/// migration entirely). Net: a high-tech civ tolerates 55-97%
+/// fill before spillover instead of the base 55-75%.
+#[must_use]
+pub fn tech_augmented_migration_threshold(
+    base: Real,
+    tool_capacity_multiplier: Real,
+) -> Real {
+    let safe_mult = tool_capacity_multiplier.max(Real::from_ratio(1, 100));
+    let raw_factor = sim_arith::transcendental::sqrt(safe_mult);
+    let max_factor = Real::from_ratio(15, 10);
+    let factor = if raw_factor > max_factor {
+        max_factor
+    } else {
+        raw_factor
+    };
+    let augmented = base * factor;
+    let ceiling = Real::from_ratio(97, 100);
+    if augmented > ceiling {
+        ceiling
+    } else {
+        augmented
+    }
+}
+
 /// Derive figure-hypothesizer `attempt_period` from
 /// `species.cognition`. High-cognition species cycle through
 /// hypothesis attempts faster (~3× more often than low-cognition);
@@ -271,6 +305,57 @@ mod tests {
         assert!(sparse >= Real::from_int(45_000));
         // Hyper bonus is real but bounded — no surprise 2× scaling.
         assert!(hyper >= Real::from_int(50_000) && hyper <= Real::from_int(65_000));
+    }
+
+    /// tech_augmented_migration_threshold scales the base threshold
+    /// by `min(1.5, sqrt(capacity_mult))` and clamps the output to
+    /// `0.97`. Vanilla civs (capacity_mult = 1.0) pass through.
+    #[test]
+    fn tech_augmented_migration_threshold_envelopes() {
+        let base = Real::from_ratio(70, 100);
+        // No tools → unchanged.
+        let t0 = tech_augmented_migration_threshold(base, Real::ONE);
+        let drift0 = if t0 > base { t0 - base } else { base - t0 };
+        assert!(drift0 < Real::from_ratio(1, 1000));
+
+        // 4× capacity → sqrt = 2.0, capped at 1.5 → 0.70 * 1.5 = 1.05
+        // → clamped to 0.97 ceiling.
+        let t4 = tech_augmented_migration_threshold(base, Real::from_int(4));
+        let ceiling = Real::from_ratio(97, 100);
+        let drift_ceil = if t4 > ceiling {
+            t4 - ceiling
+        } else {
+            ceiling - t4
+        };
+        assert!(
+            drift_ceil < Real::from_ratio(1, 100),
+            "4× capacity should clamp to 0.97; got {t4:?}"
+        );
+
+        // 2.25× capacity → sqrt = 1.5 (boundary) → 0.70 * 1.5 = 1.05
+        // → still clamped.
+        let t225 = tech_augmented_migration_threshold(base, Real::from_ratio(225, 100));
+        let drift_ceil2 = if t225 > ceiling {
+            t225 - ceiling
+        } else {
+            ceiling - t225
+        };
+        assert!(drift_ceil2 < Real::from_ratio(1, 100));
+
+        // Lower base with same 4× tech → factor 1.5 → 0.55 * 1.5 =
+        // 0.825 (under the 0.97 ceiling).
+        let low_base = Real::from_ratio(55, 100);
+        let t_low = tech_augmented_migration_threshold(low_base, Real::from_int(4));
+        let expected = Real::from_ratio(825, 1000);
+        let drift = if t_low > expected {
+            t_low - expected
+        } else {
+            expected - t_low
+        };
+        assert!(
+            drift < Real::from_ratio(1, 100),
+            "0.55 × 1.5 = 0.825; got {t_low:?}"
+        );
     }
 
     /// Calibration regression test for the founding floor.

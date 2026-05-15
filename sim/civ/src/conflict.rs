@@ -17,6 +17,28 @@ pub const CONFLICT_HIERARCHY_BONUS: (i64, i64) = (30, 100);
 /// considered conflict-prone (no peaceful diffusion).
 pub const PEACEFUL_HIERARCHY_FLOOR: (i64, i64) = (40, 100);
 
+/// Civ size factor for the hierarchy-driven casualty bonus.
+/// Returns `min(1.0, log10(cells) / 2)` — a 1-cell band has no
+/// hierarchical advantage (organisation costs you nothing when
+/// you're a single hamlet), a 100-cell empire gets the full
+/// scale (log10(100) / 2 = 1.0). At 14 cells the factor is
+/// ≈ 0.57, so the empire's casualty edge over a tribe of equal
+/// hierarchy reads as ~0.30 vs ~0.18 — proportional to
+/// organisational reach. Falls to 0 for empty civs to avoid
+/// log-of-zero blowups.
+#[must_use]
+pub fn hierarchy_size_factor(cells: usize) -> Real {
+    if cells == 0 {
+        return Real::ZERO;
+    }
+    // log10(x) = ln(x) / ln(10); ln(10) ≈ 2.302585.
+    let n = Real::from_int(i64::try_from(cells).unwrap_or(i64::MAX));
+    let ln_n = sim_arith::transcendental::ln(n);
+    let ln_10 = sim_arith::transcendental::ln(Real::from_int(10));
+    let factor = ln_n / (ln_10 * Real::from_int(2));
+    factor.max(Real::ZERO).min(Real::ONE)
+}
+
 /// `strength = aggregate_pop × (1 + literacy) × (1 + Hierarchical/2) × tool_war_multiplier`.
 ///
 /// the per-tool war-strength contribution (`ContactWeapon`
@@ -125,7 +147,16 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
         .max(Real::ONE)
         .min(Real::from_int(4));
     let tech_gap = (clamped - Real::ONE) * Real::from_ratio(10, 100);
-    let loss_frac = (min_loss + winner_hier * hier_bonus + tech_gap)
+    // Hierarchy-size factor: the +0.30 hierarchy casualty bonus
+    // is gated by organisational reach. A 14-cell tribe with a
+    // hierarchical chief gets ~0.18 of the bonus, a 100-cell
+    // empire with the same chief gets the full 0.30. Otherwise
+    // a tiny tribal band reads as effective as the empire of
+    // the same hierarchical cosmology, which doesn't match
+    // historical asymmetry (Macedon out-organising Persia at
+    // size, not a Sumerian city-state at 6 cells).
+    let size_factor = hierarchy_size_factor(winner_civ.claimed_cells.len());
+    let loss_frac = (min_loss + winner_hier * hier_bonus * size_factor + tech_gap)
         .max(Real::ZERO)
         .min(Real::from_ratio(60, 100));
 
@@ -494,17 +525,75 @@ mod tests {
         // is 0.50, so post-check the cell holds 15 < 25 and
         // flips. With only one disputed cell, the flip leaves no
         // overlap → loser_defeated = true.
+        //
+        // Hierarchical casualty bonus now scales with claimed-cell
+        // count (log10(cells)/2 capped at 1.0). A 100-cell winner
+        // hits the cap and recovers the legacy +0.30 contribution
+        // that drives loss_frac above the flip floor; we give civ
+        // 1 a 100-cell claim with only cell 0 contested.
         let mut a = civ_with_id(1, 1_000_000);
         let mut b = civ_with_id(2, 30);
+        let mut a_cells = BTreeSet::new();
+        for i in 0..100u32 {
+            a_cells.insert(i);
+        }
+        a.claim_cells(&a_cells);
+        let mut b_cells = BTreeSet::new();
+        b_cells.insert(0);
+        b.claim_cells(&b_cells);
+        a.cosmology.hierarchical = Real::ONE;
+        let r = resolve(&mut a, &mut b, 100).unwrap();
+        assert!(r.loser_defeated);
+        assert!(!b.claimed_cells.contains(&0));
+        assert!(a.claimed_cells.contains(&0));
+    }
+
+    #[test]
+    fn hierarchy_size_factor_scales_with_civ_size() {
+        // A 1-cell band gets no hierarchical organisational
+        // advantage; a 100-cell empire hits the cap.
+        let f1 = hierarchy_size_factor(1);
+        // log10(1) = 0 → factor 0.
+        assert!(f1 < Real::from_ratio(1, 1000));
+
+        let f100 = hierarchy_size_factor(100);
+        // log10(100) / 2 = 1.0 → factor 1.0.
+        let drift = Real::ONE - f100;
+        assert!(drift < Real::from_ratio(1, 100));
+
+        // Between: 14-cell tribe ≈ 0.57.
+        let f14 = hierarchy_size_factor(14);
+        let target = Real::from_ratio(57, 100);
+        let drift14 = if f14 > target { f14 - target } else { target - f14 };
+        assert!(
+            drift14 < Real::from_ratio(5, 100),
+            "14-cell factor should be ~0.57; got {f14:?}"
+        );
+
+        // 1000-cell empire still capped at 1.0 (log10/2 = 1.5).
+        let f1000 = hierarchy_size_factor(1000);
+        let drift1000 = Real::ONE - f1000;
+        assert!(drift1000 < Real::from_ratio(1, 1000));
+    }
+
+    #[test]
+    fn small_band_does_not_get_hierarchy_casualty_edge() {
+        // A 1-cell band fighting a 1-cell band, even with maxed
+        // hierarchical cosmology, gets only the base 10% loss
+        // (no organisational bonus at this size). Loser starts
+        // above the flip floor and survives the round.
+        let mut a = civ_with_id(1, 10_000_000); // wins by sheer pop
+        let mut b = civ_with_id(2, 200); // above CELL_FLIP_FLOOR=25
         let mut cells = BTreeSet::new();
         cells.insert(0);
         a.claim_cells(&cells);
         b.claim_cells(&cells);
         a.cosmology.hierarchical = Real::ONE;
         let r = resolve(&mut a, &mut b, 100).unwrap();
-        assert!(r.loser_defeated);
-        assert!(!b.claimed_cells.contains(&0));
-        assert!(a.claimed_cells.contains(&0));
+        // 1-cell winner → size_factor = 0; loss_frac = 0.10 only.
+        // 200 × 0.90 = 180, well above the 25 flip floor.
+        assert!(!r.loser_defeated, "1-cell winner shouldn't one-shot");
+        assert!(b.claimed_cells.contains(&0));
     }
 
     #[test]

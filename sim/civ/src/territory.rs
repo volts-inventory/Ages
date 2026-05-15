@@ -256,7 +256,14 @@ impl Civ {
         if self.region_cohorts.is_empty() {
             return;
         }
-        let pressure_threshold = self.migration_pressure_threshold;
+        // Tech-augmented threshold: a high-tech civ tolerates a
+        // denser core before pushing migrants outward — frontier
+        // expansion is a resource-poor response. See
+        // `tech_augmented_migration_threshold` for the formula.
+        let pressure_threshold = crate::demographics::tech_augmented_migration_threshold(
+            self.migration_pressure_threshold,
+            self.tool_capacity_multiplier(),
+        );
         // Base 5%-per-tick rate scaled by tools that accelerate
         // intra-civ population redistribution (transport, navigation,
         // logistics coordination). `tool_migration_speed_bonus` is
@@ -413,7 +420,13 @@ impl Civ {
         let scaled = self.tool_expansion_rate_bonus() * Real::from_int(10);
         let scaled_floor = u64::try_from((scaled.raw().to_bits() >> 32).max(0)).unwrap_or(0);
         let budget: u64 = 1u64.saturating_add(scaled_floor);
-        let pressure_threshold = self.migration_pressure_threshold;
+        // Same tech-augmented threshold as `migrate_intra_civ` —
+        // high-tech civs spill over later (denser cores, less
+        // frontier-grab pressure per tick).
+        let pressure_threshold = crate::demographics::tech_augmented_migration_threshold(
+            self.migration_pressure_threshold,
+            self.tool_capacity_multiplier(),
+        );
         let seed_fraction = Real::from_ratio(20, 100);
 
         let caps: BTreeMap<u32, Pop> = self

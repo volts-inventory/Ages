@@ -50,7 +50,7 @@ pub use demographics::{
     attempt_period_for_cognition, biosphere_birth_factor, biosphere_birth_factor_for_planet,
     carrying_capacity_per_unit, dynamics_for, founding_min_population,
     migration_pressure_threshold, scale_attempt_period_for_metabolism,
-    streak_ticks_for_metabolism,
+    streak_ticks_for_metabolism, tech_augmented_migration_threshold,
 };
 pub use naming::civ_name_from_seed;
 pub use succession::pick_successor_centroid;

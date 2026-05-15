@@ -12,6 +12,28 @@ fn baseline_templates() -> Vec<u32> {
 }
 
 #[test]
+fn falsification_trigger_default_30_civ_aware_uses_metabolism_scaled() {
+    // Default constructor leaves the trigger at the legacy 30 so
+    // planet-agnostic tests + tools keep their existing behaviour.
+    let h = Hypothesizer::new(Real::ONE, &baseline_templates());
+    assert_eq!(h.falsification_trigger_ticks, 30);
+
+    // Civ-aware setter accepts the planet-derived scaled value
+    // (silicate metabolism = 0.2 → 120 / 0.2 = 600 ticks).
+    let mut h2 = Hypothesizer::new(Real::ONE, &baseline_templates());
+    let metabolism = sim_arith::Real::from_ratio(2, 10);
+    let ticks = crate::demographics::streak_ticks_for_metabolism(120, metabolism);
+    h2.set_falsification_trigger_ticks(ticks);
+    assert_eq!(h2.falsification_trigger_ticks, 600);
+
+    // Zero is ignored — keeps the previous value as a guard against
+    // metabolism = 0 collapses.
+    let mut h3 = Hypothesizer::new(Real::ONE, &baseline_templates());
+    h3.set_falsification_trigger_ticks(0);
+    assert_eq!(h3.falsification_trigger_ticks, 30);
+}
+
+#[test]
 fn cross_product_candidates_have_unique_stable_ids() {
     // 5 templates × 8 channels = 40 candidates; ids stable
     // across runs so confirmations survive a refresh.
