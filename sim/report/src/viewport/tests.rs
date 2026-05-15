@@ -248,6 +248,90 @@ fn freshly_founded_civ_sidebar_shows_initial_population() {
 }
 
 #[test]
+fn sidebar_pop_line_carries_trend_arrow() {
+    // The pop line should pick up a ↑/↓/→ arrow comparing each
+    // frame against the previous snapshot. First frame: → (no
+    // prior). Second frame with pop up >0.5%: ↑. Third frame
+    // with pop down >0.5%: ↓.
+    //
+    // Sidebar only renders when `show_planet_card = true`, so
+    // we use a hand-rolled config instead of `cfg()`.
+    let mut buf: Vec<u8> = Vec::new();
+    let q32_one: i128 = 1_i128 << 32;
+    let mut em = ViewportEmitter::new(
+        &mut buf,
+        ViewportConfig {
+            frame_every: 1,
+            use_alt_screen: false,
+            use_color: false,
+            show_planet_card: true,
+            log_lines: 0,
+            compact: false,
+            temperature_unit: TempUnit::Fahrenheit,
+        },
+    );
+    em.emit(&Event::PlanetMap(pm())).unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 1,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 100 * q32_one,
+        founding_figure_count: 1,
+        claimed_cells: vec![0],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 1,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
+        tick: 2,
+        civ_id: 1,
+        claimed_cells: vec![0],
+        population_q32: 200 * q32_one,
+        cell_populations_q32: vec![200 * q32_one],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 2,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
+        tick: 3,
+        civ_id: 1,
+        claimed_cells: vec![0],
+        population_q32: 50 * q32_one,
+        cell_populations_q32: vec![50 * q32_one],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 3,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    drop(em);
+    let s = String::from_utf8(buf).unwrap();
+    assert!(
+        s.contains("100p \u{2192}"),
+        "first frame should carry → (no prior snapshot); got:\n{s}"
+    );
+    assert!(
+        s.contains("200p \u{2191}"),
+        "second frame should carry ↑ (pop doubled); got:\n{s}"
+    );
+    assert!(
+        s.contains("50p \u{2193}"),
+        "third frame should carry ↓ (pop dropped); got:\n{s}"
+    );
+}
+
+#[test]
 fn log_tail_captures_significant_events_only() {
     // Significant events (founded, collapsed, catastrophe,
     // tech, transmission, conflict) are rendered in the log

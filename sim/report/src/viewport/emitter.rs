@@ -153,6 +153,13 @@ pub struct ViewportEmitter<W: Write> {
     /// so they read as `lost "water flows downhill"` instead of
     /// the cryptic `lost r438`.
     relation_template_names: BTreeMap<u32, String>,
+    /// Per-civ snapshot of total population (raw Q96.32 bits)
+    /// captured at the end of the previous render. Compared
+    /// against the new total at render time so the sidebar's pop
+    /// line gets a ↑ / ↓ / → trend arrow. ±0.5% threshold keeps
+    /// the arrow stable under sub-tick noise. Cleared on
+    /// `CivCollapsed`.
+    civ_last_emitted_pop_q32: BTreeMap<u32, i128>,
 }
 
 impl<W: Write> ViewportEmitter<W> {
@@ -187,6 +194,7 @@ impl<W: Write> ViewportEmitter<W> {
             civ_cohesion: BTreeMap::new(),
             civ_life_expectancy_months: BTreeMap::new(),
             relation_template_names: BTreeMap::new(),
+            civ_last_emitted_pop_q32: BTreeMap::new(),
         }
     }
 
@@ -896,6 +904,7 @@ impl<W: Write> ViewportEmitter<W> {
                 self.civ_tools_unlocked.remove(&c.civ_id);
                 self.civ_cohesion.remove(&c.civ_id);
                 self.civ_life_expectancy_months.remove(&c.civ_id);
+                self.civ_last_emitted_pop_q32.remove(&c.civ_id);
                 // Drop any war pairs touching this civ so a
                 // re-emerged civ_id can re-trigger a fresh
                 // "conflict resolved" line. Pairs are stored as
@@ -1043,7 +1052,7 @@ impl<W: Write> ViewportEmitter<W> {
     /// breathing room. Returns the line vector unwrapped — caller
     /// pads each to `SIDEBAR_WIDTH` cols when zipping with the
     /// map rows.
-    fn build_sidebar_lines(&self) -> Vec<String> {
+    fn build_sidebar_lines(&mut self) -> Vec<String> {
         // Legend: all fallback glyphs included; split across 3
         // lines so each fits in ~28 cols. The redundant
         // `A=cap · 1=civ` entries were dropped — every per-civ
@@ -1090,16 +1099,29 @@ impl<W: Write> ViewportEmitter<W> {
         // Sums use i64 saturating add on the raw Q32.32 fixed-point
         // values so ranking is exact rather than depending on f64
         // round-off across many cells.
-        let mut civ_order: Vec<(&u32, &CivClaim)> = self.civs.iter().collect();
-        civ_order.sort_by(|a, b| {
-            let pop = |claim: &CivClaim| -> i128 {
-                claim
+        //
+        // Capture per-civ Q32 sums into a local map up-front: the
+        // same total drives the panel sort *and* the ↑/↓ trend
+        // arrow on the pop line (compared against the previous
+        // render's snapshot in `civ_last_emitted_pop_q32`). The
+        // snapshot map is replaced at the end of this method.
+        let civ_pop_q32: BTreeMap<u32, i128> = self
+            .civs
+            .iter()
+            .map(|(id, claim)| {
+                let sum = claim
                     .cell_populations_q32
                     .values()
                     .copied()
-                    .fold(0i128, i128::saturating_add)
-            };
-            pop(b.1).cmp(&pop(a.1)).then_with(|| a.0.cmp(b.0))
+                    .fold(0i128, i128::saturating_add);
+                (*id, sum)
+            })
+            .collect();
+        let mut civ_order: Vec<(&u32, &CivClaim)> = self.civs.iter().collect();
+        civ_order.sort_by(|a, b| {
+            let pa = civ_pop_q32.get(a.0).copied().unwrap_or(0);
+            let pb = civ_pop_q32.get(b.0).copied().unwrap_or(0);
+            pb.cmp(&pa).then_with(|| a.0.cmp(b.0))
         });
         for (civ_id, claim) in civ_order {
             lines.push(String::new());
@@ -1174,11 +1196,35 @@ impl<W: Write> ViewportEmitter<W> {
             // tiny negative value, which `{:.0}` then renders as
             // "-0p" in the sidebar. Population can't be negative —
             // clamp before formatting.
+            //
+            // Trend arrow against the previous render's snapshot.
+            // ±0.5% deadband suppresses jitter from monthly
+            // food-cycle noise; first-frame civs get `→` (no prior
+            // sample). Reads `civ_last_emitted_pop_q32`; the
+            // snapshot is rewritten at the end of this method.
+            let cur_q32 = civ_pop_q32.get(civ_id).copied().unwrap_or(0);
+            let trend = match self.civ_last_emitted_pop_q32.get(civ_id).copied() {
+                None => '\u{2192}', // → (newly founded, no prior)
+                Some(prev) => {
+                    // 0.5% of |prev| as a threshold; saturating to
+                    // avoid overflow when prev is near i128::MAX.
+                    let band = prev.saturating_abs() / 200;
+                    let delta = cur_q32.saturating_sub(prev);
+                    if delta > band {
+                        '\u{2191}' // ↑
+                    } else if delta < -band {
+                        '\u{2193}' // ↓
+                    } else {
+                        '\u{2192}' // →
+                    }
+                }
+            };
             lines.push(format!(
-                "y{} · {} cells · {}p",
+                "y{} · {} cells · {}p {}",
                 founded_year,
                 claim.claimed_cells.len(),
                 fmt_pop(civ_pop),
+                trend,
             ));
             // Stats line: cohesion + life expectancy, both pulled
             // from the running per-civ snapshots. Cohesion shown as
@@ -1286,6 +1332,12 @@ impl<W: Write> ViewportEmitter<W> {
                 lines.push(format!("\u{2694} war: {label}"));
             }
         }
+        // Replace the previous-render snapshot with the totals
+        // we just rendered, so the next frame's trend arrow
+        // compares against this frame. Collapsed civs were pruned
+        // from `self.civs` on `CivCollapsed`, so the new map
+        // already excludes them.
+        self.civ_last_emitted_pop_q32 = civ_pop_q32;
         lines
     }
 
