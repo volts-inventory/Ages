@@ -1,6 +1,7 @@
 use super::*;
 use protocol::{
-    CivCollapsed, CivFounded, CivTerritoryChanged, Event, Phase, PlanetMap, TechUnlocked, TickEvent,
+    CivCollapsed, CivFounded, CivTerritoryChanged, Event, PeaceConcluded, PeaceReason, Phase,
+    PlanetMap, TechUnlocked, TickEvent, WarDeclared,
 };
 use sim_events::Emitter;
 
@@ -414,6 +415,102 @@ fn sidebar_surfaces_latest_unlocked_tool() {
     // check the last segment.
     let last_frame = s.rsplit("-- map --").next().unwrap_or("");
     assert!(!last_frame.contains("Knapping"));
+}
+
+#[test]
+fn sidebar_cohesion_line_carries_war_or_peace_tag() {
+    // The cohesion line should pick up a quick-scan war token
+    // — `at war ⚔` while a WarDeclared pair touching this civ
+    // is active, `peace` otherwise (or after PeaceConcluded).
+    let mut buf: Vec<u8> = Vec::new();
+    let mut em = ViewportEmitter::new(
+        &mut buf,
+        ViewportConfig {
+            frame_every: 1,
+            use_alt_screen: false,
+            use_color: false,
+            show_planet_card: true,
+            log_lines: 0,
+            compact: false,
+            temperature_unit: TempUnit::Fahrenheit,
+        },
+    );
+    em.emit(&Event::PlanetMap(pm())).unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 1,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 1 << 32,
+        founding_figure_count: 1,
+        claimed_cells: vec![0],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 2,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 1 << 32,
+        founding_figure_count: 1,
+        claimed_cells: vec![5],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    // Pre-war frame: peace.
+    em.emit(&Event::Tick(TickEvent {
+        tick: 1,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::WarDeclared(WarDeclared {
+        tick: 2,
+        aggressor_civ_id: 1,
+        defender_civ_id: 2,
+        belligerence_q32: 0,
+        drive_q32: 0,
+        kinship_q32: 0,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 2,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::PeaceConcluded(PeaceConcluded {
+        tick: 3,
+        civ_a: 1,
+        civ_b: 2,
+        reason: PeaceReason::BelligerenceDropped,
+        duration_ticks: 1,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 3,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    drop(em);
+    let s = String::from_utf8(buf).unwrap();
+    let frames: Vec<&str> = s.split("-- map --").collect();
+    // 4 splits: prologue + 3 frames.
+    assert!(frames.len() >= 4, "expected >=4 split segments; got {}", frames.len());
+    assert!(
+        frames[1].contains("peace"),
+        "pre-war frame should tag peace; got:\n{}",
+        frames[1]
+    );
+    assert!(
+        frames[2].contains("at war \u{2694}"),
+        "mid-war frame should tag at-war; got:\n{}",
+        frames[2]
+    );
+    assert!(
+        frames[3].contains("peace"),
+        "post-peace frame should tag peace; got:\n{}",
+        frames[3]
+    );
 }
 
 #[test]

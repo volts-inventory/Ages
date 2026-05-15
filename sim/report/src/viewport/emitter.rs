@@ -1270,10 +1270,23 @@ impl<W: Write> ViewportEmitter<W> {
                 .get(civ_id)
                 .copied()
                 .map_or(0.0, |m| m / f64::from(period_months));
+            // Quick-scan war status: a single `· at war ⚔` /
+            // `· peace` token rides the cohesion line so the
+            // reader can see "is this civ fighting *anyone*" at
+            // a glance, even when scrolling past dozens of civ
+            // panels. The detail "war: civ X, civ Y" line below
+            // names rivals when there are any.
+            let in_war = self
+                .wars_active
+                .iter()
+                .any(|(a, b)| *a == *civ_id || *b == *civ_id);
+            let war_tag = if in_war { "at war \u{2694}" } else { "peace" };
             if life_y > 0.5 {
-                lines.push(format!("cohesion {cohesion_pct}% · life {life_y:.0}y"));
+                lines.push(format!(
+                    "cohesion {cohesion_pct}% · life {life_y:.0}y · {war_tag}"
+                ));
             } else {
-                lines.push(format!("cohesion {cohesion_pct}%"));
+                lines.push(format!("cohesion {cohesion_pct}% · {war_tag}"));
             }
             // Religion + cosmology dominant-axis line. Names the
             // strongest-magnitude axis on each side with signed
