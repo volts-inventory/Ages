@@ -45,6 +45,12 @@ pub struct ViewportConfig {
     /// internal sim unit and useful for physics-minded readers;
     /// `Celsius` is the third common choice.
     pub temperature_unit: TempUnit,
+    /// Render the map with density block glyphs (` ░ ▒ ▓ █`)
+    /// instead of pop-fill digits. Centroid letters still mark
+    /// capitals. Useful when scanning "where is the mass" rather
+    /// than "exactly what fill-%". Routed via the
+    /// `--cli viewport-density` CLI flag.
+    pub density_mode: bool,
 }
 
 /// Viewport temperature unit. Affects the planet-card
@@ -105,6 +111,7 @@ impl Default for ViewportConfig {
             // default 24×16 grid in ~27 cols.
             compact: true,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         }
     }
 }

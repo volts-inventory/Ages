@@ -1426,20 +1426,55 @@ impl<W: Write> ViewportEmitter<W> {
         // rendered separately, in the planet section's tail (or
         // the top of the map section when the planet card is
         // hidden).
-        let body = match (self.cfg.use_color, self.cfg.compact) {
-            (true, true) => crate::frame::render_world_frame_colored_compact(
-                pm,
-                self.planet.as_ref(),
-                &frame,
-                "",
-            ),
-            (true, false) => {
-                crate::frame::render_world_frame_colored(pm, self.planet.as_ref(), &frame, "")
+        let body = if self.cfg.density_mode {
+            match (self.cfg.use_color, self.cfg.compact) {
+                (true, true) => crate::frame::render_world_frame_density_colored_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (true, false) => crate::frame::render_world_frame_density_colored(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, true) => crate::frame::render_world_frame_density_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, false) => crate::frame::render_world_frame_density(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
             }
-            (false, true) => {
-                crate::frame::render_world_frame_compact(pm, self.planet.as_ref(), &frame, "")
+        } else {
+            match (self.cfg.use_color, self.cfg.compact) {
+                (true, true) => crate::frame::render_world_frame_colored_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (true, false) => crate::frame::render_world_frame_colored(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, true) => crate::frame::render_world_frame_compact(
+                    pm,
+                    self.planet.as_ref(),
+                    &frame,
+                    "",
+                ),
+                (false, false) => render_world_frame(pm, self.planet.as_ref(), &frame, ""),
             }
-            (false, false) => render_world_frame(pm, self.planet.as_ref(), &frame, ""),
         };
         // Build the entire frame into an in-memory Vec<u8>, then
         // prepend `\x1b[H\x1b[2J` (home + full-screen clear) and

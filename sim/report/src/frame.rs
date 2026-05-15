@@ -87,7 +87,7 @@ pub fn render_world_frame(
     frame: &WorldFrame,
     caption: &str,
 ) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, false, false)
+    render_world_frame_inner(pm, planet, frame, caption, false, false, false)
 }
 
 /// Compact variant — 1 character per cell, no hex-row
@@ -100,7 +100,7 @@ pub fn render_world_frame_compact(
     frame: &WorldFrame,
     caption: &str,
 ) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, false, true)
+    render_world_frame_inner(pm, planet, frame, caption, false, true, false)
 }
 
 #[must_use]
@@ -110,7 +110,7 @@ pub fn render_world_frame_colored_compact(
     frame: &WorldFrame,
     caption: &str,
 ) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, true, true)
+    render_world_frame_inner(pm, planet, frame, caption, true, true, false)
 }
 
 /// Same as `render_world_frame` but emits 256-color ANSI escapes
@@ -126,7 +126,52 @@ pub fn render_world_frame_colored(
     frame: &WorldFrame,
     caption: &str,
 ) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, true, false)
+    render_world_frame_inner(pm, planet, frame, caption, true, false, false)
+}
+
+/// Density-glyph variants of the above — claim digits are
+/// replaced by Unicode block characters (░ ▒ ▓ █) sized by each
+/// cell's pop fill-% relative to its own cap. Centroid letters
+/// still mark capitals. Disputed cells and nomad markers are
+/// unchanged. Use for the `--cli viewport-density` flag.
+#[must_use]
+pub fn render_world_frame_density(
+    pm: &protocol::PlanetMap,
+    planet: Option<&protocol::PlanetDerived>,
+    frame: &WorldFrame,
+    caption: &str,
+) -> String {
+    render_world_frame_inner(pm, planet, frame, caption, false, false, true)
+}
+
+#[must_use]
+pub fn render_world_frame_density_compact(
+    pm: &protocol::PlanetMap,
+    planet: Option<&protocol::PlanetDerived>,
+    frame: &WorldFrame,
+    caption: &str,
+) -> String {
+    render_world_frame_inner(pm, planet, frame, caption, false, true, true)
+}
+
+#[must_use]
+pub fn render_world_frame_density_colored(
+    pm: &protocol::PlanetMap,
+    planet: Option<&protocol::PlanetDerived>,
+    frame: &WorldFrame,
+    caption: &str,
+) -> String {
+    render_world_frame_inner(pm, planet, frame, caption, true, false, true)
+}
+
+#[must_use]
+pub fn render_world_frame_density_colored_compact(
+    pm: &protocol::PlanetMap,
+    planet: Option<&protocol::PlanetDerived>,
+    frame: &WorldFrame,
+    caption: &str,
+) -> String {
+    render_world_frame_inner(pm, planet, frame, caption, true, true, true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -137,6 +182,7 @@ fn render_world_frame_inner(
     caption: &str,
     use_color: bool,
     compact: bool,
+    density_mode: bool,
 ) -> String {
     let mut s = String::new();
     if pm.grid_width == 0 || pm.grid_height == 0 {
@@ -162,7 +208,11 @@ fn render_world_frame_inner(
     let mut frame_max_pop: f64 = 0.0;
     for civ in &frame.civs {
         civ_by_id.insert(civ.civ_id, civ);
-        if use_color {
+        // `frame_max_pop` is the fallback cap when per-cell caps
+        // are missing (older event logs); both colored pop-digit
+        // mode and density mode lean on it, so accumulate when
+        // either is active.
+        if use_color || density_mode {
             for &raw in civ.cell_populations_q32.values() {
                 let p = pop_q32_to_f64(raw);
                 if p > frame_max_pop {
@@ -268,17 +318,38 @@ fn render_world_frame_inner(
                 ('#', None)
             } else if let Some(claims) = active_owners.as_ref().filter(|c| !c.is_empty()) {
                 let civ_id = claims[0];
-                // Colored mode: civ identity is conveyed by colour,
-                // so the digit is freed up to encode per-cell
-                // population on a linear scale (`pop_digit`). Cells
-                // under 10% of cap return `None` from `pop_digit`;
-                // fall back to the terrain glyph so a barely-settled
-                // claim reads as the civ's colour spreading across
-                // the landform (▒/·/△) rather than as a `0`.
-                // Monochrome mode (markdown post-run report): keep
-                // the civ-id digit so civs are still distinguishable
-                // when ANSI colours aren't rendered.
-                let symbol = if use_color {
+                // Density mode replaces the digit with a Unicode
+                // block glyph (` ░ ▒ ▓ █`) sized to pop / cap;
+                // identity is conveyed by colour (if use_color) or
+                // by the centroid letter at the capital. Without
+                // density mode the cell-rendering branches stay on
+                // their existing per-mode logic — pop_digit on
+                // colored, claim_symbol on mono.
+                let symbol = if density_mode {
+                    let claim = civ_by_id.get(&civ_id);
+                    let pop = claim
+                        .and_then(|c| c.cell_populations_q32.get(&cell).copied())
+                        .map(pop_q32_to_f64)
+                        .unwrap_or(0.0);
+                    let cap = claim
+                        .and_then(|c| c.cell_capacities_q32.get(&cell).copied())
+                        .map(pop_q32_to_f64)
+                        .filter(|c| *c > 0.0)
+                        .unwrap_or(frame_max_pop);
+                    if cap > 0.0 {
+                        density_symbol((pop / cap).clamp(0.0, 1.0))
+                    } else {
+                        crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                    }
+                } else if use_color {
+                    // Colored mode: civ identity is conveyed by
+                    // colour, so the digit is freed up to encode
+                    // per-cell population on a linear scale
+                    // (`pop_digit`). Cells under 10% of cap return
+                    // `None` from `pop_digit`; fall back to the
+                    // terrain glyph so a barely-settled claim reads
+                    // as the civ's colour spreading across the
+                    // landform (▒/·/△) rather than as a `0`.
                     let claim = civ_by_id.get(&civ_id);
                     let pop = claim
                         .and_then(|c| c.cell_populations_q32.get(&cell).copied())
@@ -299,6 +370,10 @@ fn render_world_frame_inner(
                             crate::render::terrain_symbol(pm, r, q, terrain_peak)
                         })
                 } else {
+                    // Monochrome mode (markdown post-run report):
+                    // keep the civ-id digit so civs are still
+                    // distinguishable when ANSI colours aren't
+                    // rendered.
                     claim_symbol(civ_id)
                 };
                 (symbol, Some(civ_id))
@@ -723,6 +798,41 @@ mod tests {
         // The under-10% bucket no longer emits a `0` digit for the
         // civ — only the terrain-glyph fallback.
         assert!(!s.contains(&format!("\x1b[1;38;5;{civ_color}m0")));
+    }
+
+    #[test]
+    fn density_mode_replaces_digits_with_block_glyphs() {
+        // In density mode the per-cell digit ladder (1-9) is
+        // replaced by Unicode block glyphs (░ ▒ ▓ █) sized by
+        // pop / cap. Centroid letters still mark capitals.
+        let cap = 1_000.0_f64;
+        let scale = (1u64 << 32) as f64;
+        let mut pops = BTreeMap::new();
+        pops.insert(0u32, (cap * scale) as i128); // centroid
+        pops.insert(1u32, (cap * scale) as i128); // 100% → █
+        pops.insert(2u32, (0.4 * cap * scale) as i128); // 40% → ▒
+        let mut caps = BTreeMap::new();
+        caps.insert(0u32, (cap * scale) as i128);
+        caps.insert(1u32, (cap * scale) as i128);
+        caps.insert(2u32, (cap * scale) as i128);
+        let frame = WorldFrame {
+            tick: 100,
+            civs: vec![CivClaim {
+                civ_id: 1,
+                claimed_cells: BTreeSet::from([0, 1, 2]),
+                centroid: 0,
+                cell_populations_q32: pops,
+                cell_capacities_q32: caps,
+            }],
+            nomad_cells: vec![],
+        };
+        let s = render_world_frame_density(&pm(4, 3), None, &frame, "");
+        assert!(s.contains('A'), "centroid letter still present");
+        assert!(s.contains('\u{2588}'), "100% cell renders as █");
+        assert!(s.contains('\u{2592}'), "40% cell renders as ▒");
+        // No pop-digits should leak through in density mode.
+        assert!(!s.contains(" 9 "), "density mode shouldn't emit `9` digits");
+        assert!(!s.contains(" 5 "), "density mode shouldn't emit `5` digits");
     }
 
     #[test]

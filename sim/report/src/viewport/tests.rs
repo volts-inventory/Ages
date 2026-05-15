@@ -23,6 +23,7 @@ fn cfg(frame_every: u64) -> ViewportConfig {
         log_lines: 0,
         compact: false,
         temperature_unit: TempUnit::Fahrenheit,
+        density_mode: false,
     }
 }
 
@@ -271,6 +272,7 @@ fn sidebar_pop_line_carries_trend_arrow() {
             log_lines: 0,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
@@ -351,6 +353,7 @@ fn sidebar_surfaces_latest_unlocked_tool() {
             log_lines: 0,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
@@ -433,6 +436,7 @@ fn sidebar_cohesion_line_carries_war_or_peace_tag() {
             log_lines: 0,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
@@ -529,6 +533,7 @@ fn log_tail_captures_significant_events_only() {
             log_lines: 3,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
@@ -581,6 +586,7 @@ fn log_tail_caps_at_log_lines() {
             log_lines: 2,
             compact: false,
             temperature_unit: TempUnit::Fahrenheit,
+            density_mode: false,
         },
     );
     em.emit(&Event::PlanetMap(pm())).unwrap();
