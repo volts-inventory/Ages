@@ -322,6 +322,22 @@ pub struct Civ {
     /// successor civ does *not* inherit apparatus (a successor
     /// rebuilds its own when it re-unlocks the tool).
     pub apparatus_cells: Vec<apparatus::Apparatus>,
+    /// Depth in the lineage tree: 0 = inaugural (no parent),
+    /// `parent.lineage_depth + 1` for refound successors and
+    /// cohesion-breakaway forks. Drives the generation-kinship
+    /// decay term in `conflict::kinship_pair` — same-species
+    /// cousins many generations apart get progressively lower
+    /// kinship, restoring intra-species warfare dynamics that
+    /// the species-bias-shared-cosmology collapsed.
+    pub lineage_depth: u32,
+    /// Per-pair grudge accumulator. Keyed by the *other* civ id;
+    /// value is `(score, last_update_tick)`. Score grows on each
+    /// skirmish (asymmetric: loser holds more than winner).
+    /// Read lazily by `kinship_pair` which subtracts a tick-
+    /// decayed value from kinship. Empty by default; populated
+    /// only after the first skirmish between a pair. Civs that
+    /// never fight have no entries here.
+    pub grudges: BTreeMap<u32, (Real, u64)>,
 }
 
 /// Collapse triggers. Multiple may compound; whichever streak

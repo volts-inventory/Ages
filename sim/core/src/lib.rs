@@ -544,6 +544,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     // birth/death rates reflect the inherited drift.
                     if let Some(parent_civ) = civs.iter().find(|c| c.id == parent_id) {
                         new_civ.inherit_species_drift(parent_civ, planet.seed);
+                        new_civ.inherit_lineage_from(parent_civ);
                     }
                     new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
                     new_civ.configure_substrate(
@@ -910,6 +911,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     {
                         let parent_civ = &civs[parent_idx];
                         new_civ.inherit_species_drift(parent_civ, planet.seed);
+                        new_civ.inherit_lineage_from(parent_civ);
                     }
                     // Cohesion-driven breakaway starts at a
                     // higher cohesion than its falling-apart parent
@@ -1468,6 +1470,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     .max_by_key(|c| c.collapsed_tick.unwrap_or(0))
                 {
                     new_civ.inherit_species_drift(parent_civ, planet.seed);
+                    new_civ.inherit_lineage_from(parent_civ);
                 }
                 new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
                 new_civ.configure_substrate(
