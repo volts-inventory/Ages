@@ -149,6 +149,15 @@ pub struct Civ {
     /// `tick - last_discovery_tick >= PLATEAU_WINDOW_TICKS`.
     /// Initialised to the founding tick.
     pub last_discovery_tick: u64,
+    /// Tick of the most recent `CivTerritoryChanged` emission for
+    /// this civ. The territory phase re-emits when the claim set
+    /// changes (the natural trigger) and also forces a refresh
+    /// every `TERRITORY_REFRESH_TICKS`, so the viewport's
+    /// per-cell pop/cap digits stay current as tech, seasonal,
+    /// and biosphere multipliers drift even during long stretches
+    /// of stable territory. Seeded to `founded_tick` at every
+    /// founding site (refound, breakaway, emergent).
+    pub last_territory_emit_tick: u64,
     /// Consecutive ticks `food_security <= 0.3`. Reset on
     /// recovery; collapse fires at `FOOD_CRISIS_STREAK_TICKS`.
     pub low_food_streak: u64,

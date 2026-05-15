@@ -953,6 +953,16 @@ pub(crate) fn scan_for_emergence(
         if civ_claims.contains(&cell) {
             continue;
         }
+        // Reject candidates whose terrain has drifted out from
+        // under the nomadic pop. The `pops` map carries population
+        // independent of habitability — a coast cell that nomads
+        // colonised tick 0 can be flooded to deep ocean by tick 600
+        // and still show up here as saturated. Without this gate,
+        // `compute_territory`'s centroid override force-claims the
+        // now-uninhabitable cell, founding the civ on a cap-0 phantom.
+        if !crate::territory::is_habitat_claimable_at(state, planet, cell, species_habitat) {
+            continue;
+        }
         let saturation = pressure_threshold(state, planet, species_habitat, cell);
         if pop < saturation {
             continue;

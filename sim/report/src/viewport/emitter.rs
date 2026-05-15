@@ -795,6 +795,24 @@ impl<W: Write> ViewportEmitter<W> {
                     .copied()
                     .map(|c| (c, per_cell))
                     .collect();
+                // Per-cell caps now arrive in `CivFounded` itself
+                // (paired with `claimed_cells`). Without this, the
+                // frame renderer hits the `frame_max_pop` fallback
+                // for any civ that hasn't yet seen a
+                // `CivTerritoryChanged` — and since founding seeds
+                // each cell with the same `pop / n`, every founder
+                // cell ties for digit `9`. With the cap map seeded
+                // here, pop/cap ratios read correctly from tick 0.
+                let cell_capacities_q32: std::collections::BTreeMap<u32, i128> =
+                    if f.cell_capacities_q32.len() == f.claimed_cells.len() {
+                        f.claimed_cells
+                            .iter()
+                            .copied()
+                            .zip(f.cell_capacities_q32.iter().copied())
+                            .collect()
+                    } else {
+                        std::collections::BTreeMap::new()
+                    };
                 self.civs.insert(
                     f.civ_id,
                     CivClaim {
@@ -802,7 +820,7 @@ impl<W: Write> ViewportEmitter<W> {
                         claimed_cells: claims,
                         centroid,
                         cell_populations_q32,
-                        cell_capacities_q32: std::collections::BTreeMap::new(),
+                        cell_capacities_q32,
                     },
                 );
                 // Capture civ name and founding year for the

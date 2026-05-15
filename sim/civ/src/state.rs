@@ -129,6 +129,7 @@ impl Civ {
             migration_pressure_threshold: Real::from_ratio(85, 100),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
+            last_territory_emit_tick: founded_tick,
             low_food_streak: 0,
             parent_civ_id: None,
             firings_by_template: BTreeMap::new(),

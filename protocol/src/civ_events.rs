@@ -213,6 +213,16 @@ pub struct CivFounded {
     /// grid; successor civs inherit the predecessor's claim
     /// (refound) or get a copy of the parent's claim (breakaway).
     pub claimed_cells: Vec<u32>,
+    /// Per-cell carrying capacity at founding (Q96.32 raw, one
+    /// entry per cell in `claimed_cells` in the same order).
+    /// Lets the viewport's pop-digit scale read each founder
+    /// cell as `pop / cap` from tick 0 — without it, the renderer
+    /// hits the `frame_max_pop` fallback and every founder cell
+    /// ties for digit `9`, regardless of the cap formula. Empty
+    /// for older NDJSON logs.
+    #[serde(default, with = "crate::pop_bits_vec_serde")]
+    #[schemars(with = "Vec<String>")]
+    pub cell_capacities_q32: Vec<i128>,
 }
 
 /// A civilization's territory changed. Emitted when the

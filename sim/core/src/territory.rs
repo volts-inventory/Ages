@@ -102,6 +102,53 @@ fn cell_claimable(
     sim_world::is_claimable_multiplier(mult)
 }
 
+/// Civ-free habitability check: would this cell be claimable for a
+/// species with the given habitat, ignoring any tool unlocks (e.g.
+/// `AmphibiousConstruction`)? Used by the emergent-founding path,
+/// which picks a centroid *before* any civ exists — so the
+/// civ-bearing `cell_claimable` can't apply. Gates on the same
+/// glyph + habitat + multiplier composition as `cell_claimable`,
+/// just without the civ tool layer.
+///
+/// Without this gate, `scan_for_emergence` can return a cell that
+/// looked habitable when nomads first colonised it but has since
+/// flooded (hydrology pushes water onto low coastal land over time)
+/// or otherwise lost its terrain — and the centroid override in
+/// `compute_territory` then force-claims the now-uninhabitable cell
+/// at founding, leaving the civ with a cap-0 phantom claim that
+/// drains its founding population until `prune_empty_cells` reclaims
+/// it a hundred sim-years later.
+pub(crate) fn is_habitat_claimable_at(
+    state: &sim_physics::PhysicsState,
+    planet: &sim_world::Planet,
+    cell: u32,
+    species_habitat: sim_species::Habitat,
+) -> bool {
+    let glyph = sim_world::terrain_glyph_at(state, planet, cell);
+    if glyph == '\u{2261}' {
+        return false;
+    }
+    let habitat_ok = match species_habitat {
+        sim_species::Habitat::Aquatic => sim_world::is_water_glyph(glyph),
+        sim_species::Habitat::Terrestrial | sim_species::Habitat::Airborne => {
+            sim_world::is_land_glyph(glyph)
+        }
+        sim_species::Habitat::Amphibious => true,
+    };
+    if !habitat_ok {
+        return false;
+    }
+    let aquatic_or_amphibious = matches!(
+        species_habitat,
+        sim_species::Habitat::Aquatic | sim_species::Habitat::Amphibious
+    );
+    if sim_world::is_water_glyph(glyph) && aquatic_or_amphibious {
+        return true;
+    }
+    let mult = sim_world::cell_habitability(state, planet, cell);
+    sim_world::is_claimable_multiplier(mult)
+}
+
 /// Deterministic BFS from `centroid`, returning the first `target`
 /// cells visited in (depth, sorted-cell-id) order. Hex-grid
 /// neighbours wrap on the torus. Sorting neighbours by cell id

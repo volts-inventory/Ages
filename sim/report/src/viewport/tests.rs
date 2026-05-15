@@ -36,6 +36,7 @@ fn no_render_for_tick_start() {
         initial_population_q32: 0,
         founding_figure_count: 0,
         claimed_cells: vec![0, 1, 2],
+        cell_capacities_q32: Vec::new(),
     }))
     .unwrap();
     em.emit(&Event::Tick(TickEvent {
@@ -63,6 +64,7 @@ fn renders_at_cadence_only() {
             initial_population_q32: 0,
             founding_figure_count: 0,
             claimed_cells: vec![0, 1, 2],
+            cell_capacities_q32: Vec::new(),
         }))
         .unwrap();
         em.emit(&Event::Tick(TickEvent {
@@ -105,6 +107,7 @@ fn collapse_drops_civ_from_subsequent_frames() {
         initial_population_q32: 0,
         founding_figure_count: 0,
         claimed_cells: vec![0, 1],
+        cell_capacities_q32: Vec::new(),
     }))
     .unwrap();
     em.emit(&Event::Tick(TickEvent {
@@ -145,6 +148,7 @@ fn territory_changed_updates_claim_set() {
         initial_population_q32: 0,
         founding_figure_count: 0,
         claimed_cells: vec![0],
+        cell_capacities_q32: Vec::new(),
     }))
     .unwrap();
     em.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
@@ -185,6 +189,7 @@ fn civ_pop_line_clamps_negative_zero() {
         initial_population_q32: 0,
         founding_figure_count: 0,
         claimed_cells: vec![0],
+        cell_capacities_q32: Vec::new(),
     }))
     .unwrap();
     em.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
@@ -227,6 +232,7 @@ fn freshly_founded_civ_sidebar_shows_initial_population() {
         initial_population_q32: 100 * q32_one,
         founding_figure_count: 1,
         claimed_cells: vec![0, 1, 2, 3],
+        cell_capacities_q32: Vec::new(),
     }))
     .unwrap();
     // No CivTerritoryChanged. Render at the cadence boundary; the
@@ -268,6 +274,7 @@ fn log_tail_captures_significant_events_only() {
         initial_population_q32: 0,
         founding_figure_count: 0,
         claimed_cells: vec![0, 1],
+        cell_capacities_q32: Vec::new(),
     }))
     .unwrap();
     em.emit(&Event::CatastropheFired(protocol::CatastropheFired {
@@ -320,6 +327,7 @@ fn log_tail_caps_at_log_lines() {
             initial_population_q32: 0,
             founding_figure_count: 0,
             claimed_cells: vec![0],
+            cell_capacities_q32: Vec::new(),
         }))
         .unwrap();
     }
