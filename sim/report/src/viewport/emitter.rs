@@ -1078,17 +1078,23 @@ impl<W: Write> ViewportEmitter<W> {
         // Civ identity is carried by colour. `0` stays mapped to
         // unclaimed nomadic presence. Mono mode keeps the legacy
         // line — there the per-civ digit is the civ-id, not pop.
+        // Colored mode: per-cell digit is pop fill-%; civ identity
+        // is carried by colour. Mono mode (markdown / no ANSI): the
+        // digit is the civ-id, `*` covers civ ids ≥ 10. Same
+        // glyphs surface for nomads + disputes in both. The
+        // line-1 disambiguation matters because the digit reads
+        // *very* differently between the two modes.
         let mut lines: Vec<String> = if self.cfg.use_color {
             vec![
-                "1-9=fill · 0=nomad · #=war".to_string(),
+                "1-9=fill% · 0=nomad · #=war".to_string(),
                 "~sea · ≈deep · ▲peak · △hill".to_string(),
                 "▒land · ░coast · ·=plain".to_string(),
             ]
         } else {
             vec![
-                "#=war · 0=nomads · ~sea".to_string(),
-                "≈deep · ▲peak · △hill".to_string(),
-                "▒land · ░coast · ·=plain".to_string(),
+                "1-9=civ-id · *=civ≥10".to_string(),
+                "0=nomad · #=war · ~sea · ≈deep".to_string(),
+                "▲peak · △hill · ▒land · ░coast · ·=plain".to_string(),
             ]
         };
         // Species sub-block (3 lines from species_card()).
