@@ -163,6 +163,7 @@ impl Civ {
             apparatus_cells: Vec::new(),
             lineage_depth: 0,
             grudges: BTreeMap::new(),
+            selection_bias: crate::environmental_drift::SelectionBias::zero(),
         }
     }
 

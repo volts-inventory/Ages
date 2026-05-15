@@ -44,6 +44,7 @@ mod observation;
 mod state;
 mod territory;
 mod tools;
+pub mod environmental_drift;
 
 pub use demographics::dynamics_for_civ;
 pub use demographics::{
@@ -338,6 +339,17 @@ pub struct Civ {
     /// only after the first skirmish between a pair. Civs that
     /// never fight have no entries here.
     pub grudges: BTreeMap<u32, (Real, u64)>,
+    /// M7: selection-on-survival bias accumulated from
+    /// catastrophes this civ has weathered. Catastrophes fire
+    /// `record_catastrophe_selection_bias`, which adds the
+    /// per-kind weights scaled by `fraction_lost`. At successor
+    /// founding, the parent's accumulated bias folds into the
+    /// child's inherited trait deltas via
+    /// `inherit_species_drift_with_environment`, then the
+    /// child's own `selection_bias` starts fresh at zero.
+    /// Capped per-channel at `SELECTION_BIAS_CHANNEL_CEILING`
+    /// to avoid runaway under long catastrophe sequences.
+    pub selection_bias: environmental_drift::SelectionBias,
 }
 
 /// Collapse triggers. Multiple may compound; whichever streak
@@ -486,6 +498,19 @@ pub const SUCCESSOR_DRIFT_TRAIT_STEP: (i64, i64) = (2, 100);
 /// years, so a 200-year species drifts by ≤ 0.5% per
 /// generation, a 20-year species by ≤ 5%.
 pub const SUCCESSOR_DRIFT_LIFESPAN_STEP_YEARS: i64 = 1;
+
+/// M7 — per-channel ceiling on the `selection_bias` accumulator
+/// on a single civ. Caps the cognition / sociality /
+/// communication_fidelity channels (unit traits) at this value;
+/// the lifespan channel uses `SELECTION_BIAS_LIFESPAN_CEILING_YEARS`.
+/// Prevents a long catastrophe sequence from accumulating
+/// unbounded bias that would swamp the successor's inherited
+/// drift signal.
+pub const SELECTION_BIAS_CHANNEL_CEILING: (i64, i64) = (15, 100);
+/// M7 — per-channel ceiling on the lifespan-years selection bias.
+/// 10 years across a long catastrophe sequence is already a
+/// substantial shift on a 50-100 year species baseline.
+pub const SELECTION_BIAS_LIFESPAN_CEILING_YEARS: i64 = 10;
 
 #[cfg(test)]
 mod tests;

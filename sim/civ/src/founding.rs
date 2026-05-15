@@ -123,6 +123,7 @@ impl Civ {
             // overwrites this immediately after construction.
             lineage_depth: 0,
             grudges: BTreeMap::new(),
+            selection_bias: crate::environmental_drift::SelectionBias::zero(),
         }
     }
 
