@@ -144,10 +144,18 @@ impl Civ {
         let demand = self
             .cohort
             .weighted_demand_from_multipliers(&self.dynamics.food_multipliers);
-        let security = sim_population::food_security(
+        let raw_security = sim_population::food_security(
             demand,
             self.carrying_capacity_with_terrain(state, planet),
         );
+        // M8: surplus buffer adds to the raw security score so a
+        // civ with stored reserves rides out lean ticks without
+        // tipping into crisis. Bounded at `SURPLUS_FOOD_BUFFER_BONUS`
+        // (currently +0.20) so an infinite-surplus civ is still
+        // *eventually* killable.
+        let surplus_buffer =
+            crate::economy::surplus_food_buffer(self.surplus, demand);
+        let security = raw_security + surplus_buffer;
         // tools that improve food security (BulkStorage,
         // OrganizedHunting, FluidGathering, BulkCultivation,
         // OrganicSynthesis) lower the crisis floor by their

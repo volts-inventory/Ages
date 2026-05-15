@@ -472,6 +472,7 @@ impl Digest {
             | Event::SpeciesCosmologyBias(_)
             | Event::SpeciesDrift(_)
             | Event::CohesionShifted(_)
+            | Event::CivSurplusChanged(_)
             | Event::RelationMythologized(_)
             | Event::RivalHypothesisProposed(_)
             | Event::PrimaryHypothesisDisplaced(_) => {}

@@ -39,19 +39,32 @@ pub fn hierarchy_size_factor(cells: usize) -> Real {
     factor.max(Real::ZERO).min(Real::ONE)
 }
 
-/// `strength = aggregate_pop × (1 + literacy) × (1 + Hierarchical/2) × tool_war_multiplier`.
+/// `strength = aggregate_pop × (1 + literacy) × (1 + Hierarchical/2) × tool_war_multiplier × surplus_modifier`.
 ///
 /// the per-tool war-strength contribution (`ContactWeapon`
 /// +0.10, `RangedMomentumWeapon` +0.10, `StoneWorking` +0.05,
 /// `OrganizedHunting` +0.05, plus tier-2+ fortification / chemical-
 /// projectile / mechanisation contributions) folds in
 /// multiplicatively via `Civ::tool_war_strength_multiplier`.
+///
+/// M8: surplus modifier reads as "well-fed troops fight better".
+/// A civ with stored surplus ≥ its aggregate pop gets the full
+/// `SURPLUS_WAR_BONUS_CAP` (+0.15) multiplier; a depleted civ
+/// (surplus = 0) gets the baseline 1.0. Combined with the
+/// existing strength terms so an empire with broken supply lines
+/// can still lose to a smaller civ with full granaries.
 pub fn strength(civ: &Civ, tick: u64) -> Pop {
     let pop = civ.aggregate_population();
     let literacy = civ.literacy_score(tick);
     let hier = civ.cosmology.hierarchical;
     let war_bonus = Real::ONE + hier / Real::from_int(2);
-    pop * (Real::ONE + literacy) * war_bonus * civ.tool_war_strength_multiplier()
+    let pop_real = Real::from_int(pop.raw().to_num::<i64>().max(0));
+    let surplus_modifier =
+        crate::economy::surplus_war_strength_modifier(civ.surplus, pop_real);
+    pop * (Real::ONE + literacy)
+        * war_bonus
+        * civ.tool_war_strength_multiplier()
+        * surplus_modifier
 }
 
 /// Cells the two civs both claim.

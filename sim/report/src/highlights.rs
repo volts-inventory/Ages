@@ -186,6 +186,10 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // section's demographic-transition timeline; suppress from
         // the global highlight reel to avoid noise.
         | Event::CivLifeExpectancyChanged(_)
+        // Surplus shifts are slow per-civ economic drifts; the
+        // dramatic beats already surface via war / catastrophe /
+        // collapse pins that reference the surplus state.
+        | Event::CivSurplusChanged(_)
         // Per-relation mythologization residue is too granular
         // to pin individually. Aggregate effect surfaces via the
         // CosmologyShifted events the cosmology drift naturally emits.

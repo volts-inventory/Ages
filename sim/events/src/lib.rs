@@ -191,6 +191,7 @@ impl Emitter for CountingEmitter {
             Event::RivalHypothesisProposed(_) => "rival_hypothesis_proposed",
             Event::PrimaryHypothesisDisplaced(_) => "primary_hypothesis_displaced",
             Event::CivLifeExpectancyChanged(_) => "civ_life_expectancy_changed",
+            Event::CivSurplusChanged(_) => "civ_surplus_changed",
         };
         *self.counts.entry(key).or_insert(0) += 1;
         Ok(())

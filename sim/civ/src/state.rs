@@ -164,6 +164,8 @@ impl Civ {
             lineage_depth: 0,
             grudges: BTreeMap::new(),
             selection_bias: crate::environmental_drift::SelectionBias::zero(),
+            surplus: Real::ZERO,
+            last_emitted_surplus: Real::ZERO,
         }
     }
 

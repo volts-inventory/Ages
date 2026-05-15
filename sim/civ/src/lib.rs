@@ -44,6 +44,7 @@ mod observation;
 mod state;
 mod territory;
 mod tools;
+pub mod economy;
 pub mod environmental_drift;
 
 pub use demographics::dynamics_for_civ;
@@ -339,6 +340,25 @@ pub struct Civ {
     /// only after the first skirmish between a pair. Civs that
     /// never fight have no entries here.
     pub grudges: BTreeMap<u32, (Real, u64)>,
+    /// M8: per-civ surplus accumulator. Buffer of stored
+    /// productive output above subsistence. Grows when cells run
+    /// at high utilisation, drained by wars + catastrophes + public
+    /// works. Read by:
+    ///   - `lifecycle::check_collapse_with_terrain` as a food-
+    ///     security buffer (a civ with surplus rides out lean
+    ///     ticks).
+    ///   - `conflict::strength` as a multiplicative war-strength
+    ///     modifier (well-fed troops fight better).
+    /// Stepped per-tick by `economy::step_surplus` in sim-core's
+    /// economic phase. Capped at `SURPLUS_CEILING_FRAC × aggregate_pop`
+    /// (set in `economy::step_surplus`) so mature civs can't
+    /// accumulate unbounded reserves.
+    pub surplus: Real,
+    /// Last surplus value emitted as a `CivSurplusChanged` event.
+    /// Used by sim/core to gate emission so only meaningful
+    /// shifts (≥ `SURPLUS_EMIT_DELTA_FLOOR` absolute) show up in
+    /// the log. Initialised to zero at founding.
+    pub last_emitted_surplus: Real,
     /// M7: selection-on-survival bias accumulated from
     /// catastrophes this civ has weathered. Catastrophes fire
     /// `record_catastrophe_selection_bias`, which adds the
