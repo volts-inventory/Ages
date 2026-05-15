@@ -13,7 +13,12 @@ use std::collections::BTreeSet;
 pub fn densest_claimed_cell(civ: &Civ) -> Option<u32> {
     civ.region_cohorts
         .iter()
-        .max_by(|a, b| a.1.total().raw().to_bits().cmp(&b.1.total().raw().to_bits()))
+        .max_by(|a, b| {
+            a.1.total()
+                .raw()
+                .to_bits()
+                .cmp(&b.1.total().raw().to_bits())
+        })
         .map(|(cell, _)| *cell)
 }
 

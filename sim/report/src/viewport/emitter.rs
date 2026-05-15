@@ -3,14 +3,12 @@
 //! `Write` (typically stdout) at the configured frame cadence.
 
 use super::ansi::{
-    divider, pad_to, split_divider, visible_width, write_centered_line,
-    ANSI_ALT_SCREEN_OFF, ANSI_ALT_SCREEN_ON, ANSI_ERASE_LINE, ANSI_ERASE_TO_END, ANSI_HIDE_CURSOR,
-    ANSI_SHOW_CURSOR, MAP_WIDTH,
+    divider, pad_to, split_divider, visible_width, write_centered_line, ANSI_ALT_SCREEN_OFF,
+    ANSI_ALT_SCREEN_ON, ANSI_ERASE_LINE, ANSI_ERASE_TO_END, ANSI_HIDE_CURSOR, ANSI_SHOW_CURSOR,
+    MAP_WIDTH,
 };
 use super::config::ViewportConfig;
-use crate::frame::{
-    centroid_symbol, civ_color_code, claim_symbol, render_world_frame, CivClaim, WorldFrame,
-};
+use crate::frame::{centroid_symbol, civ_color_code, claim_symbol, CivClaim, WorldFrame};
 use crate::labels::{
     atmosphere_descriptor, cog_tier, comm_label, format_atmospheric_composition, friendly_badge,
     host_species_status, planet_type, short_manip, short_modality, sociality_label,
@@ -351,7 +349,12 @@ impl<W: Write> ViewportEmitter<W> {
                 } else {
                     "unlocked"
                 };
-                Some(format!("{} {} {}", self.civ_label(t.civ_id), verb, t.tool_name))
+                Some(format!(
+                    "{} {} {}",
+                    self.civ_label(t.civ_id),
+                    verb,
+                    t.tool_name
+                ))
             }
             // Surface first-contact + cosmology-shift events
             // in the log too. Both fire rarely (a few times per
@@ -1170,10 +1173,7 @@ impl<W: Write> ViewportEmitter<W> {
             // one row. Tier defaults to 0 until the first
             // `TechUnlocked` event arrives.
             let tier = self.civ_tech_tier.get(civ_id).copied().unwrap_or(0);
-            let tool_count = self
-                .civ_tools_unlocked
-                .get(civ_id)
-                .map_or(0, BTreeSet::len);
+            let tool_count = self.civ_tools_unlocked.get(civ_id).map_or(0, BTreeSet::len);
             // Identity line: capital letter (still A..Z by civ_id)
             // is the on-map marker for this civ's centroid; the
             // `0-9` is a colored swatch standing in for the
@@ -1300,32 +1300,30 @@ impl<W: Write> ViewportEmitter<W> {
             // system *is*, not just abbreviated suffixes. Hidden
             // entirely when both vectors are still neutral
             // (newborn civ, no drift yet).
-            let cosmo_axis: Option<(usize, f64)> =
-                self.civ_cosmology.get(civ_id).and_then(|c| {
-                    let mut best = None;
-                    for (i, v) in c.iter().enumerate() {
-                        if v.abs() < 0.20 {
-                            continue;
-                        }
-                        if best.map_or(true, |(_, ba): (usize, f64)| v.abs() > ba.abs()) {
-                            best = Some((i, *v));
-                        }
+            let cosmo_axis: Option<(usize, f64)> = self.civ_cosmology.get(civ_id).and_then(|c| {
+                let mut best = None;
+                for (i, v) in c.iter().enumerate() {
+                    if v.abs() < 0.20 {
+                        continue;
                     }
-                    best
-                });
-            let rel_axis: Option<(usize, f64)> =
-                self.civ_religion.get(civ_id).and_then(|r| {
-                    let mut best = None;
-                    for (i, v) in r.iter().enumerate() {
-                        if v.abs() < 0.20 {
-                            continue;
-                        }
-                        if best.map_or(true, |(_, ba): (usize, f64)| v.abs() > ba.abs()) {
-                            best = Some((i, *v));
-                        }
+                    if best.map_or(true, |(_, ba): (usize, f64)| v.abs() > ba.abs()) {
+                        best = Some((i, *v));
                     }
-                    best
-                });
+                }
+                best
+            });
+            let rel_axis: Option<(usize, f64)> = self.civ_religion.get(civ_id).and_then(|r| {
+                let mut best = None;
+                for (i, v) in r.iter().enumerate() {
+                    if v.abs() < 0.20 {
+                        continue;
+                    }
+                    if best.map_or(true, |(_, ba): (usize, f64)| v.abs() > ba.abs()) {
+                        best = Some((i, *v));
+                    }
+                }
+                best
+            });
             let rel_labels = ["theology", "ritual", "afterlife"];
             let mut belief_parts: Vec<String> = Vec::new();
             if let Some((i, v)) = cosmo_axis {
@@ -1360,8 +1358,8 @@ impl<W: Write> ViewportEmitter<W> {
                     }
                 })
                 .collect();
-                rivals.sort_unstable();
-                rivals.dedup();
+            rivals.sort_unstable();
+            rivals.dedup();
             if !rivals.is_empty() {
                 let label = rivals
                     .iter()
@@ -1418,64 +1416,28 @@ impl<W: Write> ViewportEmitter<W> {
         let total_pop = (civ_pop + self.nomad_total_pop).max(0.0);
         let caption = format!(
             "Y{} M{} · {} civ · {}F/{}C · {}p",
-            year, month, active, self.civ_founded_count, self.civ_collapsed_count, fmt_pop(total_pop),
+            year,
+            month,
+            active,
+            self.civ_founded_count,
+            self.civ_collapsed_count,
+            fmt_pop(total_pop),
         );
-        // Pick the render variant based on the (use_color,
-        // compact) pair. An empty caption string is passed in —
-        // the caption (`Y{n} M{n} · {civ} civ · {F}F/{C}C`) is
-        // rendered separately, in the planet section's tail (or
-        // the top of the map section when the planet card is
-        // hidden).
-        let body = if self.cfg.density_mode {
-            match (self.cfg.use_color, self.cfg.compact) {
-                (true, true) => crate::frame::render_world_frame_density_colored_compact(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-                (true, false) => crate::frame::render_world_frame_density_colored(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-                (false, true) => crate::frame::render_world_frame_density_compact(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-                (false, false) => crate::frame::render_world_frame_density(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-            }
-        } else {
-            match (self.cfg.use_color, self.cfg.compact) {
-                (true, true) => crate::frame::render_world_frame_colored_compact(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-                (true, false) => crate::frame::render_world_frame_colored(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-                (false, true) => crate::frame::render_world_frame_compact(
-                    pm,
-                    self.planet.as_ref(),
-                    &frame,
-                    "",
-                ),
-                (false, false) => render_world_frame(pm, self.planet.as_ref(), &frame, ""),
-            }
-        };
+        // An empty caption is passed in — the caption
+        // (`Y{n} M{n} · {civ} civ · {F}F/{C}C`) is rendered
+        // separately, either in the planet section's tail or at
+        // the top of the map section when the planet card is hidden.
+        let body = crate::frame::render_world_frame_styled(
+            pm,
+            self.planet.as_ref(),
+            &frame,
+            "",
+            crate::frame::FrameStyle {
+                use_color: self.cfg.use_color,
+                compact: self.cfg.compact,
+                density: self.cfg.density_mode,
+            },
+        );
         // Build the entire frame into an in-memory Vec<u8>, then
         // prepend `\x1b[H\x1b[2J` (home + full-screen clear) and
         // write the whole thing in one pass. The terminal sees
@@ -1729,4 +1691,3 @@ impl<W: Write> Emitter for ViewportEmitter<W> {
         Ok(())
     }
 }
-

@@ -58,35 +58,31 @@ pub const HIER_W_ECONOMIC: (i64, i64) = (15, 100);
 /// cohesion + economy adds on top.
 #[must_use]
 pub fn hierarchical_strength(civ: &Civ) -> Real {
-    let cosmology_h = civ.cosmology.hierarchical.max(Real::ZERO).min(Real::ONE);
+    let cosmology_h = civ.cosmology.hierarchical.clamp01();
     // Religion: average magnitude of the theology + ritual axes.
     // Each axis is in `[-1, 1]`; we read |v| so a high-magnitude
     // religion (whatever its sign) projects authority. Sacred-time
     // is intentionally excluded — it's a temporal-cycle axis,
     // less tied to chain-of-command.
-    let religion_h = ((civ.religion.theology.abs() + civ.religion.ritual.abs())
-        / Real::from_int(2))
-    .max(Real::ZERO)
-    .min(Real::ONE);
+    let religion_h =
+        ((civ.religion.theology.abs() + civ.religion.ritual.abs()) / Real::from_int(2)).clamp01();
     // Kinship: read internal cohesion. Already in [0, 1].
-    let kinship_h = civ.cohesion.max(Real::ZERO).min(Real::ONE);
+    let kinship_h = civ.cohesion.clamp01();
     // Economic: surplus / aggregate_pop, saturating at 1.0. A
     // civ with surplus ≥ its pop has the full economic-rank
     // contribution.
     let pop = civ.aggregate_population();
-    let pop_real = Real::from_int(pop.raw().to_num::<i64>().max(0));
+    let pop_real = pop.to_real_nonneg();
     let economic_h = if pop_real > Real::ZERO {
-        (civ.surplus / pop_real).max(Real::ZERO).min(Real::ONE)
+        (civ.surplus / pop_real).clamp01()
     } else {
         Real::ZERO
     };
-    let w_c = Real::from_ratio(HIER_W_COSMOLOGY.0, HIER_W_COSMOLOGY.1);
-    let w_r = Real::from_ratio(HIER_W_RELIGION.0, HIER_W_RELIGION.1);
-    let w_k = Real::from_ratio(HIER_W_KINSHIP.0, HIER_W_KINSHIP.1);
-    let w_e = Real::from_ratio(HIER_W_ECONOMIC.0, HIER_W_ECONOMIC.1);
-    (w_c * cosmology_h + w_r * religion_h + w_k * kinship_h + w_e * economic_h)
-        .max(Real::ZERO)
-        .min(Real::ONE)
+    let w_c = Real::from(HIER_W_COSMOLOGY);
+    let w_r = Real::from(HIER_W_RELIGION);
+    let w_k = Real::from(HIER_W_KINSHIP);
+    let w_e = Real::from(HIER_W_ECONOMIC);
+    (w_c * cosmology_h + w_r * religion_h + w_k * kinship_h + w_e * economic_h).clamp01()
 }
 
 /// Civ size factor for the hierarchy-driven casualty bonus.
@@ -108,7 +104,7 @@ pub fn hierarchy_size_factor(cells: usize) -> Real {
     let ln_n = sim_arith::transcendental::ln(n);
     let ln_10 = sim_arith::transcendental::ln(Real::from_int(10));
     let factor = ln_n / (ln_10 * Real::from_int(2));
-    factor.max(Real::ZERO).min(Real::ONE)
+    factor.clamp01()
 }
 
 /// `strength = aggregate_pop × (1 + literacy) × (1 + hierarchical_strength/2) × tool_war_multiplier × surplus_modifier`.
@@ -136,13 +132,9 @@ pub fn strength(civ: &Civ, tick: u64) -> Pop {
     let literacy = civ.literacy_score(tick);
     let hier = hierarchical_strength(civ);
     let war_bonus = Real::ONE + hier / Real::from_int(2);
-    let pop_real = Real::from_int(pop.raw().to_num::<i64>().max(0));
-    let surplus_modifier =
-        crate::economy::surplus_war_strength_modifier(civ.surplus, pop_real);
-    pop * (Real::ONE + literacy)
-        * war_bonus
-        * civ.tool_war_strength_multiplier()
-        * surplus_modifier
+    let pop_real = pop.to_real_nonneg();
+    let surplus_modifier = crate::economy::surplus_war_strength_modifier(civ.surplus, pop_real);
+    pop * (Real::ONE + literacy) * war_bonus * civ.tool_war_strength_multiplier() * surplus_modifier
 }
 
 /// Cells the two civs both claim.
@@ -214,8 +206,8 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
     } else {
         hierarchical_strength(b)
     };
-    let min_loss = Real::from_ratio(CONFLICT_MIN_LOSS.0, CONFLICT_MIN_LOSS.1);
-    let hier_bonus = Real::from_ratio(CONFLICT_HIERARCHY_BONUS.0, CONFLICT_HIERARCHY_BONUS.1);
+    let min_loss = Real::from(CONFLICT_MIN_LOSS);
+    let hier_bonus = Real::from(CONFLICT_HIERARCHY_BONUS);
     // Tech-asymmetry term. The winner's tool-derived
     // war-strength multiplier already determined who wins via
     // `strength()`; here we let the tech *gap* between the
@@ -240,9 +232,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
     } else {
         Real::from_int(4)
     };
-    let clamped = raw_ratio
-        .max(Real::ONE)
-        .min(Real::from_int(4));
+    let clamped = raw_ratio.max(Real::ONE).min(Real::from_int(4));
     let tech_gap = (clamped - Real::ONE) * Real::from_ratio(10, 100);
     // Hierarchy-size factor: the +0.30 hierarchy casualty bonus
     // is gated by organisational reach. A 14-cell tribe with a
@@ -312,8 +302,8 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
     // winner forgets within years. Net effect: the loser drives
     // future intra-pair belligerence even after religion +
     // cosmology have re-converged.
-    let winner_bump = Real::from_ratio(GRUDGE_BUMP_WINNER.0, GRUDGE_BUMP_WINNER.1);
-    let loser_bump = Real::from_ratio(GRUDGE_BUMP_LOSER.0, GRUDGE_BUMP_LOSER.1);
+    let winner_bump = Real::from(GRUDGE_BUMP_WINNER);
+    let loser_bump = Real::from(GRUDGE_BUMP_LOSER);
     loser.bump_grudge(winner_id, loser_bump, tick);
     winner.bump_grudge(loser_id, winner_bump, tick);
 
@@ -329,7 +319,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
 /// Whether two civs are peaceful enough for cross-civ knowledge
 /// diffusion (both Hierarchical axes below the floor).
 pub fn is_peaceful_pair(a: &Civ, b: &Civ) -> bool {
-    let floor = Real::from_ratio(PEACEFUL_HIERARCHY_FLOOR.0, PEACEFUL_HIERARCHY_FLOOR.1);
+    let floor = Real::from(PEACEFUL_HIERARCHY_FLOOR);
     a.cosmology.hierarchical < floor && b.cosmology.hierarchical < floor
 }
 
@@ -425,21 +415,13 @@ fn abs_diff(a: Real, b: Real) -> Real {
     }
 }
 
-fn clamp01(x: Real) -> Real {
-    x.max(Real::ZERO).min(Real::ONE)
-}
-
-fn pressure(
-    civ: &Civ,
-    state: &sim_physics::PhysicsState,
-    planet: &sim_world::Planet,
-) -> Real {
+fn pressure(civ: &Civ, state: &sim_physics::PhysicsState, planet: &sim_world::Planet) -> Real {
     let cap = civ.carrying_capacity_with_terrain(state, planet);
     if cap <= Pop::ZERO {
         return Real::ZERO;
     }
-    let headroom = Real::from_ratio(PRESSURE_HEADROOM.0, PRESSURE_HEADROOM.1);
-    clamp01(civ.aggregate_population() / (cap * headroom))
+    let headroom = Real::from(PRESSURE_HEADROOM);
+    (civ.aggregate_population() / (cap * headroom)).clamp01()
 }
 
 fn opportunity(
@@ -455,7 +437,7 @@ fn opportunity(
     let cap_d = defender.carrying_capacity_with_terrain(state, planet);
     let pop_d = defender.aggregate_population();
     let slack = (cap_d - pop_d).max(Pop::ZERO);
-    clamp01(slack / pop_a)
+    (slack / pop_a).clamp01()
 }
 
 fn dominance(a: &Civ, b: &Civ, tick: u64) -> Real {
@@ -478,10 +460,10 @@ fn drive(
     let p = pressure(attacker, state, planet);
     let o = opportunity(attacker, defender, state, planet);
     let d = dominance(attacker, defender, tick);
-    let w_p = Real::from_ratio(DRIVE_W_PRESSURE.0, DRIVE_W_PRESSURE.1);
-    let w_o = Real::from_ratio(DRIVE_W_OPPORTUNITY.0, DRIVE_W_OPPORTUNITY.1);
-    let w_d = Real::from_ratio(DRIVE_W_DOMINANCE.0, DRIVE_W_DOMINANCE.1);
-    clamp01(w_p * p + w_o * o + w_d * d)
+    let w_p = Real::from(DRIVE_W_PRESSURE);
+    let w_o = Real::from(DRIVE_W_OPPORTUNITY);
+    let w_d = Real::from(DRIVE_W_DOMINANCE);
+    (w_p * p + w_o * o + w_d * d).clamp01()
 }
 
 /// Generation-distance decay constant: kinship loses 1/e of its
@@ -565,27 +547,25 @@ pub const KINSHIP_W_RELIGION: (i64, i64) = (60, 100);
 ///      for decades reads as fundamentally hostile in kinship
 ///      space even if they share religion.
 fn kinship_pair(a: &Civ, b: &Civ, tick: u64) -> Real {
-    let hier_gap = clamp01(abs_diff(a.cosmology.hierarchical, b.cosmology.hierarchical));
+    let hier_gap = abs_diff(a.cosmology.hierarchical, b.cosmology.hierarchical).clamp01();
     let four = Real::from_int(4);
-    let cosmo_gap = clamp01(
-        (abs_diff(a.cosmology.empirical, b.cosmology.empirical)
-            + abs_diff(a.cosmology.communitarian, b.cosmology.communitarian)
-            + abs_diff(a.cosmology.reformist, b.cosmology.reformist)
-            + abs_diff(a.cosmology.mystical, b.cosmology.mystical))
-            / four,
-    );
-    let tech_gap = clamp01(abs_diff(a.literacy_score(tick), b.literacy_score(tick)));
+    let cosmo_gap = ((abs_diff(a.cosmology.empirical, b.cosmology.empirical)
+        + abs_diff(a.cosmology.communitarian, b.cosmology.communitarian)
+        + abs_diff(a.cosmology.reformist, b.cosmology.reformist)
+        + abs_diff(a.cosmology.mystical, b.cosmology.mystical))
+        / four)
+        .clamp01();
+    let tech_gap = abs_diff(a.literacy_score(tick), b.literacy_score(tick)).clamp01();
     let three = Real::from_int(3);
-    let religion_gap = clamp01(
-        (abs_diff(a.religion.theology, b.religion.theology)
-            + abs_diff(a.religion.ritual, b.religion.ritual)
-            + abs_diff(a.religion.sacred_time, b.religion.sacred_time))
-            / three,
-    );
-    let w_h = Real::from_ratio(KINSHIP_W_HIER.0, KINSHIP_W_HIER.1);
-    let w_c = Real::from_ratio(KINSHIP_W_COSMO.0, KINSHIP_W_COSMO.1);
-    let w_t = Real::from_ratio(KINSHIP_W_TECH.0, KINSHIP_W_TECH.1);
-    let w_r = Real::from_ratio(KINSHIP_W_RELIGION.0, KINSHIP_W_RELIGION.1);
+    let religion_gap = ((abs_diff(a.religion.theology, b.religion.theology)
+        + abs_diff(a.religion.ritual, b.religion.ritual)
+        + abs_diff(a.religion.sacred_time, b.religion.sacred_time))
+        / three)
+        .clamp01();
+    let w_h = Real::from(KINSHIP_W_HIER);
+    let w_c = Real::from(KINSHIP_W_COSMO);
+    let w_t = Real::from(KINSHIP_W_TECH);
+    let w_r = Real::from(KINSHIP_W_RELIGION);
     let base = w_h * (Real::ONE - hier_gap)
         + w_c * (Real::ONE - cosmo_gap)
         + w_t * (Real::ONE - tech_gap)
@@ -608,10 +588,7 @@ fn kinship_pair(a: &Civ, b: &Civ, tick: u64) -> Real {
         GRUDGE_DECAY_PER_TICK_WINNER.0,
         GRUDGE_DECAY_PER_TICK_WINNER.1,
     );
-    let decay_l = Real::from_ratio(
-        GRUDGE_DECAY_PER_TICK_LOSER.0,
-        GRUDGE_DECAY_PER_TICK_LOSER.1,
-    );
+    let decay_l = Real::from_ratio(GRUDGE_DECAY_PER_TICK_LOSER.0, GRUDGE_DECAY_PER_TICK_LOSER.1);
     // For each side, use the slower decay rate so the longer-
     // memory side of the pair sets the floor; this conservatively
     // treats both sides as "the loser remembers" when we don't
@@ -619,7 +596,7 @@ fn kinship_pair(a: &Civ, b: &Civ, tick: u64) -> Real {
     let g_a = decayed_grudge(&a.grudges, b.id, tick, decay_l.min(decay_w));
     let g_b = decayed_grudge(&b.grudges, a.id, tick, decay_l.min(decay_w));
     let grudge_avg = (g_a + g_b) / Real::from_int(2);
-    clamp01(base * gen_factor - grudge_avg)
+    (base * gen_factor - grudge_avg).clamp01()
 }
 
 /// Compute the per-pair belligerence assessment. The aggressor is
@@ -636,7 +613,7 @@ pub fn assess_pair(
         return None;
     }
     let kin = kinship_pair(a, b, tick);
-    let dampener = Real::from_ratio(KINSHIP_DAMPENER.0, KINSHIP_DAMPENER.1);
+    let dampener = Real::from(KINSHIP_DAMPENER);
     let dampener_factor = (Real::ONE - dampener * kin).max(Real::ZERO);
     let drive_ab = drive(a, b, state, planet, tick);
     let drive_ba = drive(b, a, state, planet, tick);
@@ -664,8 +641,8 @@ pub fn assess_pair(
 /// the core loop should do this check for one (overlapping,
 /// in-contact) pair.
 pub fn decide_war(currently_at_war: bool, belligerence: Real) -> WarDecision {
-    let declare = Real::from_ratio(WAR_DECLARE_THRESHOLD.0, WAR_DECLARE_THRESHOLD.1);
-    let end = Real::from_ratio(WAR_END_THRESHOLD.0, WAR_END_THRESHOLD.1);
+    let declare = Real::from(WAR_DECLARE_THRESHOLD);
+    let end = Real::from(WAR_END_THRESHOLD);
     if currently_at_war {
         if belligerence < end {
             WarDecision::ConcludePeace
@@ -830,7 +807,11 @@ mod tests {
         // Between: 14-cell tribe ≈ 0.57.
         let f14 = hierarchy_size_factor(14);
         let target = Real::from_ratio(57, 100);
-        let drift14 = if f14 > target { f14 - target } else { target - f14 };
+        let drift14 = if f14 > target {
+            f14 - target
+        } else {
+            target - f14
+        };
         assert!(
             drift14 < Real::from_ratio(5, 100),
             "14-cell factor should be ~0.57; got {f14:?}"
@@ -1032,15 +1013,19 @@ mod tests {
             m
         };
         // Slowest decay (loser memory): 5/10_000 per tick.
-        let decay = Real::from_ratio(
-            GRUDGE_DECAY_PER_TICK_LOSER.0,
-            GRUDGE_DECAY_PER_TICK_LOSER.1,
-        );
+        let decay = Real::from_ratio(GRUDGE_DECAY_PER_TICK_LOSER.0, GRUDGE_DECAY_PER_TICK_LOSER.1);
         // 200 ticks later: 0.20 - 0.0005*200 = 0.10.
         let d = decayed_grudge(&g, 2, 300, decay);
         let expected = Real::from_ratio(10, 100);
-        let drift = if d > expected { d - expected } else { expected - d };
-        assert!(drift < Real::from_ratio(1, 100), "grudge should decay to ~0.10; got {d:?}");
+        let drift = if d > expected {
+            d - expected
+        } else {
+            expected - d
+        };
+        assert!(
+            drift < Real::from_ratio(1, 100),
+            "grudge should decay to ~0.10; got {d:?}"
+        );
         // 1000 ticks later: 0.20 - 0.5 → clamped to 0.
         let d2 = decayed_grudge(&g, 2, 1100, decay);
         assert_eq!(d2, Real::ZERO);
@@ -1098,10 +1083,10 @@ mod tests {
         alien_a.claim_cells(&shared);
         alien_b.claim_cells(&shared);
 
-        let kin_score = assess_pair(&kin_a, &kin_b, &state, &planet, 100)
-            .expect("non-zero pop pair");
-        let alien_score = assess_pair(&alien_a, &alien_b, &state, &planet, 100)
-            .expect("non-zero pop pair");
+        let kin_score =
+            assess_pair(&kin_a, &kin_b, &state, &planet, 100).expect("non-zero pop pair");
+        let alien_score =
+            assess_pair(&alien_a, &alien_b, &state, &planet, 100).expect("non-zero pop pair");
 
         assert!(
             kin_score.kinship > Real::from_ratio(999, 1000),
@@ -1169,7 +1154,8 @@ mod tests {
         let mut b = civ_with_id(2, 1000);
         a.claim_cells(&shared);
         b.claim_cells(&shared);
-        a.unlocked_tools.insert(crate::tech::ToolKind::ContactWeapon);
+        a.unlocked_tools
+            .insert(crate::tech::ToolKind::ContactWeapon);
         a.unlocked_tools
             .insert(crate::tech::ToolKind::RangedMomentumWeapon);
         a.unlocked_tools

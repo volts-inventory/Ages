@@ -151,11 +151,8 @@ pub fn catastrophe_selection_weights(kind: CatastropheKind) -> SelectionBias {
 /// population lost — heavier catastrophes are stronger selection
 /// pressures.
 #[must_use]
-pub fn selection_bias_for_catastrophe(
-    kind: CatastropheKind,
-    fraction_lost: Real,
-) -> SelectionBias {
-    let frac = fraction_lost.max(Real::ZERO).min(Real::ONE);
+pub fn selection_bias_for_catastrophe(kind: CatastropheKind, fraction_lost: Real) -> SelectionBias {
+    let frac = fraction_lost.clamp01();
     catastrophe_selection_weights(kind).scale(frac)
 }
 
@@ -236,8 +233,7 @@ mod tests {
         let drift = full.cognition - (half.cognition * Real::from_int(2));
         assert!(drift.abs() < Real::from_ratio(1, 1000));
         // Zero fraction → zero bias (extreme).
-        let zero =
-            selection_bias_for_catastrophe(CatastropheKind::Disease, Real::ZERO);
+        let zero = selection_bias_for_catastrophe(CatastropheKind::Disease, Real::ZERO);
         assert_eq!(zero, SelectionBias::zero());
     }
 
@@ -273,7 +269,11 @@ mod tests {
         // Silicate + sparse: 0.25 × 0.7 = 0.175, above floor of 0.1.
         let f = drift_band_factor(Real::from_ratio(2, 10), BiosphereClass::Sparse);
         let expected = Real::from_ratio(175, 1000);
-        let drift = if f > expected { f - expected } else { expected - f };
+        let drift = if f > expected {
+            f - expected
+        } else {
+            expected - f
+        };
         assert!(drift < Real::from_ratio(1, 100));
         // Aqueous + hyper-biodiverse: 1.0 × 1.5 = 1.5.
         let f2 = drift_band_factor(Real::ONE, BiosphereClass::HyperBiodiverse);

@@ -350,7 +350,11 @@ fn render_trade_routes(s: &mut String, d: &Digest) {
         return;
     }
     let total = d.trade_routes.len();
-    let open_now = d.trade_routes.iter().filter(|r| r.end_tick.is_none()).count();
+    let open_now = d
+        .trade_routes
+        .iter()
+        .filter(|r| r.end_tick.is_none())
+        .count();
     let closed_by_war = d
         .trade_routes
         .iter()
@@ -381,7 +385,10 @@ fn render_trade_routes(s: &mut String, d: &Digest) {
                 format!("year {}", tick_to_year(t, period)),
                 reason.replace('_', " "),
             ),
-            (Some(t), None) => (format!("year {}", tick_to_year(t, period)), "closed".to_string()),
+            (Some(t), None) => (
+                format!("year {}", tick_to_year(t, period)),
+                "closed".to_string(),
+            ),
             (None, _) => ("—".to_string(), "ongoing".to_string()),
         };
         let _ = writeln!(
@@ -440,21 +447,22 @@ fn render_contacts_and_conflicts(s: &mut String, d: &Digest) {
                     tick_to_year(end, period)
                 ),
                 Some(_) => format!("year {}", tick_to_year(war.start_tick, period)),
-                None => format!("from year {} (unresolved)", tick_to_year(war.start_tick, period)),
+                None => format!(
+                    "from year {} (unresolved)",
+                    tick_to_year(war.start_tick, period)
+                ),
             };
             let outcome = match war.peace_reason.as_deref() {
                 Some("defeated") => format!(
                     "civ {} **defeated** civ {}",
                     war.aggressor_civ_id, war.defender_civ_id
                 ),
-                Some("belligerence_dropped") => format!(
-                    "civ {} ↔ civ {} (tensions eased)",
-                    war.civ_a, war.civ_b
-                ),
-                Some("territory_resolved") => format!(
-                    "civ {} ↔ civ {} (borders settled)",
-                    war.civ_a, war.civ_b
-                ),
+                Some("belligerence_dropped") => {
+                    format!("civ {} ↔ civ {} (tensions eased)", war.civ_a, war.civ_b)
+                }
+                Some("territory_resolved") => {
+                    format!("civ {} ↔ civ {} (borders settled)", war.civ_a, war.civ_b)
+                }
                 _ => format!(
                     "civ {} → civ {} (ongoing)",
                     war.aggressor_civ_id, war.defender_civ_id

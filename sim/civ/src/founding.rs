@@ -183,11 +183,9 @@ impl Civ {
         let age_ticks = current_tick.saturating_sub(self.founded_tick);
         let age = Real::from_int(i64::try_from(age_ticks).unwrap_or(i64::MAX));
         let lifespan_term = age / Real::from_int(LITERACY_LIFESPAN_DENOM);
-        let raw = Real::from_ratio(LITERACY_DISCOVERY_WEIGHT.0, LITERACY_DISCOVERY_WEIGHT.1)
-            * n_disc
-            + Real::from_ratio(LITERACY_TIER_WEIGHT.0, LITERACY_TIER_WEIGHT.1) * tier_index
-            + Real::from_ratio(LITERACY_LIFESPAN_WEIGHT.0, LITERACY_LIFESPAN_WEIGHT.1)
-                * lifespan_term;
+        let raw = Real::from(LITERACY_DISCOVERY_WEIGHT) * n_disc
+            + Real::from(LITERACY_TIER_WEIGHT) * tier_index
+            + Real::from(LITERACY_LIFESPAN_WEIGHT) * lifespan_term;
         // sigmoid_lite(x) = x / (1 + |x|)
         let base = raw / (Real::ONE + raw.abs());
         // tool literacy bonus: CulturalEncoding (+0.10),

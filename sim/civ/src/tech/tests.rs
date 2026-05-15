@@ -197,9 +197,9 @@ fn every_manipulation_kind_has_tier1_path() {
     ];
     for kind in all_kinds {
         let manips: BTreeSet<ManipulationKind> = [kind].into_iter().collect();
-        let reachable = tier1.iter().any(|tool| {
-            is_buildable(*tool, &species, &manips, true, true, Crust::Basaltic)
-        });
+        let reachable = tier1
+            .iter()
+            .any(|tool| is_buildable(*tool, &species, &manips, true, true, Crust::Basaltic));
         assert!(
             reachable,
             "{kind:?} must have at least one tier-1 tool path — the \
@@ -962,7 +962,10 @@ fn apply_tool_consumption_burns_fuel_with_combustion_mirror() {
     // Ash produced.
     assert!(final_ash > initial_ash, "ash should grow");
     // Mass conserved across the (fuel, oxidiser, ash) trio.
-    assert_eq!(initial_total, final_total, "mass conservation across burnable trio");
+    assert_eq!(
+        initial_total, final_total,
+        "mass conservation across burnable trio"
+    );
     // Stoichiometry: 1 fuel + 1 oxidiser → 2 ash.
     let consumed_fuel = initial_fuel - final_fuel;
     let consumed_ox = initial_ox - final_ox;
@@ -1002,7 +1005,10 @@ fn apply_tool_consumption_does_not_deplete_water() {
         apply_tool_consumption(&mut state, &civs);
     }
     let final_water = state.substance(Substance::Water.idx())[0];
-    assert_eq!(initial_water, final_water, "water is read-only at the consumption layer");
+    assert_eq!(
+        initial_water, final_water,
+        "water is read-only at the consumption layer"
+    );
 }
 
 /// effect-multiplier stacking: a civ with both

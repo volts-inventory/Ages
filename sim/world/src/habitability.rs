@@ -62,7 +62,10 @@ pub const CLAIM_HABITABILITY_THRESHOLD_DEN: i64 = 100;
 /// found on water or gas).
 #[must_use]
 pub fn is_claimable_multiplier(mult: Real) -> bool {
-    mult >= Real::from_ratio(CLAIM_HABITABILITY_THRESHOLD_NUM, CLAIM_HABITABILITY_THRESHOLD_DEN)
+    mult >= Real::from_ratio(
+        CLAIM_HABITABILITY_THRESHOLD_NUM,
+        CLAIM_HABITABILITY_THRESHOLD_DEN,
+    )
 }
 
 /// Per-cell terrain glyph derived from the same fields

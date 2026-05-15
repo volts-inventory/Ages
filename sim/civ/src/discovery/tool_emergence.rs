@@ -143,11 +143,9 @@ fn channel_to_kind(channel: Channel) -> ChannelKind {
         Channel::ChargeMagnitude => ChannelKind::ElectricField,
         Channel::WaterDepth => ChannelKind::AcousticWater,
         Channel::Elevation => ChannelKind::Tactile,
-        Channel::Fuel
-        | Channel::Oxidiser
-        | Channel::Vapour
-        | Channel::Ice
-        | Channel::Fossil => ChannelKind::ChemicalTaste,
+        Channel::Fuel | Channel::Oxidiser | Channel::Vapour | Channel::Ice | Channel::Fossil => {
+            ChannelKind::ChemicalTaste
+        }
     }
 }
 

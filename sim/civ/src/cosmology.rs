@@ -45,7 +45,7 @@ impl Cosmology {
             return Real::ZERO;
         }
         let raw = self.magnitude() / denom;
-        raw.max(Real::ZERO).min(Real::ONE)
+        raw.clamp01()
     }
 
     /// L2 distance to another cosmology vector.
@@ -177,8 +177,7 @@ pub fn form_distance(form: Form, cosmology: &Cosmology) -> Real {
         }
         Form::Logarithmic | Form::InverseSquare => (Real::ONE - cosmology.empirical) * half,
     }
-    .max(Real::ZERO)
-    .min(Real::ONE)
+    .clamp01()
 }
 
 #[cfg(test)]

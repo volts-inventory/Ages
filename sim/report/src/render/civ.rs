@@ -258,7 +258,10 @@ pub(super) fn render_civ_chapter(s: &mut String, civ: &CivChapter, d: &Digest) {
         let to_years = |months_q32: i64| -> f64 {
             q32_to_f64(months_q32) / f64::from(protocol::BASELINE_MONTHS_PER_YEAR as u32)
         };
-        Some((to_years(first.life_expectancy_months_q32), to_years(last.life_expectancy_months_q32)))
+        Some((
+            to_years(first.life_expectancy_months_q32),
+            to_years(last.life_expectancy_months_q32),
+        ))
     })() {
         if (current_le - founding_le).abs() >= 1.0 {
             let _ = writeln!(
@@ -266,10 +269,7 @@ pub(super) fn render_civ_chapter(s: &mut String, civ: &CivChapter, d: &Digest) {
                 "Life expectancy at birth: founded with {founding_le:.0}y, currently {current_le:.0}y."
             );
         } else {
-            let _ = writeln!(
-                s,
-                "Life expectancy at birth: {founding_le:.0}y."
-            );
+            let _ = writeln!(s, "Life expectancy at birth: {founding_le:.0}y.");
         }
     }
     // M8 — economic arc: founded with N, peaked at P (year Y),

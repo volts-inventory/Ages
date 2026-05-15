@@ -70,8 +70,7 @@ impl Civ {
             let centroid = self.territory_centroid;
             if cells.contains(&centroid) && cells.len() > 1 {
                 let centroid_share = Real::from_ratio(70, 100);
-                let mut centroid_cohort =
-                    Cohort::with_civ(Pop::ZERO, self.id);
+                let mut centroid_cohort = Cohort::with_civ(Pop::ZERO, self.id);
                 centroid_cohort.merge_in(&self.cohort);
                 centroid_cohort.scale_in_place(centroid_share);
                 let mut others_pool = Cohort::with_civ(Pop::ZERO, self.id);
@@ -223,7 +222,7 @@ impl Civ {
     /// catastrophe events can carry the magnitude. The aggregate
     /// cohort is re-synced after the loss.
     pub fn drop_cell_pop(&mut self, cell: u32, fraction: Real) -> Pop {
-        let frac = fraction.max(Real::ZERO).min(Real::ONE);
+        let frac = fraction.clamp01();
         let mut lost = Pop::ZERO;
         if let Some(c) = self.region_cohorts.get_mut(&cell) {
             let before = c.total();

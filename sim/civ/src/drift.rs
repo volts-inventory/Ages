@@ -54,7 +54,7 @@ impl Civ {
     /// trait channels (cognition / sociality / `lifespan_years` /
     /// `communication_fidelity`) sample independently.
     pub fn inherit_species_drift(&mut self, parent: &Civ, planet_seed: u64) {
-        let trait_step = Real::from_ratio(SUCCESSOR_DRIFT_TRAIT_STEP.0, SUCCESSOR_DRIFT_TRAIT_STEP.1);
+        let trait_step = Real::from(SUCCESSOR_DRIFT_TRAIT_STEP);
         let lifespan_step = Real::from_int(SUCCESSOR_DRIFT_LIFESPAN_STEP_YEARS);
         self.cognition_delta =
             parent.cognition_delta + derive_drift_step(planet_seed, self.id, 0, trait_step);
@@ -97,9 +97,7 @@ impl Civ {
         biosphere: BiosphereClass,
     ) {
         let env_factor = drift_band_factor(metabolism, biosphere);
-        let trait_step =
-            Real::from_ratio(SUCCESSOR_DRIFT_TRAIT_STEP.0, SUCCESSOR_DRIFT_TRAIT_STEP.1)
-                * env_factor;
+        let trait_step = Real::from(SUCCESSOR_DRIFT_TRAIT_STEP) * env_factor;
         let lifespan_step = Real::from_int(SUCCESSOR_DRIFT_LIFESPAN_STEP_YEARS) * env_factor;
         let bias = parent.selection_bias;
         self.cognition_delta = parent.cognition_delta
@@ -151,17 +149,13 @@ impl Civ {
     /// other consumer that wants the civ-specific perceived trait.
     #[must_use]
     pub fn effective_cognition(&self, species: &sim_species::Species) -> Real {
-        (species.cognition + self.cognition_delta)
-            .max(Real::ZERO)
-            .min(Real::ONE)
+        (species.cognition + self.cognition_delta).clamp01()
     }
 
     /// Effective sociality, clamped to `[0, 1]`.
     #[must_use]
     pub fn effective_sociality(&self, species: &sim_species::Species) -> Real {
-        (species.sociality + self.sociality_delta)
-            .max(Real::ZERO)
-            .min(Real::ONE)
+        (species.sociality + self.sociality_delta).clamp01()
     }
 
     /// Effective lifespan in years, clamped to `[1, 1000]`. Folds
@@ -174,17 +168,13 @@ impl Civ {
     pub fn effective_lifespan_years(&self, species: &sim_species::Species) -> Real {
         let raw = species.lifespan_years + self.lifespan_delta_years;
         let extension = Real::ONE + self.tool_lifespan_extension_factor();
-        (raw * extension)
-            .max(Real::ONE)
-            .min(Real::from_int(1000))
+        (raw * extension).max(Real::ONE).min(Real::from_int(1000))
     }
 
     /// Effective communication fidelity, clamped to `[0, 1]`.
     #[must_use]
     pub fn effective_communication_fidelity(&self, species: &sim_species::Species) -> Real {
-        (species.communication_fidelity + self.communication_fidelity_delta)
-            .max(Real::ZERO)
-            .min(Real::ONE)
+        (species.communication_fidelity + self.communication_fidelity_delta).clamp01()
     }
 
     /// True if any drift channel has accumulated at least
@@ -193,7 +183,10 @@ impl Civ {
     /// don't emit a noise line.
     #[must_use]
     pub fn has_meaningful_drift(&self) -> bool {
-        let half_trait = Real::from_ratio(SUCCESSOR_DRIFT_TRAIT_STEP.0, SUCCESSOR_DRIFT_TRAIT_STEP.1 * 2);
+        let half_trait = Real::from_ratio(
+            SUCCESSOR_DRIFT_TRAIT_STEP.0,
+            SUCCESSOR_DRIFT_TRAIT_STEP.1 * 2,
+        );
         let half_lifespan = Real::from_ratio(SUCCESSOR_DRIFT_LIFESPAN_STEP_YEARS, 2);
         self.cognition_delta.abs() >= half_trait
             || self.sociality_delta.abs() >= half_trait
@@ -217,10 +210,7 @@ mod tests {
         assert_eq!(civ.selection_bias, SelectionBias::zero());
         // One disease wiping out 30%: bumps cognition by 0.024,
         // sociality by 0.018, lifespan by 0.6 years.
-        civ.record_catastrophe_selection_bias(
-            CatastropheKind::Disease,
-            Real::from_ratio(30, 100),
-        );
+        civ.record_catastrophe_selection_bias(CatastropheKind::Disease, Real::from_ratio(30, 100));
         assert!(civ.selection_bias.cognition > Real::ZERO);
         assert!(civ.selection_bias.sociality > Real::ZERO);
         // Drop the bias by repeating beyond the ceiling: 20 disease
@@ -240,15 +230,13 @@ mod tests {
         let mut parent = fresh(1);
         // Parent survived a disease catastrophe — accumulate a
         // concrete bias.
-        parent.record_catastrophe_selection_bias(
-            CatastropheKind::Disease,
-            Real::from_ratio(30, 100),
-        );
+        parent
+            .record_catastrophe_selection_bias(CatastropheKind::Disease, Real::from_ratio(30, 100));
         let parent_bias_cog = parent.selection_bias.cognition;
         let mut child = fresh(2);
         child.inherit_species_drift_with_environment(
             &parent,
-            42, // planet_seed
+            42,        // planet_seed
             Real::ONE, // aqueous metabolism
             BiosphereClass::Lush,
         );

@@ -79,7 +79,7 @@ pub const SURPLUS_WAR_BONUS_CAP: (i64, i64) = (15, 100);
 /// whether to emit a `CivSurplusChanged` event.
 pub fn step_surplus(civ: &mut Civ, utilisation: Real, at_war_count: u64) {
     let pop = civ.aggregate_population();
-    let pop_real = Real::from_int(pop.raw().to_num::<i64>().max(0));
+    let pop_real = pop.to_real_nonneg();
     if pop_real <= Real::ZERO {
         // Empty civ: no surplus generation, and existing surplus
         // decays away over time (no one to hold it).
@@ -89,22 +89,19 @@ pub fn step_surplus(civ: &mut Civ, utilisation: Real, at_war_count: u64) {
     // Accumulation: scales by (utilisation - floor) clamped to
     // [0, 1 - floor]. So a civ at the floor gains nothing; a civ
     // at full saturation gains the full rate.
-    let floor = Real::from_ratio(SURPLUS_UTILIZATION_FLOOR.0, SURPLUS_UTILIZATION_FLOOR.1);
-    let headroom = (utilisation - floor)
-        .max(Real::ZERO)
-        .min(Real::ONE - floor);
+    let floor = Real::from(SURPLUS_UTILIZATION_FLOOR);
+    let headroom = (utilisation - floor).max(Real::ZERO).min(Real::ONE - floor);
     let max_headroom = Real::ONE - floor;
     let scale_factor = if max_headroom > Real::ZERO {
         headroom / max_headroom
     } else {
         Real::ZERO
     };
-    let gain_rate = Real::from_ratio(SURPLUS_GAIN_PER_TICK.0, SURPLUS_GAIN_PER_TICK.1);
+    let gain_rate = Real::from(SURPLUS_GAIN_PER_TICK);
     let gain = pop_real * gain_rate * scale_factor;
     // Drain: per war drain rate × war count, denominated in
     // population units so it cancels the gain at parity-scale.
-    let drain_rate =
-        Real::from_ratio(SURPLUS_WAR_DRAIN_PER_TICK.0, SURPLUS_WAR_DRAIN_PER_TICK.1);
+    let drain_rate = Real::from(SURPLUS_WAR_DRAIN_PER_TICK);
     let war_factor = Real::from_int(i64::try_from(at_war_count).unwrap_or(i64::MAX));
     let drain = pop_real * drain_rate * war_factor;
     let new_surplus = (civ.surplus + gain - drain).max(Real::ZERO);
@@ -116,8 +113,7 @@ pub fn step_surplus(civ: &mut Civ, utilisation: Real, at_war_count: u64) {
 /// by `SURPLUS_CATASTROPHE_DRAIN_FRAC`. Called from the
 /// catastrophe-firing site after the cohort loss has been applied.
 pub fn drain_surplus_on_catastrophe(civ: &mut Civ) {
-    let drain_frac =
-        Real::from_ratio(SURPLUS_CATASTROPHE_DRAIN_FRAC.0, SURPLUS_CATASTROPHE_DRAIN_FRAC.1);
+    let drain_frac = Real::from(SURPLUS_CATASTROPHE_DRAIN_FRAC);
     civ.surplus = (civ.surplus * (Real::ONE - drain_frac)).max(Real::ZERO);
 }
 
@@ -127,15 +123,14 @@ pub fn drain_surplus_on_catastrophe(civ: &mut Civ) {
 /// crisis. Returns a non-negative additive bonus in `[0, BONUS_CAP]`.
 #[must_use]
 pub fn surplus_food_buffer(surplus: Real, demand: sim_arith::Pop) -> Real {
-    let demand_real = Real::from_int(demand.raw().to_num::<i64>().max(0));
+    let demand_real = demand.to_real_nonneg();
     if demand_real <= Real::ZERO {
         return Real::ZERO;
     }
     let ratio = surplus / demand_real;
     let full = Real::from_int(SURPLUS_FOOD_BUFFER_FULL);
     let capped_ratio = ratio.min(full);
-    let bonus_cap =
-        Real::from_ratio(SURPLUS_FOOD_BUFFER_BONUS.0, SURPLUS_FOOD_BUFFER_BONUS.1);
+    let bonus_cap = Real::from(SURPLUS_FOOD_BUFFER_BONUS);
     if full > Real::ZERO {
         (capped_ratio / full) * bonus_cap
     } else {
@@ -164,7 +159,7 @@ pub fn trade_flow_between(civ_a: &mut Civ, civ_b: &mut Civ) -> Real {
     let s_a = civ_a.surplus;
     let s_b = civ_b.surplus;
     let gap = if s_a > s_b { s_a - s_b } else { s_b - s_a };
-    let flow_rate = Real::from_ratio(TRADE_FLOW_PER_TICK.0, TRADE_FLOW_PER_TICK.1);
+    let flow_rate = Real::from(TRADE_FLOW_PER_TICK);
     let raw_flow = gap * flow_rate;
     let flow = raw_flow.max(Real::ZERO);
     if flow <= Real::ZERO {
@@ -190,8 +185,8 @@ pub fn surplus_war_strength_modifier(surplus: Real, aggregate_pop: Real) -> Real
     if aggregate_pop <= Real::ZERO {
         return Real::ONE;
     }
-    let ratio = (surplus / aggregate_pop).min(Real::ONE).max(Real::ZERO);
-    let cap = Real::from_ratio(SURPLUS_WAR_BONUS_CAP.0, SURPLUS_WAR_BONUS_CAP.1);
+    let ratio = (surplus / aggregate_pop).clamp01();
+    let cap = Real::from(SURPLUS_WAR_BONUS_CAP);
     Real::ONE + ratio * cap
 }
 
@@ -281,12 +276,8 @@ mod tests {
         let zero = surplus_food_buffer(Real::ZERO, demand);
         assert_eq!(zero, Real::ZERO);
         // surplus = full × demand → full bonus cap.
-        let full = surplus_food_buffer(
-            Real::from_int(SURPLUS_FOOD_BUFFER_FULL * 100),
-            demand,
-        );
-        let cap =
-            Real::from_ratio(SURPLUS_FOOD_BUFFER_BONUS.0, SURPLUS_FOOD_BUFFER_BONUS.1);
+        let full = surplus_food_buffer(Real::from_int(SURPLUS_FOOD_BUFFER_FULL * 100), demand);
+        let cap = Real::from(SURPLUS_FOOD_BUFFER_BONUS);
         let drift = if full > cap { full - cap } else { cap - full };
         assert!(drift < Real::from_ratio(1, 100));
         // 10× full saturates at cap (no overflow).
@@ -348,7 +339,7 @@ mod tests {
         assert!(drift.abs() < Real::from_ratio(1, 1000));
         // Surplus = pop → full +cap bonus.
         let full = surplus_war_strength_modifier(pop, pop);
-        let cap = Real::from_ratio(SURPLUS_WAR_BONUS_CAP.0, SURPLUS_WAR_BONUS_CAP.1);
+        let cap = Real::from(SURPLUS_WAR_BONUS_CAP);
         let expected = Real::ONE + cap;
         let drift_full = if full > expected {
             full - expected

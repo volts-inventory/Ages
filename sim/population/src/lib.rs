@@ -153,7 +153,7 @@ impl Cohort {
     /// seed a new cell with a slice of an existing centroid.
     #[must_use]
     pub fn split_off_fraction(&mut self, fraction: Real) -> Cohort {
-        let f = fraction.max(Real::ZERO).min(Real::ONE);
+        let f = fraction.clamp01();
         let moved = Cohort {
             infant: self.infant * f,
             juvenile: self.juvenile * f,
@@ -321,10 +321,10 @@ impl PopulationDynamics {
             Real::from_int(i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12));
         // Defensive: lifespan can't be sub-monthly.
         let lifespan = lifespan_years.max(Real::ONE);
-        let infant_months = (lifespan * biology.infant_fraction * baseline_months_per_year)
-            .max(Real::ONE);
-        let juvenile_months = (lifespan * biology.maturity_fraction * baseline_months_per_year)
-            .max(Real::ONE);
+        let infant_months =
+            (lifespan * biology.infant_fraction * baseline_months_per_year).max(Real::ONE);
+        let juvenile_months =
+            (lifespan * biology.maturity_fraction * baseline_months_per_year).max(Real::ONE);
         let fertile_months =
             (lifespan * biology.fertile_fraction() * baseline_months_per_year).max(Real::ONE);
         // Eldership can be zero by construction; clamp the
@@ -339,14 +339,16 @@ impl PopulationDynamics {
         // / months). For window_survival in (0, 1] this returns a
         // per-tick fraction in (0, 1].
         let to_per_tick = |window_survival: Real, months: Real| -> Real {
-            let s = window_survival.max(Real::from_ratio(1, 1000)).min(Real::ONE);
+            let s = window_survival
+                .max(Real::from_ratio(1, 1000))
+                .min(Real::ONE);
             let log_s = ln(s);
             let exponent = log_s / months;
-            exp(exponent).max(Real::ZERO).min(Real::ONE)
+            exp(exponent).clamp01()
         };
         // Fertile baseline survival over the entire fertile window:
         // 0.85 + 0.10 * cognition (range [0.85, 0.95]).
-        let cog_clamped = cognition.max(Real::ZERO).min(Real::ONE);
+        let cog_clamped = cognition.clamp01();
         let fertile_window_survival =
             Real::from_ratio(85, 100) + cog_clamped * Real::from_ratio(10, 100);
         // Elder window survival: baseline 0.30 (senescence dominates;
@@ -375,9 +377,8 @@ impl PopulationDynamics {
         // Stress factor (carried over from earlier model). Mutual
         // aid + adaptive behaviour buffer the death amplification.
         // Centred at 4.0; range [2, 5].
-        let soc_clamped = sociality.max(Real::ZERO).min(Real::ONE);
-        let stress_factor =
-            (Real::from_int(5) - soc_clamped - cog_clamped).max(Real::from_int(2));
+        let soc_clamped = sociality.clamp01();
+        let stress_factor = (Real::from_int(5) - soc_clamped - cog_clamped).max(Real::from_int(2));
         Self {
             birth_rate,
             infant_survival_per_tick,
@@ -468,7 +469,7 @@ impl PopulationDynamics {
         // a bracket would otherwise see, and the cuts compound with
         // (rather than replacing) the stress-and-starvation terms.
         let combine = |s: Real, extra: Real, reduction: Real| -> Real {
-            let r = reduction.max(Real::ZERO).min(Real::ONE);
+            let r = reduction.clamp01();
             let reduced_baseline = (Real::ONE - s) * (Real::ONE - r) * amp;
             let total = (reduced_baseline + extra).min(Real::ONE);
             (Real::ONE - total).max(Real::ZERO)
@@ -563,7 +564,7 @@ impl PopulationDynamics {
         // without stress amplification (so this is the neutral-
         // environment expectancy).
         let apply_reduction = |s: Real, r: Real| -> Real {
-            let red = r.max(Real::ZERO).min(Real::ONE);
+            let red = r.clamp01();
             Real::ONE - (Real::ONE - s) * (Real::ONE - red)
         };
         let s_i = apply_reduction(self.infant_survival_per_tick, self.mortality_reduction[0]);
@@ -624,7 +625,7 @@ pub fn food_security(demand: Pop, capacity: Pop) -> Real {
         Real::ZERO
     };
     let raw = Real::ONE - stress;
-    raw.max(Real::ZERO).min(Real::ONE)
+    raw.clamp01()
 }
 
 #[cfg(test)]
@@ -750,8 +751,15 @@ mod tests {
         // tolerate within 0.001.
         let d = c.weighted_demand(&biology);
         let expected = Pop::from_int(28);
-        let diff = if d > expected { d - expected } else { expected - d };
-        assert!(diff < Pop::from_ratio(1, 1_000), "demand {d:?} != 28 within tol");
+        let diff = if d > expected {
+            d - expected
+        } else {
+            expected - d
+        };
+        assert!(
+            diff < Pop::from_ratio(1, 1_000),
+            "demand {d:?} != 28 within tol"
+        );
     }
 
     #[test]

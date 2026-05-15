@@ -46,9 +46,7 @@ pub fn biosphere_birth_factor(biosphere: BiosphereClass) -> Real {
 #[must_use]
 pub fn biosphere_birth_factor_for_planet(planet: &Planet) -> Real {
     let base = biosphere_birth_factor(planet.biosphere);
-    let tilt_norm = (planet.axial_tilt_deg / Real::from_int(90))
-        .max(Real::ZERO)
-        .min(Real::ONE);
+    let tilt_norm = (planet.axial_tilt_deg / Real::from_int(90)).clamp01();
     let tilt_factor = Real::ONE - Real::from_ratio(1, 10) * tilt_norm;
     let earth_lum = Real::from_int(1361);
     let lum_norm = (planet.stellar_luminosity / earth_lum)
@@ -70,7 +68,7 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Po
         BiosphereClass::Lush => Real::from_ratio(5, 10),
         BiosphereClass::HyperBiodiverse => Real::from_ratio(25, 100),
     };
-    let cog = cognition.max(Real::ZERO).min(Real::ONE);
+    let cog = cognition.clamp01();
     let cognition_penalty = Real::ONE - cog;
     Pop::from_int(50)
         + Pop::from_int(35) * biosphere_pressure
@@ -117,7 +115,7 @@ pub fn carrying_capacity_per_unit(
     };
     let g_factor =
         (Real::ONE - Real::from_ratio(5, 100) * g_diff / earth_g).max(Real::from_ratio(5, 10));
-    let cog = cognition.max(Real::ZERO).min(Real::ONE);
+    let cog = cognition.clamp01();
     // Cognition factor narrows further (0.95–1.0) so low-cognition
     // species don't compound a capacity hit on top of the existing
     // attempt-period and stress-factor cognition penalties.
@@ -135,7 +133,7 @@ pub fn carrying_capacity_per_unit(
 /// (cells at 55–75% of cap) plus continued frontier expansion.
 #[must_use]
 pub fn migration_pressure_threshold(sociality: Real) -> Real {
-    let s = sociality.max(Real::ZERO).min(Real::ONE);
+    let s = sociality.clamp01();
     Real::from_ratio(55, 100) + Real::from_ratio(2, 10) * s
 }
 
@@ -152,10 +150,7 @@ pub fn migration_pressure_threshold(sociality: Real) -> Real {
 /// migration entirely). Net: a high-tech civ tolerates 55-97%
 /// fill before spillover instead of the base 55-75%.
 #[must_use]
-pub fn tech_augmented_migration_threshold(
-    base: Real,
-    tool_capacity_multiplier: Real,
-) -> Real {
+pub fn tech_augmented_migration_threshold(base: Real, tool_capacity_multiplier: Real) -> Real {
     let safe_mult = tool_capacity_multiplier.max(Real::from_ratio(1, 100));
     let raw_factor = sim_arith::transcendental::sqrt(safe_mult);
     let max_factor = Real::from_ratio(15, 10);
@@ -182,7 +177,7 @@ pub fn tech_augmented_migration_threshold(
 /// [`crate::Civ::configure_substrate`] once the planet is known.
 #[must_use]
 pub fn attempt_period_for_cognition(cognition: Real) -> u64 {
-    let cog = cognition.max(Real::ZERO).min(Real::ONE);
+    let cog = cognition.clamp01();
     let factor = Real::from_ratio(15, 10) - cog;
     let period_real = Real::from_int(20) * factor;
     let raw: i64 = period_real.raw().to_num();

@@ -14,8 +14,7 @@ use crate::nomads;
 use crate::RunConfig;
 use protocol::{
     CivTerritoryChanged, CosmologyShifted, Event, Phase, RecognitionFiring, RefinementConfirmed,
-    ReligionShifted,
-    RefinementProposed, RefinementRejected, TechUnlocked, TickEvent,
+    RefinementProposed, RefinementRejected, ReligionShifted, TechUnlocked, TickEvent,
 };
 use sim_arith::Real;
 use sim_civ::{cosmology, discovery::HypothesisEvent, tech, Civ};
@@ -195,7 +194,7 @@ pub(crate) fn cohort_and_figure_phase<E: Emitter>(
         // template, cell) — no RNG threading, bit-exact.
         // Accumulator stride matters: `taboo_strength` near 1
         // skips most firings; near 0 credits all of them.
-        let taboo_strength = civ.cosmology.mystical.max(Real::ZERO).min(Real::ONE);
+        let taboo_strength = civ.cosmology.mystical.clamp01();
         for f in &p {
             let hash = tick ^ u64::from(civ.id) ^ u64::from(f.template_id) ^ u64::from(f.cell);
             let bucket = hash % 100;
@@ -714,9 +713,7 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
             .figures
             .iter()
             .filter(|f| f.retired_tick.is_none())
-            .map(|f| {
-                u32::try_from(f.hypothesizer.confirmed_measurements.len()).unwrap_or(u32::MAX)
-            })
+            .map(|f| u32::try_from(f.hypothesizer.confirmed_measurements.len()).unwrap_or(u32::MAX))
             .fold(0u32, u32::saturating_add);
         let civ_confirmed_count: u32 = u32::try_from(civ_confirmed.len())
             .unwrap_or(u32::MAX)
@@ -902,8 +899,8 @@ pub(crate) fn population_phase<E: Emitter>(
     let _ = species; // BFS path took `species.habitat`; the
                      // overflow path reads `cell_capacity` directly,
                      // which already gates on terrain habitability.
-    // Compute each civ's "claimed by others" set once before the
-    // mutable loop so expansion never trespasses on another civ.
+                     // Compute each civ's "claimed by others" set once before the
+                     // mutable loop so expansion never trespasses on another civ.
     let claimed_by_civ: BTreeMap<u32, BTreeSet<u32>> = civs
         .iter()
         .filter(|c| c.is_active())
@@ -929,8 +926,7 @@ pub(crate) fn population_phase<E: Emitter>(
         // drift — the viewport's pop-digit scale keeps reading
         // against the at-founding cap until the civ next expands
         // or contracts, which can be many decades on dense seeds.
-        let stale = tick.saturating_sub(civ.last_territory_emit_tick)
-            >= TERRITORY_REFRESH_TICKS;
+        let stale = tick.saturating_sub(civ.last_territory_emit_tick) >= TERRITORY_REFRESH_TICKS;
         if !cells_changed && !stale {
             continue;
         }
@@ -1100,10 +1096,10 @@ pub(crate) fn culture_flip_phase<E: Emitter>(
     if !tick.is_multiple_of(CULTURE_FLIP_CHECK_TICKS) {
         return Ok(());
     }
-    let owner_ceil = Real::from_ratio(OWNER_COHESION_CEIL.0, OWNER_COHESION_CEIL.1);
-    let nbr_floor = Real::from_ratio(NEIGHBOUR_COHESION_FLOOR.0, NEIGHBOUR_COHESION_FLOOR.1);
-    let cosmology_ceil = Real::from_ratio(COSMOLOGY_DISTANCE_CEIL.0, COSMOLOGY_DISTANCE_CEIL.1);
-    let flip_threshold = Real::from_ratio(FLIP_THRESHOLD.0, FLIP_THRESHOLD.1);
+    let owner_ceil = Real::from(OWNER_COHESION_CEIL);
+    let nbr_floor = Real::from(NEIGHBOUR_COHESION_FLOOR);
+    let cosmology_ceil = Real::from(COSMOLOGY_DISTANCE_CEIL);
+    let flip_threshold = Real::from(FLIP_THRESHOLD);
     // Build a cell → owning civ_id map for O(1) neighbour
     // lookup. Only active civs participate; collapsed husks
     // can't pull or be pulled from.

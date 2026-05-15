@@ -286,9 +286,8 @@ impl Civ {
 
     /// Life expectancy at birth, in years.
     pub fn life_expectancy_years(&self) -> Real {
-        let baseline_months_per_year = Real::from_int(
-            i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12),
-        );
+        let baseline_months_per_year =
+            Real::from_int(i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12));
         self.life_expectancy_months() / baseline_months_per_year
     }
 

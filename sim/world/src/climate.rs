@@ -67,9 +67,7 @@ pub fn seasonal_temperature_offset(
     // Latitude band ∈ [0, 1]: 0 at the equator, 1 at the pole.
     let latitude = Real::from_int(pole_dist_abs) / Real::from_int(half_height);
     // Tilt scaling ∈ [0, 1] — derived from planet sample.
-    let tilt = (planet.axial_tilt_deg / Real::from_int(45))
-        .max(Real::ZERO)
-        .min(Real::ONE);
+    let tilt = (planet.axial_tilt_deg / Real::from_int(45)).clamp01();
     // Triangular phase ∈ [-1, +1]: month 0 → -1, mid-year →
     // +1. Period is the planet's orbital period in months
     // (sampled per planet, range 8..=16) — seasons align with the

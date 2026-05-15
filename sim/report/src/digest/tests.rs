@@ -1,7 +1,7 @@
 use super::*;
 use protocol::{
-    CivCollapsed, CivFounded, CivSurplusChanged, Event, FigureBorn, RelationConfirmed,
-    RunHeader, TradeRouteClosed, TradeRouteEstablished, SCHEMA_VERSION,
+    CivCollapsed, CivFounded, CivSurplusChanged, Event, FigureBorn, RelationConfirmed, RunHeader,
+    TradeRouteClosed, TradeRouteEstablished, SCHEMA_VERSION,
 };
 
 fn run_start() -> Event {
@@ -157,6 +157,9 @@ fn aggregates_surplus_history_and_trade_routes() {
     assert_eq!(first.close_reason.as_deref(), Some("war_declared"));
     let second = &d.trade_routes[1];
     assert_eq!(second.start_tick, 500);
-    assert!(second.end_tick.is_none(), "second route is still open at run end");
+    assert!(
+        second.end_tick.is_none(),
+        "second route is still open at run end"
+    );
     assert!(second.close_reason.is_none());
 }

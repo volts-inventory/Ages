@@ -57,7 +57,7 @@ pub fn suppress_confidence_for(form: Form, cosmology: &Cosmology) -> Real {
     let dist = form_distance(form, cosmology);
     let dog = cosmology.dogmatism();
     let raw = Real::ONE - dog * dist;
-    raw.max(Real::ZERO).min(Real::ONE)
+    raw.clamp01()
 }
 
 /// Backwards-compatible signature (no cosmology in scope).

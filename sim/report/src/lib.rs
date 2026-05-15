@@ -46,7 +46,10 @@ mod render;
 pub mod viewport;
 
 pub use digest::{CivChapter, Digest};
-pub use frame::{render_density_frame, render_world_frame, CivClaim, WorldFrame};
+pub use frame::{
+    render_density_frame, render_world_frame, render_world_frame_styled, CivClaim, FrameStyle,
+    WorldFrame,
+};
 pub use html::html;
 pub use parse::{events_from_reader, ParseError};
 pub use render::markdown;

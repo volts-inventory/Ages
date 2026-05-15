@@ -3,8 +3,7 @@
 
 use crate::sampling::{
     compute_t0_loss, derive_habitat, derive_initial_cosmology, derive_population_biology,
-    sample_manipulation, sample_modalities, sample_unit, species_name_from_seed,
-    template_channels,
+    sample_manipulation, sample_modalities, sample_unit, species_name_from_seed, template_channels,
 };
 use crate::species::Species;
 use crate::types::{CognitionTopology, ModalityKind, DYNAMIC_TOOL_ID_START};

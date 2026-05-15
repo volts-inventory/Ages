@@ -828,7 +828,7 @@ pub fn derive_population_biology(
     //    even where the body plan would otherwise suggest r)
     let lifespan_term = {
         let scaled = lifespan_years / Real::from_int(100);
-        let bounded = scaled.max(Real::ZERO).min(Real::ONE);
+        let bounded = scaled.clamp01();
         Real::ONE - bounded
     };
     let manip_r_lean = manipulation_r_lean(manipulation_modes);
@@ -841,12 +841,11 @@ pub fn derive_population_biology(
         + lifespan_term * Real::from_ratio(1, 3)
         + manip_r_lean * Real::from_ratio(1, 3)
         + habitat_r_shift;
-    let r_axis = r_axis_raw.max(Real::ZERO).min(Real::ONE);
+    let r_axis = r_axis_raw.clamp01();
     // Clutch size: 1 + r_axis * 499 (range [1, 500]). Quadratic
     // ramp so the middle of the r/K axis stays modest (clutch ~62 at
     // r_axis=0.5) and the high end can hit broadcast-spawner scale.
-    let clutch_size =
-        Real::ONE + r_axis * r_axis * Real::from_int(499);
+    let clutch_size = Real::ONE + r_axis * r_axis * Real::from_int(499);
     // Infant fraction in [0.01, 0.10]; K-strategists have slightly
     // longer infancy (more parental care, slower growth).
     let infant_fraction =
@@ -857,16 +856,14 @@ pub fn derive_population_biology(
         CognitionTopology::Centralized => Real::from_ratio(5, 100),
         CognitionTopology::Distributed => Real::ZERO,
     };
-    let maturity_base =
-        Real::from_ratio(4, 100) + (Real::ONE - r_axis) * Real::from_ratio(31, 100);
+    let maturity_base = Real::from_ratio(4, 100) + (Real::ONE - r_axis) * Real::from_ratio(31, 100);
     let maturity_fraction = (maturity_base + centralized_bonus).min(Real::from_ratio(40, 100));
     // Eldership fraction in [0, 0.30]; only social + smart species
     // evolve a meaningful post-reproductive period. Pure r-strategists
     // have zero elders.
     let elder_drive = sociality * cognition;
-    let eldership_fraction =
-        (elder_drive * Real::from_ratio(30, 100) * (Real::ONE - r_axis))
-            .min(Real::from_ratio(30, 100));
+    let eldership_fraction = (elder_drive * Real::from_ratio(30, 100) * (Real::ONE - r_axis))
+        .min(Real::from_ratio(30, 100));
     // Clamp so fertile_fraction >= 0.30. If the sum encroaches,
     // shave maturity_fraction first (the most variable term).
     let fertile_min = Real::from_ratio(30, 100);
@@ -875,7 +872,8 @@ pub fn derive_population_biology(
     let (maturity_fraction, eldership_fraction) = if total_non_fertile > allowed_non_fertile {
         let overflow = total_non_fertile - allowed_non_fertile;
         let new_maturity = (maturity_fraction - overflow).max(Real::from_ratio(4, 100));
-        let still_over = (infant_fraction + new_maturity + eldership_fraction) - allowed_non_fertile;
+        let still_over =
+            (infant_fraction + new_maturity + eldership_fraction) - allowed_non_fertile;
         let new_eldership = if still_over > Real::ZERO {
             (eldership_fraction - still_over).max(Real::ZERO)
         } else {

@@ -62,7 +62,7 @@ impl Religion {
             return Real::ZERO;
         }
         let raw = self.magnitude() / denom;
-        raw.max(Real::ZERO).min(Real::ONE)
+        raw.clamp01()
     }
 
     /// L2 distance to another religion vector.

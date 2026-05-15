@@ -641,7 +641,7 @@ pub(crate) fn absorb_into_civ(
     biology: &sim_species::PopulationBiology,
     loss_fraction: Real,
 ) -> Real {
-    let retained = Real::ONE - loss_fraction.max(Real::ZERO).min(Real::ONE);
+    let retained = Real::ONE - loss_fraction.clamp01();
     let mut total = Real::ZERO;
     // Deposit the absorbed nomadic pop into the per-cell
     // `region_cohorts` for the gained cell, distributed across
@@ -667,7 +667,8 @@ pub(crate) fn absorb_into_civ(
         }
     }
     if total > Real::ZERO {
-        civ.cohort.deposit_distributed(sim_arith::Pop::from_real(total), biology);
+        civ.cohort
+            .deposit_distributed(sim_arith::Pop::from_real(total), biology);
     }
     total
 }
@@ -736,14 +737,10 @@ fn cell_cap_bonus(cell_observations: Option<&BTreeMap<u32, u64>>) -> Real {
     if obs.get(&GROWTH_FIRE_TEMPLATE_ID).copied().unwrap_or(0) >= GROWTH_FIRE_THRESHOLD {
         bonus = bonus + Real::from_ratio(10, 100);
     }
-    if obs.get(&GROWTH_FERTILE_TEMPLATE_ID).copied().unwrap_or(0)
-        >= GROWTH_FERTILE_THRESHOLD
-    {
+    if obs.get(&GROWTH_FERTILE_TEMPLATE_ID).copied().unwrap_or(0) >= GROWTH_FERTILE_THRESHOLD {
         bonus = bonus + Real::from_ratio(25, 100);
     }
-    if obs.get(&GROWTH_SOLVENT_TEMPLATE_ID).copied().unwrap_or(0)
-        >= GROWTH_SOLVENT_THRESHOLD
-    {
+    if obs.get(&GROWTH_SOLVENT_TEMPLATE_ID).copied().unwrap_or(0) >= GROWTH_SOLVENT_THRESHOLD {
         bonus = bonus + Real::from_ratio(10, 100);
     }
     bonus
@@ -762,14 +759,10 @@ fn cell_growth_bonus(cell_observations: Option<&BTreeMap<u32, u64>>) -> Real {
         return Real::ZERO;
     };
     let mut bonus = Real::ZERO;
-    if obs.get(&GROWTH_THERMAL_TEMPLATE_ID).copied().unwrap_or(0)
-        >= GROWTH_THERMAL_THRESHOLD
-    {
+    if obs.get(&GROWTH_THERMAL_TEMPLATE_ID).copied().unwrap_or(0) >= GROWTH_THERMAL_THRESHOLD {
         bonus = bonus + Real::from_ratio(10, 100);
     }
-    if obs.get(&GROWTH_SEASONAL_TEMPLATE_ID).copied().unwrap_or(0)
-        >= GROWTH_SEASONAL_THRESHOLD
-    {
+    if obs.get(&GROWTH_SEASONAL_TEMPLATE_ID).copied().unwrap_or(0) >= GROWTH_SEASONAL_THRESHOLD {
         bonus = bonus + Real::from_ratio(10, 100);
     }
     bonus
@@ -996,8 +989,7 @@ pub(crate) fn scan_for_emergence(
             .filter(|nbr| {
                 let nbr_id = nbr.0;
                 let nbr_pop = pops.get(&nbr_id).copied().unwrap_or(Real::ZERO);
-                let nbr_threshold =
-                    cluster_threshold(state, planet, species_habitat, nbr_id);
+                let nbr_threshold = cluster_threshold(state, planet, species_habitat, nbr_id);
                 nbr_pop >= nbr_threshold
             })
             .count();
@@ -1154,7 +1146,7 @@ mod tests {
         // Path 1: founder absorb (15% loss). 1000 in → 850 out.
         let mut pops: BTreeMap<u32, Real> = BTreeMap::new();
         pops.insert(0, Real::from_int(1000));
-        let founder_loss = Real::from_ratio(FOUNDING_ABSORB_LOSS.0, FOUNDING_ABSORB_LOSS.1);
+        let founder_loss = Real::from(FOUNDING_ABSORB_LOSS);
         let absorbed = absorb_into_civ(&mut pops, &mut civ, [0u32], &biology, founder_loss);
         let expected = Real::from_int(850);
         let drift = if absorbed > expected {
@@ -1328,9 +1320,7 @@ mod tests {
             if !is_habitat_match(&state, &planet, *cell, Habitat::Aquatic)
                 && *pop > Real::from_ratio(1, 10)
             {
-                panic!(
-                    "tier-0 species leaked pop {pop:?} into wrong-biome cell {cell}"
-                );
+                panic!("tier-0 species leaked pop {pop:?} into wrong-biome cell {cell}");
             }
         }
     }
@@ -1403,10 +1393,7 @@ mod tests {
         let (cog, soc) = test_traits();
         let mut observations: BTreeMap<u32, BTreeMap<u32, u64>> = BTreeMap::new();
         let seed_cell = *pops.keys().next().unwrap();
-        observations
-            .entry(seed_cell)
-            .or_default()
-            .insert(0, 50);
+        observations.entry(seed_cell).or_default().insert(0, 50);
         let mut saw_water_pop = false;
         for _ in 0..200 {
             step_growth(
@@ -1576,9 +1563,8 @@ mod tests {
     /// at the historic flat-rate behaviour.
     #[test]
     fn lifespan_diffusion_scale_brackets() {
-        let baseline = lifespan_diffusion_scale(Real::from_int(
-            NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS,
-        ));
+        let baseline =
+            lifespan_diffusion_scale(Real::from_int(NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS));
         assert_eq!(baseline, Real::ONE, "baseline lifespan should map to 1.0×");
         let r_strategist = lifespan_diffusion_scale(Real::from_int(4));
         assert_eq!(

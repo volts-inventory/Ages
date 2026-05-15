@@ -35,8 +35,8 @@ const FOUNDING_TERRITORY_FLOOR: usize = 4;
 /// civs can't claim cells off the grid. Computed entirely from
 /// Q32.32 raw bits so the result is deterministic across platforms.
 pub(crate) fn target_cell_count(civ: &Civ, max: usize) -> usize {
-    let approx_cap = civ.carrying_capacity_per_unit * civ.tech_multiplier
-        * civ.tool_capacity_multiplier();
+    let approx_cap =
+        civ.carrying_capacity_per_unit * civ.tech_multiplier * civ.tool_capacity_multiplier();
     // Cap floor: integer floor of approx_cap, clamped to ≥ 1 so we
     // never divide by zero. A degenerate civ with zero capacity per
     // unit (no fuel, no tech) just falls back to the founding floor.
@@ -263,51 +263,6 @@ pub(crate) fn pick_habitable_cell(
         }
     }
     seed
-}
-
-/// Pick the *best* habitable cell on the planet for an
-/// inaugural founding. Walks every cell in canonical id order,
-/// computes habitability multiplier, picks the cell with the
-/// highest multiplier (smallest cell id wins ties). For an
-/// aquatic species the multiplier band gets remapped — water
-/// cells score by their water-friendliness (deep ocean = 1.0
-/// for aquatic, coast = 1.20 stays). Lets the founding civ
-/// choose Egypt-on-the-Nile rather than wherever cell 0 happens
-/// to be.
-///
-/// Falls back to `fallback` if no cell on the planet is
-/// claimable for this species (degenerate: gas giant + non-
-/// amphibious species). Same fallback semantics as
-/// `pick_habitable_cell` so callers don't need to handle
-/// "nowhere to live" panics.
-///
-/// Not currently called from `run` (the inaugural civ
-/// path was removed in favour of nomadic emergence) but kept in
-/// the module for potential v3 use cases.
-#[allow(dead_code)]
-pub(crate) fn pick_best_habitable_cell(
-    fallback: u32,
-    grid: &HexGrid,
-    state: &sim_physics::PhysicsState,
-    planet: &sim_world::Planet,
-    civ: &sim_civ::Civ,
-    species_habitat: sim_species::Habitat,
-) -> u32 {
-    let n = grid.n_cells();
-    let mut best: Option<(sim_arith::Real, u32)> = None;
-    for cell in 0..n {
-        let cell = u32::try_from(cell).unwrap_or(u32::MAX);
-        if !cell_claimable(cell, state, planet, civ, species_habitat) {
-            continue;
-        }
-        let glyph = sim_world::terrain_glyph_at(state, planet, cell);
-        let score = score_for_habitat(glyph, species_habitat);
-        match best {
-            Some((s, _)) if s >= score => {}
-            _ => best = Some((score, cell)),
-        }
-    }
-    best.map_or(fallback, |(_, c)| c)
 }
 
 /// Per-habitat habitability score for cell selection. For

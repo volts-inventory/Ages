@@ -12,9 +12,9 @@ use crate::discovery::ConfirmedRelation;
 use crate::figures::NameGrammar;
 use crate::Civ;
 use sim_arith::transcendental::exp;
-use sim_arith::Real;
 #[cfg(test)]
 use sim_arith::Pop;
+use sim_arith::Real;
 use std::collections::BTreeMap;
 
 /// Placeholders under tuning. Threshold tuned
@@ -86,7 +86,7 @@ pub fn age_decay(age_ticks: u64, decay_ticks: u64) -> Real {
 pub fn comprehension(linguistic_dist: Real, age_ticks: u64, decay_ticks: u64) -> Real {
     let ling = (Real::ONE - linguistic_dist).max(Real::ZERO);
     let age = age_decay(age_ticks, decay_ticks);
-    let tier = Real::from_ratio(TIER_FACTOR.0, TIER_FACTOR.1);
+    let tier = Real::from(TIER_FACTOR);
     // Cultural-distance term defaults to 0 in v1 (factor = 1).
     let cult = Real::ONE;
     ling * age * tier * cult
@@ -165,7 +165,7 @@ pub fn diffuse_between(
         return Vec::new();
     }
     let drift = linguistic_distance(&source.grammar, &dest.grammar);
-    let threshold = Real::from_ratio(TRANSMIT_THRESHOLD.0, TRANSMIT_THRESHOLD.1);
+    let threshold = Real::from(TRANSMIT_THRESHOLD);
 
     let mut best: BTreeMap<u32, ConfirmedRelation> = BTreeMap::new();
     for fig in &source.figures {
@@ -206,7 +206,7 @@ pub fn diffuse_between(
         // tier factor; no age decay (live contact). fidelity
         // multiplier folds in.
         let ling = (Real::ONE - drift).max(Real::ZERO);
-        let tier = Real::from_ratio(TIER_FACTOR.0, TIER_FACTOR.1);
+        let tier = Real::from(TIER_FACTOR);
         let score = (ling * tier * fidelity).min(Real::ONE);
         if score <= threshold {
             continue;
@@ -248,7 +248,7 @@ pub fn transmit_from_parent(
         return (Vec::new(), Vec::new());
     }
     let dist = linguistic_distance(&parent.grammar, &successor.grammar);
-    let threshold = Real::from_ratio(TRANSMIT_THRESHOLD.0, TRANSMIT_THRESHOLD.1);
+    let threshold = Real::from(TRANSMIT_THRESHOLD);
 
     // communicativeness boost: the parent civ's most-communicative
     // figure scales the comprehension score on every transmitted
@@ -296,8 +296,8 @@ pub fn transmit_from_parent(
 
     let mut records = Vec::new();
     let mut myths = Vec::new();
-    let myth_floor = Real::from_ratio(MYTH_FLOOR.0, MYTH_FLOOR.1);
-    let myth_push_base = Real::from_ratio(MYTH_PUSH_BASE.0, MYTH_PUSH_BASE.1);
+    let myth_floor = Real::from(MYTH_FLOOR);
+    let myth_push_base = Real::from(MYTH_PUSH_BASE);
     let target_idx = 0; // First figure receives all inherited knowledge in v1.
     for (_rid, mut rel) in best {
         let parent_collapsed = parent.collapsed_tick.unwrap_or(transmitted_at_tick);

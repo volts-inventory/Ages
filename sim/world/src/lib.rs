@@ -46,7 +46,8 @@ pub use climate::{seasonal_capacity_factor, seasonal_temperature_offset};
 pub use composition::{AtmosphericComposition, CrustalComposition, Moon};
 pub use habitability::{
     cell_habitability, habitability_multiplier, is_claimable_multiplier, is_land_glyph,
-    is_water_glyph, terrain_glyph_at, CLAIM_HABITABILITY_THRESHOLD_DEN, CLAIM_HABITABILITY_THRESHOLD_NUM,
+    is_water_glyph, terrain_glyph_at, CLAIM_HABITABILITY_THRESHOLD_DEN,
+    CLAIM_HABITABILITY_THRESHOLD_NUM,
 };
 pub use init::{discharge_threshold_for, init_planet};
 pub use planet::Planet;

@@ -66,20 +66,17 @@ campaigns, ~1000 lines of report.
 
 ## Last change
 
-Pacing retune — substrate-derived biological time + spatial
-densification. Added `MetabolicSubstrate::metabolism()` (Aqueous
-1.0 / Ammoniacal 0.5 / Hydrocarbon 0.4 / Silicate 0.2) threaded
-through birth rate, civ-claim cadence, hypothesis cadence,
-emergence-check cadence, cohesion drift, civil-war / cultural-lock
-/ food-crisis / knowledge-plateau / breakaway / dark-age streaks,
-and the disease catastrophe cooldown (physics catastrophes left
-unscaled). Raised base `carrying_capacity_per_unit` from 500 to
-2500 (5× spatial densification) and lowered
-`migration_pressure_threshold` to the 0.55–0.75 band so claim
-activity continues. Auto-scaled the live viewport's
-`--frame-every-ticks` default for long runs (~1200 frames target,
-floor 50). Conservative initial spread per substrate; iterate
-values from seed-495-equivalent observation.
+Workspace audit pass — concrete duplication removal, no
+behavioural change. Added `Real::clamp01()` and
+`Pop::to_real_nonneg()` to `sim/arith` and rewrote 26 + 5 verbose
+call sites across `sim/civ`, `sim/core`, `sim/population`,
+`sim/species`. Collapsed eight `render_world_frame_*` wrappers in
+`sim/report/src/frame.rs` into a single `render_world_frame_styled`
+with a `FrameStyle` struct; the live viewport's 47-line
+density × color × compact dispatch in `viewport/emitter.rs` is now
+a single call. Deleted dead `pick_best_habitable_cell` plus its
+stale `#[allow(unused_imports)]` shim in `sim/core`. Tightened
+`sim/core/src/contact.rs` helpers to private (no external callers).
 
 ## How to use this file
 

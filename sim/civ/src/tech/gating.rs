@@ -343,11 +343,10 @@ pub fn serendipity_roll(
     // unlocks per civ — rare but tangible.
     let base_per_million: i64 = 10;
     // Literacy multiplier: 0.5× at literacy 0, 1× at 0.5, 2× at 1.0.
-    let lit_x100 = (civ_literacy.max(Real::ZERO).min(Real::ONE) * Real::from_int(150)
-        + Real::from_int(50))
-    .raw()
-    .to_num::<i64>()
-    .max(50);
+    let lit_x100 = (civ_literacy.clamp01() * Real::from_int(150) + Real::from_int(50))
+        .raw()
+        .to_num::<i64>()
+        .max(50);
     // Science multiplier: 1× per 100 confirmed relations, capped
     // at 5×. A mature canon cross-pollinates more.
     let sci_x100 = ((i64::from(total_confirmed_relations) / 100) + 1).min(5) * 100;

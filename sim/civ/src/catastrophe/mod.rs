@@ -112,7 +112,7 @@ pub fn check_and_apply(
             // fraction. Aggregate cohort updates in sync.
             // PermanentMasonry / DefensiveFortification
             // soften the blow via apply_catastrophe_resistance.
-            let raw_frac = Real::from_ratio(VOLCANIC_POP_LOSS.0, VOLCANIC_POP_LOSS.1);
+            let raw_frac = Real::from(VOLCANIC_POP_LOSS);
             let frac = civ.apply_catastrophe_resistance(raw_frac);
             let cell_u32 = u32::try_from(cell).unwrap_or(u32::MAX);
             let lost_in_region = civ.drop_cell_pop(cell_u32, frac);
@@ -143,10 +143,8 @@ pub fn check_and_apply(
     // driven kinds (volcanic / asteroid / solar / ice age) keep raw
     // cooldowns: those are external to biology.
     let metabolism = planet.metabolic_substrate.metabolism();
-    let disease_cooldown = crate::demographics::streak_ticks_for_metabolism(
-        DISEASE_COOLDOWN_TICKS,
-        metabolism,
-    );
+    let disease_cooldown =
+        crate::demographics::streak_ticks_for_metabolism(DISEASE_COOLDOWN_TICKS, metabolism);
     let disease_ready = civ
         .last_disease_tick
         .is_none_or(|t| tick.saturating_sub(t) >= disease_cooldown);
@@ -156,7 +154,7 @@ pub fn check_and_apply(
         // GeneticManipulation reduce the realised loss via
         // apply_catastrophe_resistance — the headline catastrophe-
         // resistance effect for healthcare-bearing civs.
-        let base_frac = Real::from_ratio(DISEASE_POP_LOSS.0, DISEASE_POP_LOSS.1);
+        let base_frac = Real::from(DISEASE_POP_LOSS);
         let severity_frac = base_frac * disease_severity_factor(planet.biosphere);
         let frac = civ.apply_catastrophe_resistance(severity_frac);
         let center_frac = frac * Real::from_int(2);
@@ -211,7 +209,7 @@ pub fn check_and_apply(
         // pop drop so a brand-new civ still feels the global
         // aftermath. : catastrophe-resistance tools soften
         // the absolute loss (built shelter survives debris).
-        let raw_frac = Real::from_ratio(ASTEROID_POP_LOSS.0, ASTEROID_POP_LOSS.1);
+        let raw_frac = Real::from(ASTEROID_POP_LOSS);
         let frac = civ.apply_catastrophe_resistance(raw_frac);
         let center_frac = frac * Real::from_int(2);
         let neighbor_frac = frac / Real::from_int(2);
@@ -261,7 +259,7 @@ pub fn check_and_apply(
         // catastrophe resistance softens the flare's hit
         // (advanced shielding / underground habitats / radiation
         // medicine).
-        let raw_frac = Real::from_ratio(SOLAR_FLARE_POP_LOSS.0, SOLAR_FLARE_POP_LOSS.1);
+        let raw_frac = Real::from(SOLAR_FLARE_POP_LOSS);
         let frac = civ.apply_catastrophe_resistance(raw_frac);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
@@ -294,7 +292,7 @@ pub fn check_and_apply(
         // severity scales with planet's mean temperature —
         // colder planets suffer worse ice ages. : catastrophe
         // resistance + cryogenic-engineering tools soften the loss.
-        let base_frac = Real::from_ratio(ICE_AGE_POP_LOSS.0, ICE_AGE_POP_LOSS.1);
+        let base_frac = Real::from(ICE_AGE_POP_LOSS);
         let severity_frac = (base_frac * ice_age_severity_factor(planet.mean_temperature))
             .min(Real::from_ratio(60, 100));
         let frac = civ.apply_catastrophe_resistance(severity_frac);

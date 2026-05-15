@@ -182,4 +182,3 @@ pub(super) fn write_centered_line<W: Write>(out: &mut W, line: &str) -> std::io:
     out.write_all(b"\n")?;
     Ok(())
 }
-
