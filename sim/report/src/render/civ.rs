@@ -272,6 +272,39 @@ pub(super) fn render_civ_chapter(s: &mut String, civ: &CivChapter, d: &Digest) {
             );
         }
     }
+    // M8 — economic arc: founded with N, peaked at P (year Y),
+    // ending at C. Skipped when no surplus snapshots accumulated
+    // (civ never reached the 50-pop emit floor on its surplus).
+    if !civ.surplus_history.is_empty() {
+        let first = &civ.surplus_history[0];
+        let last = civ.surplus_history.last().unwrap();
+        let peak = civ
+            .surplus_history
+            .iter()
+            .max_by_key(|h| h.surplus_q32)
+            .unwrap();
+        let founding = pop_q32_to_f64(i128::from(first.surplus_q32));
+        let peak_v = pop_q32_to_f64(i128::from(peak.surplus_q32));
+        let current = pop_q32_to_f64(i128::from(last.surplus_q32));
+        let peak_year = tick_to_year(peak.tick, period);
+        if peak_v <= 0.0 && current <= 0.0 {
+            // No meaningful surplus accumulated.
+        } else if (peak_v - current).abs() < 1.0 && (peak_v - founding).abs() < 1.0 {
+            let _ = writeln!(
+                s,
+                "Economy: held a surplus of {} pop-equivalents.",
+                fmt_pop(peak_v)
+            );
+        } else {
+            let _ = writeln!(
+                s,
+                "Economy: surplus peaked at {} pop-equivalents in year {}, currently {}.",
+                fmt_pop(peak_v),
+                peak_year,
+                fmt_pop(current)
+            );
+        }
+    }
     let _ = writeln!(s);
 
     // Territory size sparkline if there's enough history. Each

@@ -115,6 +115,7 @@ pub fn markdown(d: &Digest) -> String {
     render_transmissions(&mut s, d);
     render_contacts_and_conflicts(&mut s, d);
     render_diffusions(&mut s, d);
+    render_trade_routes(&mut s, d);
     render_population_timeline(&mut s, d);
     render_migration_patterns(&mut s, d);
     render_world_keyframes(&mut s, d);
@@ -263,6 +264,7 @@ fn render_summary(s: &mut String, d: &Digest) {
         d.diffusions.len()
     );
     let _ = writeln!(s, "- **Inter-civ contacts:** {}", d.contacts.len());
+    let _ = writeln!(s, "- **Trade routes opened:** {}", d.trade_routes.len());
     let _ = writeln!(s, "- **Conflicts resolved:** {}", d.conflicts.len());
     let _ = writeln!(
         s,
@@ -330,6 +332,69 @@ fn render_diffusions(s: &mut String, d: &Digest) {
             d.diffusions.len(),
             if d.diffusions.len() == 1 { "" } else { "s" },
             summary
+        );
+    }
+    let _ = writeln!(s);
+}
+
+/// M8 — trade-route lifecycle table. One row per opened route;
+/// closed routes show their end year + reason, still-open routes
+/// read as `(open at year X, ongoing)`.
+fn render_trade_routes(s: &mut String, d: &Digest) {
+    let period = digest_period(d);
+    let _ = writeln!(s, "## Trade routes");
+    let _ = writeln!(s);
+    if d.trade_routes.is_empty() {
+        let _ = writeln!(s, "_No civs opened a trade route this run._");
+        let _ = writeln!(s);
+        return;
+    }
+    let total = d.trade_routes.len();
+    let open_now = d.trade_routes.iter().filter(|r| r.end_tick.is_none()).count();
+    let closed_by_war = d
+        .trade_routes
+        .iter()
+        .filter(|r| r.close_reason.as_deref() == Some("war_declared"))
+        .count();
+    let closed_by_collapse = d
+        .trade_routes
+        .iter()
+        .filter(|r| r.close_reason.as_deref() == Some("civ_collapsed"))
+        .count();
+    let _ = writeln!(
+        s,
+        "{} trade route{} opened across the run — {} still open at sim-end; \
+         {} closed by war, {} by civ collapse.",
+        total,
+        if total == 1 { "" } else { "s" },
+        open_now,
+        closed_by_war,
+        closed_by_collapse,
+    );
+    let _ = writeln!(s);
+    let _ = writeln!(s, "| Opened | Closed | Pair | Outcome |");
+    let _ = writeln!(s, "|---|---|---|---|");
+    for r in d.trade_routes.iter().take(30) {
+        let opened = format!("year {}", tick_to_year(r.start_tick, period));
+        let (closed, outcome) = match (r.end_tick, r.close_reason.as_deref()) {
+            (Some(t), Some(reason)) => (
+                format!("year {}", tick_to_year(t, period)),
+                reason.replace('_', " "),
+            ),
+            (Some(t), None) => (format!("year {}", tick_to_year(t, period)), "closed".to_string()),
+            (None, _) => ("—".to_string(), "ongoing".to_string()),
+        };
+        let _ = writeln!(
+            s,
+            "| {} | {} | civ {} ↔ civ {} | {} |",
+            opened, closed, r.civ_a, r.civ_b, outcome
+        );
+    }
+    if d.trade_routes.len() > 30 {
+        let _ = writeln!(
+            s,
+            "_(showing 30 of {} — see event log for the rest)_",
+            d.trade_routes.len()
         );
     }
     let _ = writeln!(s);

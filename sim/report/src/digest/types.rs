@@ -25,6 +25,11 @@ pub struct Digest {
     /// `PeaceConcluded`; `conflicts` between the two ticks for the
     /// same pair are the per-skirmish records inside the war.
     pub wars: Vec<WarRecord>,
+    /// M8 — trade routes opened during the run. Each record
+    /// brackets a `TradeRouteEstablished` and (when present)
+    /// the matching `TradeRouteClosed` event. Routes still open
+    /// at run end have `end_tick = None`.
+    pub trade_routes: Vec<TradeRouteRecord>,
     /// Cross-civ knowledge diffusion between concurrent peaceful civs.
     pub diffusions: Vec<TransferRecord>,
     /// Inter-civ knowledge transmission across a collapse boundary.
@@ -172,6 +177,34 @@ pub struct CivChapter {
     /// `MedicalIntervention`" so the demographic transition has a
     /// visible per-civ timeline.
     pub life_expectancy_history: Vec<LifeExpectancySnapshot>,
+    /// M8 — surplus accumulator snapshots, pinned from every
+    /// `CivSurplusChanged` event the civ emitted. First entry is
+    /// the first emission (`previous_q32` typically `0`); the
+    /// renderer surfaces the founded → peak → current arc.
+    pub surplus_history: Vec<SurplusSnapshot>,
+}
+
+/// One snapshot of a civ's economic surplus, pinned from a
+/// `CivSurplusChanged` event.
+#[derive(Debug, Clone)]
+pub struct SurplusSnapshot {
+    pub tick: u64,
+    pub surplus_q32: i64,
+    pub previous_q32: i64,
+}
+
+/// M8 — one trade route's lifecycle.
+/// `end_tick` + `close_reason` are `None` while the route is
+/// still active at run end. Pair is normalised so `civ_a < civ_b`.
+#[derive(Debug, Clone)]
+pub struct TradeRouteRecord {
+    pub start_tick: u64,
+    pub end_tick: Option<u64>,
+    pub civ_a: u32,
+    pub civ_b: u32,
+    /// `war_declared` / `civ_collapsed` / etc. from the
+    /// `TradeRouteClosed` payload, or `None` if still active.
+    pub close_reason: Option<String>,
 }
 
 /// Single life-expectancy snapshot pinned from a
