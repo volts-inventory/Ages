@@ -1,5 +1,7 @@
 use super::*;
-use protocol::{CivCollapsed, CivFounded, CivTerritoryChanged, Event, Phase, PlanetMap, TickEvent};
+use protocol::{
+    CivCollapsed, CivFounded, CivTerritoryChanged, Event, Phase, PlanetMap, TechUnlocked, TickEvent,
+};
 use sim_events::Emitter;
 
 fn pm() -> PlanetMap {
@@ -329,6 +331,89 @@ fn sidebar_pop_line_carries_trend_arrow() {
         s.contains("50p \u{2193}"),
         "third frame should carry ↓ (pop dropped); got:\n{s}"
     );
+}
+
+#[test]
+fn sidebar_surfaces_latest_unlocked_tool() {
+    // After a `TechUnlocked` event, the per-civ panel should
+    // render a `last: {tool_name}` line beneath the identity
+    // line. Subsequent unlocks overwrite. Before the first
+    // unlock the line is suppressed.
+    let mut buf: Vec<u8> = Vec::new();
+    let mut em = ViewportEmitter::new(
+        &mut buf,
+        ViewportConfig {
+            frame_every: 1,
+            use_alt_screen: false,
+            use_color: false,
+            show_planet_card: true,
+            log_lines: 0,
+            compact: false,
+            temperature_unit: TempUnit::Fahrenheit,
+        },
+    );
+    em.emit(&Event::PlanetMap(pm())).unwrap();
+    em.emit(&Event::CivFounded(CivFounded {
+        tick: 0,
+        civ_id: 1,
+        parent_civ_id: None,
+        name: String::new(),
+        initial_population_q32: 1 << 32,
+        founding_figure_count: 1,
+        claimed_cells: vec![0],
+        cell_capacities_q32: vec![0],
+    }))
+    .unwrap();
+    // Pre-unlock frame: no `last:` line.
+    em.emit(&Event::Tick(TickEvent {
+        tick: 1,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::TechUnlocked(TechUnlocked {
+        tick: 2,
+        civ_id: 1,
+        tool_id: 7,
+        tool_name: "Knapping".to_string(),
+        tier: 1,
+        granted_channels: vec![],
+        newly_perceivable_template_ids: vec![],
+        serendipitous: false,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 2,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    em.emit(&Event::TechUnlocked(TechUnlocked {
+        tick: 3,
+        civ_id: 1,
+        tool_id: 12,
+        tool_name: "BulkCultivation".to_string(),
+        tier: 2,
+        granted_channels: vec![],
+        newly_perceivable_template_ids: vec![],
+        serendipitous: false,
+    }))
+    .unwrap();
+    em.emit(&Event::Tick(TickEvent {
+        tick: 3,
+        phase: Phase::TickEnd,
+    }))
+    .unwrap();
+    drop(em);
+    let s = String::from_utf8(buf).unwrap();
+    // Last unlock survives in the most recent frame, earlier
+    // tool is overwritten.
+    assert!(s.contains("last: BulkCultivation"));
+    // The earlier tool name appeared in the middle frame, so a
+    // substring check is too loose to assert "no longer renders".
+    // The strong invariant is that the *final* frame doesn't
+    // mention the earlier tool. Split on the frame divider and
+    // check the last segment.
+    let last_frame = s.rsplit("-- map --").next().unwrap_or("");
+    assert!(!last_frame.contains("Knapping"));
 }
 
 #[test]

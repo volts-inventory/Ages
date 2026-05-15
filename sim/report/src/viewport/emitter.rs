@@ -160,6 +160,13 @@ pub struct ViewportEmitter<W: Write> {
     /// the arrow stable under sub-tick noise. Cleared on
     /// `CivCollapsed`.
     civ_last_emitted_pop_q32: BTreeMap<u32, i128>,
+    /// Per-civ most-recent tool unlocked, from `TechUnlocked`.
+    /// Surfaces on the sidebar identity line as
+    /// `… · last: BulkCultivation` so a reader can scan which
+    /// civ just leveled up without diffing the tool count.
+    /// Stays until the next unlock overwrites it; cleared on
+    /// `CivCollapsed`.
+    civ_last_unlocked_tool: BTreeMap<u32, String>,
 }
 
 impl<W: Write> ViewportEmitter<W> {
@@ -195,6 +202,7 @@ impl<W: Write> ViewportEmitter<W> {
             civ_life_expectancy_months: BTreeMap::new(),
             relation_template_names: BTreeMap::new(),
             civ_last_emitted_pop_q32: BTreeMap::new(),
+            civ_last_unlocked_tool: BTreeMap::new(),
         }
     }
 
@@ -905,6 +913,7 @@ impl<W: Write> ViewportEmitter<W> {
                 self.civ_cohesion.remove(&c.civ_id);
                 self.civ_life_expectancy_months.remove(&c.civ_id);
                 self.civ_last_emitted_pop_q32.remove(&c.civ_id);
+                self.civ_last_unlocked_tool.remove(&c.civ_id);
                 // Drop any war pairs touching this civ so a
                 // re-emerged civ_id can re-trigger a fresh
                 // "conflict resolved" line. Pairs are stored as
@@ -943,6 +952,8 @@ impl<W: Write> ViewportEmitter<W> {
                     .entry(t.civ_id)
                     .or_default()
                     .insert(t.tool_name.clone());
+                self.civ_last_unlocked_tool
+                    .insert(t.civ_id, t.tool_name.clone());
             }
             Event::CohesionShifted(c) => {
                 use crate::q32::q32_to_f64;
@@ -1180,6 +1191,15 @@ impl<W: Write> ViewportEmitter<W> {
                 )
             };
             lines.push(identity);
+            // Most-recent unlock surfaces underneath the identity
+            // line when present. Skipped on civs that haven't
+            // unlocked anything yet so brand-new founders stay
+            // visually compact. The tool count above already says
+            // "0 tools" in that case, so the missing `last:` line
+            // is unambiguous.
+            if let Some(tool) = self.civ_last_unlocked_tool.get(civ_id) {
+                lines.push(format!("last: {tool}"));
+            }
             let founded_year = self.civ_founded_year.get(civ_id).copied().unwrap_or(0);
             // Per-civ population count alongside founding
             // year + cell count. Sum the per-cell Q32.32
