@@ -17,6 +17,78 @@ pub const CONFLICT_HIERARCHY_BONUS: (i64, i64) = (30, 100);
 /// considered conflict-prone (no peaceful diffusion).
 pub const PEACEFUL_HIERARCHY_FLOOR: (i64, i64) = (40, 100);
 
+/// M9 — composite "hierarchical strength" weights. The legacy
+/// war-bonus formula multiplied by `(1 + cosmology.hierarchical/2)`,
+/// so authority over combat was purely a worldview-axis read.
+/// `hierarchical_strength` widens that to a weighted sum across
+/// four channels so a civ's military advantage reflects its
+/// *actual* institutional reach, not just the abstract pole
+/// position of its cosmology:
+///
+/// - **cosmology** (40%): the original hierarchical axis. Still
+///   the dominant signal — formal hierarchy in worldview maps to
+///   formal hierarchy in war command.
+/// - **religion** (20%): magnitude of the `theology` + `ritual`
+///   axes on the religion vector. High-ritual, high-theology
+///   civs project authority through religious institutions —
+///   the priest-king + state-religion archetype.
+/// - **kinship / cohesion** (25%): the civ's internal cohesion
+///   scalar. A fragmented polity can't hierarchically project
+///   force, however hierarchical its worldview claims to be.
+/// - **economic** (15%): surplus / aggregate-pop ratio (saturating
+///   at 1.0). Stored economic reach lets the civ pay standing
+///   forces, requisition supply, and maintain command chains
+///   across multi-cell campaigns.
+///
+/// Weights sum to 1.0; output clamped to `[0, 1]`.
+pub const HIER_W_COSMOLOGY: (i64, i64) = (40, 100);
+pub const HIER_W_RELIGION: (i64, i64) = (20, 100);
+pub const HIER_W_KINSHIP: (i64, i64) = (25, 100);
+pub const HIER_W_ECONOMIC: (i64, i64) = (15, 100);
+
+/// Multi-component hierarchical strength scalar, replacing the
+/// legacy single-axis read of `civ.cosmology.hierarchical` in
+/// `strength()` + the casualty-bonus formula. See the
+/// `HIER_W_*` constants for per-channel weights + rationale.
+///
+/// Output in `[0, 1]`. Pure-cosmology civs (no religion drift,
+/// neutral cohesion, no surplus) recover roughly
+/// `0.4 × cosmology.hierarchical` so the legacy war-bonus signal
+/// stays preserved as a floor; institutional reach in religion +
+/// cohesion + economy adds on top.
+#[must_use]
+pub fn hierarchical_strength(civ: &Civ) -> Real {
+    let cosmology_h = civ.cosmology.hierarchical.max(Real::ZERO).min(Real::ONE);
+    // Religion: average magnitude of the theology + ritual axes.
+    // Each axis is in `[-1, 1]`; we read |v| so a high-magnitude
+    // religion (whatever its sign) projects authority. Sacred-time
+    // is intentionally excluded — it's a temporal-cycle axis,
+    // less tied to chain-of-command.
+    let religion_h = ((civ.religion.theology.abs() + civ.religion.ritual.abs())
+        / Real::from_int(2))
+    .max(Real::ZERO)
+    .min(Real::ONE);
+    // Kinship: read internal cohesion. Already in [0, 1].
+    let kinship_h = civ.cohesion.max(Real::ZERO).min(Real::ONE);
+    // Economic: surplus / aggregate_pop, saturating at 1.0. A
+    // civ with surplus ≥ its pop has the full economic-rank
+    // contribution.
+    let pop = civ.aggregate_population();
+    let pop_real = Real::from_int(pop.raw().to_num::<i64>().max(0));
+    let economic_h = if pop_real > Real::ZERO {
+        (civ.surplus / pop_real).max(Real::ZERO).min(Real::ONE)
+    } else {
+        Real::ZERO
+    };
+    let w_c = Real::from_ratio(HIER_W_COSMOLOGY.0, HIER_W_COSMOLOGY.1);
+    let w_r = Real::from_ratio(HIER_W_RELIGION.0, HIER_W_RELIGION.1);
+    let w_k = Real::from_ratio(HIER_W_KINSHIP.0, HIER_W_KINSHIP.1);
+    let w_e = Real::from_ratio(HIER_W_ECONOMIC.0, HIER_W_ECONOMIC.1);
+    (w_c * cosmology_h + w_r * religion_h + w_k * kinship_h + w_e * economic_h)
+        .max(Real::ZERO)
+        .min(Real::ONE)
+}
+
 /// Civ size factor for the hierarchy-driven casualty bonus.
 /// Returns `min(1.0, log10(cells) / 2)` — a 1-cell band has no
 /// hierarchical advantage (organisation costs you nothing when
@@ -39,7 +111,7 @@ pub fn hierarchy_size_factor(cells: usize) -> Real {
     factor.max(Real::ZERO).min(Real::ONE)
 }
 
-/// `strength = aggregate_pop × (1 + literacy) × (1 + Hierarchical/2) × tool_war_multiplier × surplus_modifier`.
+/// `strength = aggregate_pop × (1 + literacy) × (1 + hierarchical_strength/2) × tool_war_multiplier × surplus_modifier`.
 ///
 /// the per-tool war-strength contribution (`ContactWeapon`
 /// +0.10, `RangedMomentumWeapon` +0.10, `StoneWorking` +0.05,
@@ -53,10 +125,16 @@ pub fn hierarchy_size_factor(cells: usize) -> Real {
 /// (surplus = 0) gets the baseline 1.0. Combined with the
 /// existing strength terms so an empire with broken supply lines
 /// can still lose to a smaller civ with full granaries.
+///
+/// M9: `hierarchical_strength` is no longer a pure cosmology read.
+/// See `hierarchical_strength()` for the four-channel composite
+/// (cosmology 40% / religion 20% / kinship 25% / economic 15%).
+/// The legacy formula `(1 + cosmology.hierarchical / 2)` is
+/// recovered as a floor when the other channels are zeroed.
 pub fn strength(civ: &Civ, tick: u64) -> Pop {
     let pop = civ.aggregate_population();
     let literacy = civ.literacy_score(tick);
-    let hier = civ.cosmology.hierarchical;
+    let hier = hierarchical_strength(civ);
     let war_bonus = Real::ONE + hier / Real::from_int(2);
     let pop_real = Real::from_int(pop.raw().to_num::<i64>().max(0));
     let surplus_modifier =
@@ -125,10 +203,16 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
     } else {
         (b.id, a.id)
     };
+    // M9: casualty bonus reads the composite hierarchical_strength
+    // rather than the bare cosmology axis. A civ with religious
+    // hierarchy + economic surplus + tight cohesion projects
+    // command-and-control beyond what its cosmology axis alone
+    // would suggest, inflicting heavier per-cell casualties on
+    // the loser.
     let winner_hier = if winner_id == a.id {
-        a.cosmology.hierarchical
+        hierarchical_strength(a)
     } else {
-        b.cosmology.hierarchical
+        hierarchical_strength(b)
     };
     let min_loss = Real::from_ratio(CONFLICT_MIN_LOSS.0, CONFLICT_MIN_LOSS.1);
     let hier_bonus = Real::from_ratio(CONFLICT_HIERARCHY_BONUS.0, CONFLICT_HIERARCHY_BONUS.1);
@@ -630,6 +714,74 @@ mod tests {
         let r = resolve(&mut a, &mut b, 100).unwrap();
         assert_eq!(r.winner_id, 1);
         assert_eq!(r.loser_id, 2);
+    }
+
+    #[test]
+    fn hierarchical_strength_composes_four_channels() {
+        // Pure cosmology axis (default cohesion = 1.0, no
+        // religion, no surplus): formula reduces to
+        // 0.4 × cosmology + 0.25 × cohesion = 0.4 + 0.25 = 0.65
+        // for cosmology=1, cohesion=1.
+        let mut civ = civ_with_id(1, 100);
+        civ.cosmology = Cosmology::NEUTRAL;
+        civ.religion = crate::religion::Religion::NEUTRAL;
+        civ.cosmology.hierarchical = Real::ONE;
+        let h_pure = hierarchical_strength(&civ);
+        let expected = Real::from_ratio(65, 100);
+        let drift = if h_pure > expected {
+            h_pure - expected
+        } else {
+            expected - h_pure
+        };
+        assert!(
+            drift < Real::from_ratio(1, 100),
+            "pure-cosmology civ should land at ~0.65; got {h_pure:?}"
+        );
+
+        // Add religion: +0.20 × ((|theology| + |ritual|) / 2).
+        // Max both religion axes → +0.20.
+        civ.religion.theology = Real::ONE;
+        civ.religion.ritual = -Real::ONE;
+        let h_religion = hierarchical_strength(&civ);
+        assert!(
+            h_religion > h_pure,
+            "adding religion should lift hierarchy; got {h_religion:?} vs {h_pure:?}"
+        );
+
+        // Drop cohesion to zero (fragmented). The kinship rank
+        // (0.25 weight) vanishes; net should drop ~0.25 below the
+        // religion-heavy reading.
+        civ.cohesion = Real::ZERO;
+        let h_fragmented = hierarchical_strength(&civ);
+        assert!(
+            h_fragmented < h_religion,
+            "fragmented civ should drop the kinship contribution; got {h_fragmented:?}"
+        );
+
+        // Add economic rank: surplus ≥ pop → +0.15.
+        civ.surplus = Real::from_int(10_000); // far above pop=100
+        let h_full = hierarchical_strength(&civ);
+        assert!(
+            h_full > h_fragmented,
+            "economic rank should add on top; got {h_full:?}"
+        );
+
+        // Output is clamped to [0, 1].
+        assert!(h_full <= Real::ONE);
+    }
+
+    #[test]
+    fn hierarchical_strength_clamps_negative_cosmology() {
+        // Negative cosmology hierarchical (egalitarian pole)
+        // should clamp at zero — the formula doesn't go negative.
+        let mut civ = civ_with_id(1, 100);
+        civ.cosmology = Cosmology::NEUTRAL;
+        civ.religion = crate::religion::Religion::NEUTRAL;
+        civ.cosmology.hierarchical = -Real::ONE;
+        civ.cohesion = Real::ZERO;
+        let h = hierarchical_strength(&civ);
+        // cosmology clamped to 0, religion 0, kinship 0, economic 0.
+        assert_eq!(h, Real::ZERO);
     }
 
     #[test]
