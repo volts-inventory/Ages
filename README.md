@@ -91,6 +91,9 @@ CLI modes (`--cli`):
 - `highlights` — only major events (founding, collapse,
   catastrophe, tech unlocks, contact, war, run-end)
 - `viewport` — live ASCII map refreshed in alternate-screen mode
+- `viewport-density` — same map, but each claimed cell rendered
+  as a density block glyph (` ░ ▒ ▓ █`) sized by its pop
+  fill-percentage instead of the per-civ digit ladder
 
 The NDJSON file is written at full speed regardless of mode.
 Same `(seed, grid)` pair produces byte-for-byte identical NDJSON
@@ -119,18 +122,41 @@ regardless of `--cli` mode or tick rate.
 - **Multi-civ histories.** Civs found, expand, collapse, and
   seed successors within the same species across thousands of
   years. Cohesion drives civil wars; belligerence drives
-  inter-civ wars; religion-weighted kinship gates whether
-  contact turns hostile.
+  inter-civ wars; kinship gates whether contact turns hostile —
+  composed from religion, cosmology, lineage-generation
+  distance, and a lazy-decaying per-pair grudge so same-species
+  rivals can still fight bitterly.
+- **Economic dimension.** Each civ runs a surplus pool that
+  grows when its cells hit high utilization, drains under war
+  and catastrophe, and buffers against food crises. Peaceful
+  contacted civs open trade routes that smooth surplus across
+  the pair until a war declaration or civ collapse closes them.
+  Well-fed troops fight harder; supply-line failure can lose
+  wars even with a population advantage.
+- **Environmental feedback on species drift.** Catastrophes
+  bias the surviving cohort's trait distribution toward
+  survival-correlated dimensions — ice ages select for
+  cognition + sociality + lifespan, volcanism rewards planning,
+  plague selects for cooperative care — and successor civs
+  inherit the bias. Substrate × biosphere together set the
+  per-generation drift band, so silicate sparse worlds change
+  slowly and aqueous hyper-biodiverse worlds fast.
 - **Live viewport.** Themed ASCII boxes show the planet, the
-  species, scrolling events, and per-civ panels as the
-  simulation runs.
+  species, scrolling events, and per-civ panels — pop trend
+  arrow, latest tool unlock, war/peace status, cohesion,
+  religion axis — as the simulation runs.
 - **Post-run report.** A markdown biography covering the planet,
-  the species, every civ, spatial keyframes (who lived where,
-  how densely), war campaigns, discoveries, and a highlight
-  reel. A representative seed-42 / 5000-year run produces ~14
-  civs and ~1000 lines of report.
+  the species, every civ (with per-civ economy + life-expectancy
+  arcs), spatial keyframes (who lived where, how densely), war
+  campaigns, trade routes, discoveries, and a highlight reel.
+  A representative seed-42 / 5000-year run produces ~14 civs
+  and ~1000 lines of report.
 - **Prose narrator.** `narrate.py` reads the same NDJSON and
-  prints the run as a readable story.
+  prints the run as a readable story. Causal cross-references
+  link transmitted knowledge to the tech unlocks it enabled,
+  parent-civ collapses to successor foundings, and catastrophes
+  to the collapses they triggered ("the volcanic catastrophe
+  was the breaking blow").
 
 ## Output channels
 
