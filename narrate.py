@@ -323,9 +323,131 @@ def opening(meta: Metadata, planet, species, run_start, run_end):
     return "\n".join(out)
 
 
+# ── Causal cross-referencing ──
+#
+# These constants govern the post-processing pass that links
+# related events into one prose sentence so the narrator reads
+# as a chain of consequences rather than a flat chronology.
+# Windows are in *ticks* (= sim-months at the baseline
+# `MONTHS_PER_YEAR = 12`); a 5-sim-yr window is 60 ticks. The
+# planet's actual orbital_period_months may differ slightly per
+# seed (8–16 month range) but the windows are coarse enough that
+# the baseline approximation reads correctly across the band.
+
+# Knowledge → tech: a tech unlock following a recent inbound
+# transmission reads as "studied X from Y, then unlocked Z".
+TRANSMIT_TO_TECH_WINDOW_TICKS = 5 * MONTHS_PER_YEAR  # 60 ticks ≈ 5 sim-yr
+# Collapse → refound: a civ founded after the parent's collapse
+# reads as "after the fall of X, Y rose from the same lands".
+COLLAPSE_TO_REFOUND_WINDOW_TICKS = 100 * MONTHS_PER_YEAR  # 1200 ticks
+# Catastrophe → collapse: a collapse close on the heels of a
+# catastrophe reads as "the eruption was the breaking blow".
+CATASTROPHE_TO_COLLAPSE_WINDOW_TICKS = 50 * MONTHS_PER_YEAR  # 600 ticks
+
+
+def _civ_name_index(events_by_kind):
+    """Map civ_id → civ_name from civ_founded events. Older NDJSON
+    that pre-dates the `name` field gives empty strings; callers
+    fall back to `civ N` in that case."""
+    out = {}
+    for ev in events_by_kind.get("civ_founded", []):
+        cid = ev.get("civ_id")
+        if cid is None:
+            continue
+        out[cid] = ev.get("name") or ""
+    return out
+
+
+def _civ_label(name_idx, civ_id):
+    name = name_idx.get(civ_id, "") if civ_id is not None else ""
+    return name if name else f"civ {civ_id}"
+
+
+def _index_transmissions_to(events_by_kind):
+    """dest_civ_id → list of (tick, source_civ_id, source_form,
+    relation_id) sorted by tick."""
+    out = defaultdict(list)
+    for ev in events_by_kind.get("knowledge_transmitted", []):
+        dst = ev.get("dest_civ_id")
+        if dst is None:
+            continue
+        out[dst].append((
+            ev.get("tick", 0),
+            ev.get("source_civ_id"),
+            ev.get("source_form", "the idea"),
+            ev.get("relation_id"),
+        ))
+    for v in out.values():
+        v.sort(key=lambda t: t[0])
+    return out
+
+
+def _index_collapses_by_id(events_by_kind):
+    """civ_id → (tick, reason) of the civ's CivCollapsed event,
+    if any. Only one collapse per civ (collapse is terminal)."""
+    out = {}
+    for ev in events_by_kind.get("civ_collapsed", []):
+        cid = ev.get("civ_id")
+        if cid is None:
+            continue
+        out[cid] = (ev.get("tick", 0), ev.get("reason", "unknown reasons"))
+    return out
+
+
+def _index_catastrophes_by_civ(events_by_kind):
+    """civ_id → list of (tick, kind, frac_lost_q32) sorted by tick."""
+    out = defaultdict(list)
+    for ev in events_by_kind.get("catastrophe_fired", []):
+        cid = ev.get("civ_id")
+        if cid is None:
+            continue
+        out[cid].append((
+            ev.get("tick", 0),
+            ev.get("catastrophe_kind", "catastrophe"),
+            ev.get("fraction_lost_q32", 0),
+        ))
+    for v in out.values():
+        v.sort(key=lambda t: t[0])
+    return out
+
+
+def _recent_transmission_to(transmit_idx, civ_id, current_tick, window):
+    """Return the most recent (src_civ_id, source_form) tuple for
+    a transmission landed at `civ_id` within `window` ticks of
+    `current_tick`, or None."""
+    transmissions = transmit_idx.get(civ_id, [])
+    best = None
+    for t, src, form, _rel in transmissions:
+        if t > current_tick:
+            break
+        if current_tick - t <= window:
+            best = (src, form)
+    return best
+
+
+def _recent_catastrophe_for(cat_idx, civ_id, current_tick, window):
+    """Return the most recent (kind, frac_lost_q32) for a
+    catastrophe striking `civ_id` within `window` ticks, or None."""
+    cats = cat_idx.get(civ_id, [])
+    best = None
+    for t, kind, frac in cats:
+        if t > current_tick:
+            break
+        if current_tick - t <= window:
+            best = (kind, frac)
+    return best
+
+
 def narrate_civ_arcs(events_by_kind, planet_map_grid_width):
     """Return a list of (tick, paragraph) tuples for chronological merge."""
     paragraphs = []
+    # Causal-link indexes — built once, queried per-event so each
+    # paragraph picks up the most-relevant antecedent within its
+    # window without re-scanning the full event stream.
+    name_idx = _civ_name_index(events_by_kind)
+    transmit_idx = _index_transmissions_to(events_by_kind)
+    collapse_idx = _index_collapses_by_id(events_by_kind)
+    cat_idx = _index_catastrophes_by_civ(events_by_kind)
 
     def cell_to_loc(cell_id):
         if planet_map_grid_width is None or planet_map_grid_width == 0:
@@ -348,7 +470,12 @@ def narrate_civ_arcs(events_by_kind, planet_map_grid_width):
         # don't — fall back to "Civilization {id}" for those.
         name = ev.get("name") or ""
         subject = name if name else f"Civilization {civ_id}"
-        parent_label = f"civ {parent}"
+        parent_label = _civ_label(name_idx, parent) if parent is not None else None
+        # Cross-reference: refound after recent parent collapse.
+        # Reads as "after the fall of X, Y rose from the same lands"
+        # when the parent's CivCollapsed sits within the 100-sim-yr
+        # window. Falls back to the plain "branched off" form for
+        # older successors or pre-name NDJSON.
         if parent is None:
             paragraphs.append(
                 (tick, f"{subject} took root{loc_phrase}, founded by "
@@ -356,19 +483,49 @@ def narrate_civ_arcs(events_by_kind, planet_map_grid_width):
                        f"{cells} cell{'s' if cells != 1 else ''}.")
             )
         else:
-            paragraphs.append(
-                (tick, f"{subject} branched off from {parent_label}{loc_phrase}, "
-                       f"with {figs} figure{'s' if figs != 1 else ''} claiming "
-                       f"{cells} cell{'s' if cells != 1 else ''}.")
-            )
+            collapse_info = collapse_idx.get(parent)
+            if (
+                collapse_info is not None
+                and tick - collapse_info[0] <= COLLAPSE_TO_REFOUND_WINDOW_TICKS
+                and collapse_info[0] <= tick
+            ):
+                paragraphs.append(
+                    (tick, f"After the fall of {parent_label}, {subject} rose "
+                           f"from the same lands{loc_phrase}, with {figs} "
+                           f"figure{'s' if figs != 1 else ''} claiming "
+                           f"{cells} cell{'s' if cells != 1 else ''}.")
+                )
+            else:
+                paragraphs.append(
+                    (tick, f"{subject} branched off from {parent_label}{loc_phrase}, "
+                           f"with {figs} figure{'s' if figs != 1 else ''} claiming "
+                           f"{cells} cell{'s' if cells != 1 else ''}.")
+                )
 
     for ev in events_by_kind.get("tech_unlocked", []):
         tick = ev.get("tick", 0)
         civ_id = ev["civ_id"]
         tool = ev.get("tool_name", "an unnamed tool")
-        paragraphs.append(
-            (tick, f"Civ {civ_id} unlocked {tool.replace('_', ' ')}.")
+        # Cross-reference: a recent inbound transmission lifts
+        # the prose from a flat "unlocked X" to "studied {form}
+        # from {source}, then unlocked X" so the reader sees the
+        # cross-civ diffusion chain that produced the tech.
+        tool_label = tool.replace('_', ' ')
+        civ_label = _civ_label(name_idx, civ_id)
+        recent = _recent_transmission_to(
+            transmit_idx, civ_id, tick, TRANSMIT_TO_TECH_WINDOW_TICKS
         )
+        if recent is not None:
+            src_id, source_form = recent
+            src_label = _civ_label(name_idx, src_id)
+            paragraphs.append(
+                (tick, f"{civ_label} studied {source_form} from {src_label}, "
+                       f"then unlocked {tool_label}.")
+            )
+        else:
+            paragraphs.append(
+                (tick, f"{civ_label} unlocked {tool_label}.")
+            )
 
     for ev in events_by_kind.get("knowledge_transmitted", []):
         tick = ev.get("tick", 0)
@@ -424,9 +581,24 @@ def narrate_civ_arcs(events_by_kind, planet_map_grid_width):
         tick = ev.get("tick", 0)
         civ_id = ev["civ_id"]
         reason = ev.get("reason", "unknown reasons")
-        paragraphs.append(
-            (tick, f"Civilization {civ_id} collapsed — {reason.replace('_', ' ')}.")
+        civ_label = _civ_label(name_idx, civ_id)
+        # Cross-reference: a catastrophe within the previous 50
+        # sim-yr suffixes the collapse prose with "the {kind} was
+        # the breaking blow", attributing the collapse to the
+        # shock event rather than the abstract reason code.
+        recent_cat = _recent_catastrophe_for(
+            cat_idx, civ_id, tick, CATASTROPHE_TO_COLLAPSE_WINDOW_TICKS
         )
+        if recent_cat is not None:
+            kind, _frac = recent_cat
+            paragraphs.append(
+                (tick, f"{civ_label} collapsed — {reason.replace('_', ' ')}; "
+                       f"the {kind} catastrophe was the breaking blow.")
+            )
+        else:
+            paragraphs.append(
+                (tick, f"{civ_label} collapsed — {reason.replace('_', ' ')}.")
+            )
 
     paragraphs.sort(key=lambda x: x[0])
     return paragraphs
