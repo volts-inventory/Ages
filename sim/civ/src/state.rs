@@ -161,6 +161,8 @@ impl Civ {
             lifespan_delta_years: Real::ZERO,
             communication_fidelity_delta: Real::ZERO,
             apparatus_cells: Vec::new(),
+            lineage_depth: 0,
+            grudges: BTreeMap::new(),
         }
     }
 
@@ -196,6 +198,28 @@ impl Civ {
                 fig.retired_tick = Some(tick);
             }
         }
+    }
+
+    /// Inherit lineage depth from a parent civ. Increments by 1
+    /// so the first successor lands at depth 1, the second at 2,
+    /// etc. Call this immediately after constructing a refound
+    /// or breakaway civ, alongside `inherit_species_drift`.
+    pub fn inherit_lineage_from(&mut self, parent: &Civ) {
+        self.lineage_depth = parent.lineage_depth.saturating_add(1);
+    }
+
+    /// Bump this civ's grudge against `other_id` by `amount`,
+    /// stamping the current tick so kinship-read-time decay
+    /// computes from this point. Caps at `GRUDGE_CEILING` so
+    /// repeat-skirmish runaway is bounded.
+    pub fn bump_grudge(&mut self, other_id: u32, amount: Real, tick: u64) {
+        let entry = self.grudges.entry(other_id).or_insert((Real::ZERO, tick));
+        let ceiling = Real::from_ratio(
+            crate::conflict::GRUDGE_CEILING.0,
+            crate::conflict::GRUDGE_CEILING.1,
+        );
+        let new_score = (entry.0 + amount).min(ceiling).max(Real::ZERO);
+        *entry = (new_score, tick);
     }
 
     pub(crate) fn n_active_figures(&self) -> usize {

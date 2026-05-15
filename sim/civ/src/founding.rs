@@ -116,6 +116,13 @@ impl Civ {
             lifespan_delta_years: Real::ZERO,
             communication_fidelity_delta: Real::ZERO,
             apparatus_cells: Vec::new(),
+            // Caller sets lineage_depth via
+            // `inherit_lineage_from(parent)` once the parent civ
+            // is in hand. Defaulted to 0 here so the struct
+            // literal type-checks; the typical refound path
+            // overwrites this immediately after construction.
+            lineage_depth: 0,
+            grudges: BTreeMap::new(),
         }
     }
 

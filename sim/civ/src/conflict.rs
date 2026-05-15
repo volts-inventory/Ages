@@ -7,7 +7,7 @@
 
 use crate::Civ;
 use sim_arith::{Pop, Real};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const CONFLICT_CHECK_TICKS: u64 = 75;
 pub const CONFLICT_DEFEAT_FLOOR: i64 = 50;
@@ -209,6 +209,17 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
     let remaining = overlap(loser, winner);
     let defeated = remaining.is_empty();
 
+    // Bump per-pair grudges asymmetrically. Loser remembers more
+    // (and its grudge decays slower; see GRUDGE_DECAY_PER_TICK_*),
+    // so a defeated civ holds the grievance for decades while the
+    // winner forgets within years. Net effect: the loser drives
+    // future intra-pair belligerence even after religion +
+    // cosmology have re-converged.
+    let winner_bump = Real::from_ratio(GRUDGE_BUMP_WINNER.0, GRUDGE_BUMP_WINNER.1);
+    let loser_bump = Real::from_ratio(GRUDGE_BUMP_LOSER.0, GRUDGE_BUMP_LOSER.1);
+    loser.bump_grudge(winner_id, loser_bump, tick);
+    winner.bump_grudge(loser_id, winner_bump, tick);
+
     Some(ConflictOutcome {
         winner_id,
         loser_id,
@@ -376,6 +387,55 @@ fn drive(
     clamp01(w_p * p + w_o * o + w_d * d)
 }
 
+/// Generation-distance decay constant: kinship loses 1/e of its
+/// magnitude per `GENERATION_KIN_DECAY_GENERATIONS` of lineage
+/// distance between the pair. Same-species cousins ~8 generations
+/// apart get ~0.37 generation-closeness; the full kinship is then
+/// multiplied by this factor so deep-cousin pairs read as much
+/// more distantly related than direct-line successors.
+pub const GENERATION_KIN_DECAY_GENERATIONS: i64 = 8;
+
+/// Grudge increment per skirmish (the round-level loss applied by
+/// `resolve`). Asymmetric: loser holds longer. Loser's grudge
+/// against winner gets `GRUDGE_BUMP_LOSER`, winner's grudge against
+/// loser gets `GRUDGE_BUMP_WINNER` — both grow during a multi-round
+/// war but the loser's accumulator climbs faster *and* decays
+/// slower (see `GRUDGE_DECAY_PER_TICK_LOSER` /
+/// `GRUDGE_DECAY_PER_TICK_WINNER`).
+pub const GRUDGE_BUMP_WINNER: (i64, i64) = (5, 100);
+pub const GRUDGE_BUMP_LOSER: (i64, i64) = (10, 100);
+/// Per-tick lazy decay rates. Applied at kinship-read time using
+/// the stored `last_update_tick` so we don't need a per-tick
+/// maintenance pass. Winner forgets at ~0.001/tick, loser at half
+/// that — the defeated civ remembers significantly longer (decades
+/// rather than years).
+pub const GRUDGE_DECAY_PER_TICK_WINNER: (i64, i64) = (1, 1000);
+pub const GRUDGE_DECAY_PER_TICK_LOSER: (i64, i64) = (5, 10_000);
+/// Cap on a single grudge score. Prevents an infinite-war
+/// edge case (the +0.05/0.10 bumps every 75 ticks would otherwise
+/// drift unbounded under no decay window).
+pub const GRUDGE_CEILING: (i64, i64) = (60, 100);
+
+/// Resolve a grudge score for the current tick, applying the
+/// per-side decay rate retroactively. Returns `0` if the entry
+/// is missing or the decay has driven the score to zero or below.
+#[must_use]
+pub fn decayed_grudge(
+    grudges: &BTreeMap<u32, (Real, u64)>,
+    other_id: u32,
+    current_tick: u64,
+    decay_per_tick: Real,
+) -> Real {
+    let (raw, last_tick) = match grudges.get(&other_id) {
+        Some(v) => *v,
+        None => return Real::ZERO,
+    };
+    let elapsed = current_tick.saturating_sub(last_tick);
+    let elapsed_real = Real::from_int(i64::try_from(elapsed).unwrap_or(i64::MAX));
+    let decayed = raw - decay_per_tick * elapsed_real;
+    decayed.max(Real::ZERO)
+}
+
 /// Q-war kinship weights (sum to 1.0). added religion as
 /// the dominant term — single-species runs have near-zero
 /// cosmology gap throughout (every civ inherits the same
@@ -394,6 +454,19 @@ pub const KINSHIP_W_RELIGION: (i64, i64) = (60, 100);
 /// literacy, and 's three-axis religion vector. Religion
 /// dominates (weight 0.60) so the kinship lever survives in
 /// single-species runs where cosmology stays clustered.
+///
+/// Two M6-era modifiers attenuate the base score so intra-
+/// species rivalries don't freeze at 0.98:
+///   1. Generation closeness: `exp(-|gen_a - gen_b| / 8)`.
+///      Same-species cousins 8 lineages apart end up at ~0.37 of
+///      the otherwise-computed kinship. Restores the
+///      Italian-republics dynamic — same religion, same lineage
+///      stem, but enough generational drift to make them fight.
+///   2. War-history grudge: per-pair accumulator (asymmetric;
+///      loser holds longer) subtracted from the result. Decays
+///      lazily via `decayed_grudge`. A pair that's been at war
+///      for decades reads as fundamentally hostile in kinship
+///      space even if they share religion.
 fn kinship_pair(a: &Civ, b: &Civ, tick: u64) -> Real {
     let hier_gap = clamp01(abs_diff(a.cosmology.hierarchical, b.cosmology.hierarchical));
     let four = Real::from_int(4);
@@ -416,12 +489,40 @@ fn kinship_pair(a: &Civ, b: &Civ, tick: u64) -> Real {
     let w_c = Real::from_ratio(KINSHIP_W_COSMO.0, KINSHIP_W_COSMO.1);
     let w_t = Real::from_ratio(KINSHIP_W_TECH.0, KINSHIP_W_TECH.1);
     let w_r = Real::from_ratio(KINSHIP_W_RELIGION.0, KINSHIP_W_RELIGION.1);
-    clamp01(
-        w_h * (Real::ONE - hier_gap)
-            + w_c * (Real::ONE - cosmo_gap)
-            + w_t * (Real::ONE - tech_gap)
-            + w_r * (Real::ONE - religion_gap),
-    )
+    let base = w_h * (Real::ONE - hier_gap)
+        + w_c * (Real::ONE - cosmo_gap)
+        + w_t * (Real::ONE - tech_gap)
+        + w_r * (Real::ONE - religion_gap);
+    // Generation closeness: 1.0 at zero distance, decays toward 0
+    // as lineage depth diverges. exp(-|d| / 8).
+    let gen_a = i64::from(a.lineage_depth);
+    let gen_b = i64::from(b.lineage_depth);
+    let gen_distance = (gen_a - gen_b).abs();
+    let decay_arg = Real::from_int(gen_distance) / Real::from_int(GENERATION_KIN_DECAY_GENERATIONS);
+    let gen_factor = sim_arith::transcendental::exp(-decay_arg);
+    // War-history grudge: average the two asymmetric sides
+    // (winner-style decay for `a`'s grudge against `b`, loser-
+    // style decay for `b`'s grudge against `a` — and vice versa
+    // since `kinship_pair` is symmetric in its arguments; the
+    // asymmetry between the two civs is captured in *which side
+    // had which decay rate when it accumulated*, not in this
+    // call's order).
+    let decay_w = Real::from_ratio(
+        GRUDGE_DECAY_PER_TICK_WINNER.0,
+        GRUDGE_DECAY_PER_TICK_WINNER.1,
+    );
+    let decay_l = Real::from_ratio(
+        GRUDGE_DECAY_PER_TICK_LOSER.0,
+        GRUDGE_DECAY_PER_TICK_LOSER.1,
+    );
+    // For each side, use the slower decay rate so the longer-
+    // memory side of the pair sets the floor; this conservatively
+    // treats both sides as "the loser remembers" when we don't
+    // know which side lost the last round.
+    let g_a = decayed_grudge(&a.grudges, b.id, tick, decay_l.min(decay_w));
+    let g_b = decayed_grudge(&b.grudges, a.id, tick, decay_l.min(decay_w));
+    let grudge_avg = (g_a + g_b) / Real::from_int(2);
+    clamp01(base * gen_factor - grudge_avg)
 }
 
 /// Compute the per-pair belligerence assessment. The aggressor is
@@ -702,6 +803,82 @@ mod tests {
         // (default literacy_score ≈ 0). Weighted closeness =
         // 0.10·0 + 0.15·0 + 0.15·1 + 0.60·0 = 0.15.
         assert!(kin < Real::from_ratio(20, 100));
+    }
+
+    #[test]
+    fn kinship_decays_with_generation_distance() {
+        let mut a = civ_with_id(1, 100);
+        let mut b = civ_with_id(2, 100);
+        a.cosmology = Cosmology::NEUTRAL;
+        b.cosmology = Cosmology::NEUTRAL;
+        a.religion = crate::religion::Religion::NEUTRAL;
+        b.religion = crate::religion::Religion::NEUTRAL;
+        let kin_same_gen = kinship_pair(&a, &b, 100);
+        // Eight generations apart → exp(-1) ≈ 0.368 factor.
+        b.lineage_depth = 8;
+        let kin_8_gen = kinship_pair(&a, &b, 100);
+        // Should be ~36.8% of the same-gen value.
+        let ratio = kin_8_gen / kin_same_gen;
+        let target = Real::from_ratio(368, 1000);
+        let drift = if ratio > target {
+            ratio - target
+        } else {
+            target - ratio
+        };
+        assert!(
+            drift < Real::from_ratio(5, 100),
+            "8-gen kinship should be ~0.37× same-gen; got ratio {ratio:?}"
+        );
+    }
+
+    #[test]
+    fn kinship_subtracts_grudge_score() {
+        let mut a = civ_with_id(1, 100);
+        let mut b = civ_with_id(2, 100);
+        a.cosmology = Cosmology::NEUTRAL;
+        b.cosmology = Cosmology::NEUTRAL;
+        a.religion = crate::religion::Religion::NEUTRAL;
+        b.religion = crate::religion::Religion::NEUTRAL;
+        let kin_no_grudge = kinship_pair(&a, &b, 100);
+        // Drop a sizeable grudge on both sides at the current
+        // tick (no decay yet).
+        a.bump_grudge(2, Real::from_ratio(30, 100), 100);
+        b.bump_grudge(1, Real::from_ratio(30, 100), 100);
+        let kin_with_grudge = kinship_pair(&a, &b, 100);
+        let delta = kin_no_grudge - kin_with_grudge;
+        // Average of (0.30, 0.30) = 0.30 subtracted.
+        let target = Real::from_ratio(30, 100);
+        let drift = if delta > target {
+            delta - target
+        } else {
+            target - delta
+        };
+        assert!(
+            drift < Real::from_ratio(2, 100),
+            "grudge should subtract ~0.30 from kinship; got delta {delta:?}"
+        );
+    }
+
+    #[test]
+    fn grudge_decays_over_time() {
+        let g: BTreeMap<u32, (Real, u64)> = {
+            let mut m = BTreeMap::new();
+            m.insert(2u32, (Real::from_ratio(20, 100), 100));
+            m
+        };
+        // Slowest decay (loser memory): 5/10_000 per tick.
+        let decay = Real::from_ratio(
+            GRUDGE_DECAY_PER_TICK_LOSER.0,
+            GRUDGE_DECAY_PER_TICK_LOSER.1,
+        );
+        // 200 ticks later: 0.20 - 0.0005*200 = 0.10.
+        let d = decayed_grudge(&g, 2, 300, decay);
+        let expected = Real::from_ratio(10, 100);
+        let drift = if d > expected { d - expected } else { expected - d };
+        assert!(drift < Real::from_ratio(1, 100), "grudge should decay to ~0.10; got {d:?}");
+        // 1000 ticks later: 0.20 - 0.5 → clamped to 0.
+        let d2 = decayed_grudge(&g, 2, 1100, decay);
+        assert_eq!(d2, Real::ZERO);
     }
 
     #[test]
