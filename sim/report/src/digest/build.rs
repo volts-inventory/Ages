@@ -473,6 +473,8 @@ impl Digest {
             | Event::SpeciesDrift(_)
             | Event::CohesionShifted(_)
             | Event::CivSurplusChanged(_)
+            | Event::TradeRouteEstablished(_)
+            | Event::TradeRouteClosed(_)
             | Event::RelationMythologized(_)
             | Event::RivalHypothesisProposed(_)
             | Event::PrimaryHypothesisDisplaced(_) => {}

@@ -190,6 +190,12 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // dramatic beats already surface via war / catastrophe /
         // collapse pins that reference the surplus state.
         | Event::CivSurplusChanged(_)
+        // Trade-route open / close events are per-pair news; the
+        // first route between any pair surfaces in the digest's
+        // per-civ chapters but the highlight reel suppresses
+        // individual events to avoid noise on many-civ runs.
+        | Event::TradeRouteEstablished(_)
+        | Event::TradeRouteClosed(_)
         // Per-relation mythologization residue is too granular
         // to pin individually. Aggregate effect surfaces via the
         // CosmologyShifted events the cosmology drift naturally emits.

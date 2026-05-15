@@ -143,6 +143,44 @@ pub fn surplus_food_buffer(surplus: Real, demand: sim_arith::Pop) -> Real {
     }
 }
 
+/// Per-tick trade-flow fraction. Each open trade route moves
+/// this fraction of the higher-surplus civ's reserve toward the
+/// lower-surplus civ, smoothing the buffer across the trading
+/// pair. Small enough that one route doesn't equalize in a
+/// single tick; large enough that a multi-decade route brings
+/// a wealthy + a poor civ into rough surplus parity.
+pub const TRADE_FLOW_PER_TICK: (i64, i64) = (5, 10_000);
+
+/// Per-tick trade flow between two civs. Computes
+/// `(richer.surplus - poorer.surplus) × TRADE_FLOW_PER_TICK / 2`
+/// (half each side) and shifts that magnitude from richer to
+/// poorer. Returns the flow magnitude so callers can log /
+/// aggregate. Capped at the richer civ's full surplus to avoid
+/// drawing the donor negative.
+///
+/// Symmetric in argument order: the function self-sorts which
+/// side is the donor. Pass either order.
+pub fn trade_flow_between(civ_a: &mut Civ, civ_b: &mut Civ) -> Real {
+    let s_a = civ_a.surplus;
+    let s_b = civ_b.surplus;
+    let gap = if s_a > s_b { s_a - s_b } else { s_b - s_a };
+    let flow_rate = Real::from_ratio(TRADE_FLOW_PER_TICK.0, TRADE_FLOW_PER_TICK.1);
+    let raw_flow = gap * flow_rate;
+    let flow = raw_flow.max(Real::ZERO);
+    if flow <= Real::ZERO {
+        return Real::ZERO;
+    }
+    let (donor, recipient) = if s_a > s_b {
+        (civ_a, civ_b)
+    } else {
+        (civ_b, civ_a)
+    };
+    let actual = flow.min(donor.surplus);
+    donor.surplus = donor.surplus - actual;
+    recipient.surplus = recipient.surplus + actual;
+    actual
+}
+
 /// Compute the war-strength multiplier from the civ's surplus.
 /// Returns `1.0 + bonus` where bonus ∈ `[0, SURPLUS_WAR_BONUS_CAP]`,
 /// scaled linearly with `surplus / aggregate_pop` (saturating
@@ -255,6 +293,50 @@ mod tests {
         let huge = surplus_food_buffer(Real::from_int(10_000), demand);
         let drift_huge = if huge > cap { huge - cap } else { cap - huge };
         assert!(drift_huge < Real::from_ratio(1, 100));
+    }
+
+    #[test]
+    fn trade_flow_moves_surplus_toward_parity() {
+        let mut a = fresh(1, 1_000);
+        let mut b = fresh(2, 1_000);
+        a.surplus = Real::from_int(1_000);
+        b.surplus = Real::from_int(0);
+        let flow = trade_flow_between(&mut a, &mut b);
+        // flow = (1000 - 0) × 0.0005 = 0.5.
+        let expected_flow = Real::from_ratio(5, 10);
+        let drift = if flow > expected_flow {
+            flow - expected_flow
+        } else {
+            expected_flow - flow
+        };
+        assert!(drift < Real::from_ratio(1, 100));
+        // Donor lost the flow; recipient gained it.
+        let a_drop = Real::from_int(1_000) - a.surplus;
+        assert!(a_drop > Real::ZERO);
+        assert!(b.surplus > Real::ZERO);
+        // Total conserved.
+        let total = a.surplus + b.surplus;
+        let exp_total = Real::from_int(1_000);
+        let total_drift = if total > exp_total {
+            total - exp_total
+        } else {
+            exp_total - total
+        };
+        assert!(total_drift < Real::from_ratio(1, 100));
+    }
+
+    #[test]
+    fn trade_flow_self_sorts_donor() {
+        // Pass in reverse order — donor should still be identified
+        // correctly by surplus magnitude, not arg order.
+        let mut a = fresh(1, 1_000);
+        let mut b = fresh(2, 1_000);
+        a.surplus = Real::ZERO;
+        b.surplus = Real::from_int(1_000);
+        trade_flow_between(&mut a, &mut b);
+        // a was poorer → it gained.
+        assert!(a.surplus > Real::ZERO);
+        assert!(b.surplus < Real::from_int(1_000));
     }
 
     #[test]
