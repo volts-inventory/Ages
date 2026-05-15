@@ -4,8 +4,8 @@
 use super::types::{
     CatastropheRecord, CivChapter, CollapseRecord, ConflictRecord, Contact, CosmologyRecord,
     Digest, DiscoveredTemplateRecord, DiscoveryRecord, FigureRecord, InventedToolRecord,
-    RefinementOutcome, RefinementRecord, RelationLabel, RunEnd, TechRecord, TerritorySnapshot,
-    TransferRecord,
+    RefinementOutcome, RefinementRecord, RelationLabel, RunEnd, SurplusSnapshot, TechRecord,
+    TerritorySnapshot, TradeRouteRecord, TransferRecord,
 };
 use protocol::Event;
 use std::collections::BTreeMap;
@@ -125,6 +125,7 @@ impl Digest {
             contacts: Vec::new(),
             conflicts: Vec::new(),
             wars: Vec::new(),
+            trade_routes: Vec::new(),
             diffusions: Vec::new(),
             transmissions: Vec::new(),
             relation_names: BTreeMap::new(),
@@ -218,6 +219,7 @@ impl Digest {
                     discovered_templates: Vec::new(),
                     invented_tools: Vec::new(),
                     life_expectancy_history: Vec::new(),
+                    surplus_history: Vec::new(),
                 });
                 // CivFounded carries the authoritative claimed
                 // cells; overwrite whatever the stub above seeded.
@@ -472,12 +474,43 @@ impl Digest {
             | Event::SpeciesCosmologyBias(_)
             | Event::SpeciesDrift(_)
             | Event::CohesionShifted(_)
-            | Event::CivSurplusChanged(_)
-            | Event::TradeRouteEstablished(_)
-            | Event::TradeRouteClosed(_)
             | Event::RelationMythologized(_)
             | Event::RivalHypothesisProposed(_)
             | Event::PrimaryHypothesisDisplaced(_) => {}
+            // M8: per-civ surplus shifts pin into the civ's
+            // chapter so the renderer can timeline the economic
+            // arc alongside life expectancy / cohesion.
+            Event::CivSurplusChanged(s) => {
+                let chapter = self.civ_or_pending(s.civ_id, s.tick);
+                chapter.surplus_history.push(SurplusSnapshot {
+                    tick: s.tick,
+                    surplus_q32: s.surplus_q32,
+                    previous_q32: s.previous_q32,
+                });
+            }
+            // M8: open routes pin to the top-level trade_routes
+            // list. Close events update the matching open entry.
+            Event::TradeRouteEstablished(t) => {
+                self.trade_routes.push(TradeRouteRecord {
+                    start_tick: t.tick,
+                    end_tick: None,
+                    civ_a: t.civ_a,
+                    civ_b: t.civ_b,
+                    close_reason: None,
+                });
+            }
+            Event::TradeRouteClosed(t) => {
+                // Match the most recent open route for this pair.
+                if let Some(route) = self
+                    .trade_routes
+                    .iter_mut()
+                    .rev()
+                    .find(|r| r.civ_a == t.civ_a && r.civ_b == t.civ_b && r.end_tick.is_none())
+                {
+                    route.end_tick = Some(t.tick);
+                    route.close_reason = Some(t.reason.clone());
+                }
+            }
             // Per-civ life expectancy timeline: pin every shift
             // (founding + every >=24-month delta) into the civ's
             // history so the renderer can show the demographic
@@ -566,6 +599,7 @@ impl Digest {
             discovered_templates: Vec::new(),
             invented_tools: Vec::new(),
             life_expectancy_history: Vec::new(),
+                    surplus_history: Vec::new(),
         });
         if !self.founding_order.contains(&civ_id) {
             self.founding_order.push(civ_id);
