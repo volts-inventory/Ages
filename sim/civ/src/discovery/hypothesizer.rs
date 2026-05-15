@@ -51,11 +51,15 @@ const MAX_RESIDUAL_DEPTH: u32 = 3;
 /// this many consecutive ticks (samples-with-RMSE > 1.5× confirm-
 /// time residual), the law is mispredicting fast enough that the
 /// civ skips the slower confidence-streak path and force-triggers
-/// refinement immediately. 30 ticks = 2.5 years under 's monthly
-/// cadence — long enough to filter sample-noise, short enough to
-/// catch a real regime change before the civ commits more
-/// reasoning to the broken law.
-const FALSIFICATION_TRIGGER_TICKS: u64 = 30;
+/// refinement immediately.
+///
+/// Used as the default for `Hypothesizer::falsification_trigger_ticks`
+/// when civ-aware callers haven't yet rescaled by planet metabolism.
+/// At 30 ticks = 2.5 sim-yr the trigger was short enough to flap
+/// under sample-window noise; civ-aware callers (`configure_substrate`)
+/// overwrite this with `streak_ticks_for_metabolism(120, metabolism)`
+/// so slow-substrate worlds get correspondingly longer windows.
+const DEFAULT_FALSIFICATION_TRIGGER_TICKS: u64 = 30;
 /// prediction-drift residual ratio. Streak increments when the
 /// RMSE on the latest sample window exceeds this multiple of the
 /// fit's confirm-time residual. 1.5× catches genuine drift while
@@ -141,6 +145,16 @@ pub struct Hypothesizer {
     /// as experimental — even if observation samples dominate the
     /// pool, the civ's epistemology was intervention-supported.
     pub experimental_count_by_relation: BTreeMap<u32, u32>,
+    /// Force-refinement threshold for the prediction-drift streak,
+    /// measured in ticks of sustained RMSE > 1.5× confirm-time
+    /// residual. Defaults to `DEFAULT_FALSIFICATION_TRIGGER_TICKS`
+    /// (30) so legacy tests + planet-agnostic constructions keep
+    /// their existing behaviour. Civ-aware founders rewrite this
+    /// via `set_falsification_trigger_ticks` from
+    /// `streak_ticks_for_metabolism(120, metabolism)` — slow
+    /// substrates get correspondingly longer windows so a single
+    /// noise burst can't thrash a confirmed relation.
+    pub falsification_trigger_ticks: u64,
 }
 
 impl Hypothesizer {
@@ -215,6 +229,19 @@ impl Hypothesizer {
             confirmed_measurements: BTreeMap::new(),
             measurement_next_attempt,
             experimental_count_by_relation: BTreeMap::new(),
+            falsification_trigger_ticks: DEFAULT_FALSIFICATION_TRIGGER_TICKS,
+        }
+    }
+
+    /// Rewrite the prediction-drift refinement trigger. Civ-aware
+    /// callers use `streak_ticks_for_metabolism(120, metabolism)`
+    /// from `sim_civ::demographics` so slow-substrate worlds
+    /// (silicate metabolism ≈ 0.2) get ~5× longer falsification
+    /// windows than the aqueous baseline. Floors at 1 tick;
+    /// passing zero falls back to the existing default.
+    pub fn set_falsification_trigger_ticks(&mut self, ticks: u64) {
+        if ticks > 0 {
+            self.falsification_trigger_ticks = ticks;
         }
     }
 
@@ -925,7 +952,7 @@ impl Hypothesizer {
             } else {
                 rel.falsification_streak = 0;
             }
-            if rel.falsification_streak >= FALSIFICATION_TRIGGER_TICKS && !in_probation {
+            if rel.falsification_streak >= self.falsification_trigger_ticks && !in_probation {
                 falsified_now = true;
                 // Force the confidence-streak path to fire by lifting
                 // the streak counter to its trigger value; the
@@ -948,7 +975,7 @@ impl Hypothesizer {
                     .get(&relation_id)
                     .map_or(0, |r| r.template_id),
                 old_form: active_form,
-                streak_ticks: FALSIFICATION_TRIGGER_TICKS,
+                streak_ticks: self.falsification_trigger_ticks,
             });
         }
 

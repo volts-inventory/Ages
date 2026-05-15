@@ -141,8 +141,18 @@ impl Civ {
             attempt_period_for_cognition(cognition),
             metabolism,
         );
+        // Falsification window scales the same way: a 120-tick
+        // baseline (10 sim-yr at 12 months/yr) stretched through
+        // `streak_ticks_for_metabolism` so silicate worlds get
+        // ~5× longer drift-tolerance before forcing refinement.
+        // The 30-tick legacy default was short enough to thrash
+        // confirmed relations under sample-window noise.
+        let falsification_ticks = crate::demographics::streak_ticks_for_metabolism(120, metabolism);
         for figure in &mut self.figures {
             figure.hypothesizer.attempt_period = scaled;
+            figure
+                .hypothesizer
+                .set_falsification_trigger_ticks(falsification_ticks);
         }
     }
 
