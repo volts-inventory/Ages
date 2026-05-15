@@ -577,6 +577,28 @@ def narrate_civ_arcs(events_by_kind, planet_map_grid_width):
                    f"how they understand their world.")
         )
 
+    for ev in events_by_kind.get("trade_route_established", []):
+        tick = ev.get("tick", 0)
+        a = ev.get("civ_a", "?")
+        b = ev.get("civ_b", "?")
+        a_label = _civ_label(name_idx, a) if isinstance(a, int) else f"civ {a}"
+        b_label = _civ_label(name_idx, b) if isinstance(b, int) else f"civ {b}"
+        paragraphs.append(
+            (tick, f"A trade route opened between {a_label} and {b_label}, "
+                   f"smoothing their surpluses.")
+        )
+
+    for ev in events_by_kind.get("trade_route_closed", []):
+        tick = ev.get("tick", 0)
+        a = ev.get("civ_a", "?")
+        b = ev.get("civ_b", "?")
+        reason = ev.get("reason", "an unknown trigger").replace("_", " ")
+        a_label = _civ_label(name_idx, a) if isinstance(a, int) else f"civ {a}"
+        b_label = _civ_label(name_idx, b) if isinstance(b, int) else f"civ {b}"
+        paragraphs.append(
+            (tick, f"The trade route between {a_label} and {b_label} closed — {reason}.")
+        )
+
     for ev in events_by_kind.get("civ_collapsed", []):
         tick = ev.get("tick", 0)
         civ_id = ev["civ_id"]
@@ -697,6 +719,9 @@ def main(argv):
             "tech_unlocked", "knowledge_transmitted",
             "conflict_resolved", "catastrophe_fired",
             "cosmology_shifted", "relation_confirmed",
+            # M8: trade routes — established/closed events thread
+            # the economic story through the narrator.
+            "trade_route_established", "trade_route_closed",
         }:
             events_by_kind[kind].append(ev)
 

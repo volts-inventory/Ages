@@ -175,6 +175,14 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     // defeat, overlap empty, civ collapse).
     let mut war_state: std::collections::BTreeMap<(u32, u32), u64> =
         std::collections::BTreeMap::new();
+    // M8: active trade routes between peaceful contacted civs.
+    // Keyed by normalised (low, high) pair just like `war_state`;
+    // value is the tick the route opened. Per-tick surplus flow
+    // runs over every entry. Routes open when `CivContact` fires
+    // on a peaceful pair, close on `WarDeclared` / civ collapse /
+    // hierarchy drift above the peaceful floor.
+    let mut trade_routes: std::collections::BTreeMap<(u32, u32), u64> =
+        std::collections::BTreeMap::new();
     // Stagnation tracking: ticks with no active civ. Reset on
     // every founding (active civ rejoins the species). When the
     // streak crosses STAGNATION_THRESHOLD_TICKS the run ends with
@@ -1193,7 +1201,63 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         civ_a: pair.0,
                         civ_b: pair.1,
                     }))?;
+                    // M8: open a trade route if both civs sit
+                    // below the peaceful-hierarchy floor. Per-tick
+                    // surplus flow then smooths the buffer across
+                    // the pair until war / collapse / hierarchy
+                    // drift closes it.
+                    if conflict::is_peaceful_pair(civ_a, civ_b) {
+                        if !trade_routes.contains_key(&pair) {
+                            trade_routes.insert(pair, tick);
+                            emitter.emit(&Event::TradeRouteEstablished(
+                                protocol::TradeRouteEstablished {
+                                    tick,
+                                    civ_a: pair.0,
+                                    civ_b: pair.1,
+                                },
+                            ))?;
+                        }
+                    }
                 }
+            }
+        }
+
+        // M8: per-tick trade flow over open routes. Each route
+        // shifts a small fraction of the gap between the pair's
+        // surpluses toward parity. Prune routes touching collapsed
+        // civs first, then run the flow over the survivors.
+        let active_set_now: std::collections::BTreeSet<u32> = civs
+            .iter()
+            .filter(|c| c.is_active())
+            .map(|c| c.id)
+            .collect();
+        let stale_routes: Vec<(u32, u32)> = trade_routes
+            .keys()
+            .copied()
+            .filter(|(a, b)| !active_set_now.contains(a) || !active_set_now.contains(b))
+            .collect();
+        for pair in stale_routes {
+            trade_routes.remove(&pair);
+            emitter.emit(&Event::TradeRouteClosed(protocol::TradeRouteClosed {
+                tick,
+                civ_a: pair.0,
+                civ_b: pair.1,
+                reason: "civ_collapsed".to_string(),
+            }))?;
+        }
+        let route_pairs: Vec<(u32, u32)> = trade_routes.keys().copied().collect();
+        for (a_id, b_id) in route_pairs {
+            // Split-borrow trick: split_at_mut around the lower
+            // index lets us mutably borrow both civs without
+            // overlapping borrows.
+            let pos_a = civs.iter().position(|c| c.id == a_id);
+            let pos_b = civs.iter().position(|c| c.id == b_id);
+            if let (Some(pa), Some(pb)) = (pos_a, pos_b) {
+                let (lo, hi) = if pa < pb { (pa, pb) } else { (pb, pa) };
+                let (left, right) = civs.split_at_mut(hi);
+                let civ_lo = &mut left[lo];
+                let civ_hi = &mut right[0];
+                sim_civ::economy::trade_flow_between(civ_lo, civ_hi);
             }
         }
 
@@ -1228,6 +1292,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
 
                 let mut conflict_events: Vec<ConflictResolved> = Vec::new();
                 let mut war_events: Vec<WarDeclared> = Vec::new();
+                // M8: trade routes closed by war declarations
+                // during this check pass. Emitted alongside the
+                // WarDeclared events so consumers see the route
+                // close on the same tick as the war.
+                let mut trade_close_events: Vec<protocol::TradeRouteClosed> = Vec::new();
                 for i in 0..active_ids.len() {
                     for j in (i + 1)..active_ids.len() {
                         let civ_id_first = active_ids[i];
@@ -1322,6 +1391,20 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                                     drive_q32: assessment.drive.raw().to_bits(),
                                     kinship_q32: assessment.kinship.raw().to_bits(),
                                 });
+                                // M8: war closes any open trade
+                                // route between these civs. Emitted
+                                // separately so consumers can show
+                                // the trade-collapse cascade.
+                                if trade_routes.remove(&pair).is_some() {
+                                    trade_close_events.push(
+                                        protocol::TradeRouteClosed {
+                                            tick,
+                                            civ_a: pair.0,
+                                            civ_b: pair.1,
+                                            reason: "war_declared".to_string(),
+                                        },
+                                    );
+                                }
                                 // fall through to resolve()
                             }
                             conflict::WarDecision::ContinueWar => {
@@ -1360,6 +1443,9 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 }
                 for ev in war_events {
                     emitter.emit(&Event::WarDeclared(ev))?;
+                }
+                for ev in trade_close_events {
+                    emitter.emit(&Event::TradeRouteClosed(ev))?;
                 }
                 for ev in conflict_events {
                     emitter.emit(&Event::ConflictResolved(ev))?;

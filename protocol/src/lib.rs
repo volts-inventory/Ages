@@ -173,6 +173,13 @@ pub enum Event {
     /// modulates food-crisis collapse + war strength + catastrophe
     /// resilience.
     CivSurplusChanged(CivSurplusChanged),
+    /// M8 — trade route opened between two peaceful civs. Per-tick
+    /// surplus flow runs between the pair until war / collapse /
+    /// hierarchy-drift closes it.
+    TradeRouteEstablished(TradeRouteEstablished),
+    /// M8 — trade route closed. See `TradeRouteClosed::reason` for
+    /// the trigger.
+    TradeRouteClosed(TradeRouteClosed),
     /// A relation almost crossed the inter-civ
     /// transmission gate but didn't quite — the comprehension
     /// score landed in the mythologization band so the relation's

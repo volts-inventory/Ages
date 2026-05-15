@@ -378,6 +378,34 @@ pub struct CivSurplusChanged {
     pub previous_q32: i64,
 }
 
+/// M8 — trade route established between two peaceful civs.
+/// Fires immediately after `CivContact` when both civs sit
+/// below the peaceful-hierarchy floor (same gate as cross-civ
+/// knowledge diffusion). Pair is normalised so `civ_a < civ_b`.
+/// Per-tick surplus flow then runs between the pair until one
+/// civ collapses, war is declared, or the pair drifts above
+/// the peaceful floor.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TradeRouteEstablished {
+    pub tick: u64,
+    pub civ_a: u32,
+    pub civ_b: u32,
+}
+
+/// M8 — trade route between two civs closed. Reason indicates
+/// what closed it:
+///   - `war_declared`: WarDeclared fired on the pair.
+///   - `civ_collapsed`: one civ collapsed.
+///   - `hierarchy_drift`: one or both civs drifted above the
+///     peaceful-hierarchy floor.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TradeRouteClosed {
+    pub tick: u64,
+    pub civ_a: u32,
+    pub civ_b: u32,
+    pub reason: String,
+}
+
 /// Emergent dynamic-tool event.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ToolDiscovered {
