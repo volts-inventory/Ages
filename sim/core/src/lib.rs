@@ -858,8 +858,21 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         // breakaway entirely.
                         //
                         // Selection: lowest cell id among border
-                        // candidates. Deterministic, no extra RNG draw,
-                        // bit-for-bit replayable.
+                        // candidates that isn't already another live
+                        // civ's capital. Deterministic, no extra RNG
+                        // draw, bit-for-bit replayable. The
+                        // anti-collision filter handles the two-
+                        // breakaways-in-one-tick case (two siblings of
+                        // the same parent, or a breakaway happening
+                        // while a same-tick stateless refound seeded
+                        // its centroid on what would otherwise be the
+                        // lowest border cell) — without it the second
+                        // capital lands on the first's cell and the
+                        // frame renderer's older-civ-wins de-collide
+                        // hides the new civ's letter on the map.
+                        // Relax the filter if every border collides
+                        // (degenerate): a doubled capital is better
+                        // than skipping the breakaway entirely.
                         let mut border_candidates: Vec<u32> = Vec::new();
                         for &cell in &civs[parent_idx].claimed_cells {
                             let axial = state.grid().axial_of(sim_physics::CellId(cell));
@@ -873,7 +886,17 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                             }
                         }
                         border_candidates.sort_unstable();
-                        let Some(&centroid) = border_candidates.first() else {
+                        let live_centroids: BTreeSet<u32> = civs
+                            .iter()
+                            .filter(|c| c.collapsed_tick.is_none())
+                            .map(|c| c.territory_centroid)
+                            .collect();
+                        let pick = border_candidates
+                            .iter()
+                            .find(|c| !live_centroids.contains(c))
+                            .or_else(|| border_candidates.first())
+                            .copied();
+                        let Some(centroid) = pick else {
                             break 'breakaway;
                         };
                         // Transfer the seized cell from parent to (the

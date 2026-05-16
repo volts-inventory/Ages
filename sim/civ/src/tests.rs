@@ -321,8 +321,13 @@ fn successor_lands_on_distinct_centroid() {
         initial_cells.insert(nb.0);
     }
     // Apply successor centroid override.
-    let new_centroid =
-        pick_successor_centroid(parent_centroid, &initial_cells, initial_centroid, &grid);
+    let new_centroid = pick_successor_centroid(
+        parent_centroid,
+        &initial_cells,
+        initial_centroid,
+        &grid,
+        &BTreeSet::new(),
+    );
     civ2.territory_centroid = new_centroid;
     civ2.claim_cells(&initial_cells);
     assert_ne!(
