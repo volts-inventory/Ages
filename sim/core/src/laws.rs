@@ -39,17 +39,17 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     let fluid = GravityFlow::from_mechanics(mechanics);
 
     let alpha = match planet.atmosphere {
-        Atmosphere::None => Real::from_ratio(5, 100),
-        Atmosphere::Thin => Real::from_ratio(8, 100),
-        Atmosphere::Oxidising | Atmosphere::Reducing => Real::from_ratio(10, 100),
-        Atmosphere::Hazy => Real::from_ratio(12, 100),
+        Atmosphere::None => Real::percent(5),
+        Atmosphere::Thin => Real::percent(8),
+        Atmosphere::Oxidising | Atmosphere::Reducing => Real::percent(10),
+        Atmosphere::Hazy => Real::percent(12),
     };
     let heat = HeatConduction { alpha };
 
     let conductivity = if planet.atmosphere == Atmosphere::None {
         Real::from_ratio(5, 1000)
     } else {
-        Real::from_ratio(1, 100)
+        Real::percent(1)
     };
     let discharge_threshold = sim_world::discharge_threshold_for(planet.magnetosphere);
     let em = Electromagnetism {
@@ -59,7 +59,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         // Wind advects charge along velocity. Earth-like
         // default keeps wind-driven transport comparable to
         // molecular conductivity.
-        charge_advect_k: Real::from_ratio(1, 100),
+        charge_advect_k: Real::percent(1),
     };
 
     // Ignition threshold in K. Oxidising atmospheres ignite cooler;

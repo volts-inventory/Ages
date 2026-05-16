@@ -43,8 +43,8 @@ fn t0_loss_stays_in_clamp_range() {
     // Spec: clamp(_, 0.05, 0.70). Walk a band of seeds.
     for seed in 0..256u64 {
         let s = fixture(seed);
-        assert!(s.t0_loss >= Real::from_ratio(5, 100), "seed {seed}");
-        assert!(s.t0_loss <= Real::from_ratio(70, 100), "seed {seed}");
+        assert!(s.t0_loss >= Real::percent(5), "seed {seed}");
+        assert!(s.t0_loss <= Real::percent(70), "seed {seed}");
     }
 }
 

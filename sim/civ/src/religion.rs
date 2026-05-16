@@ -159,9 +159,9 @@ pub fn founding_religion(
 /// and sacred time toward eschatological (history-as-progress).
 pub fn push_for_relation_confirmed() -> Religion {
     Religion {
-        theology: -Real::from_ratio(15, 100),
+        theology: -Real::percent(15),
         ritual: Real::ZERO,
-        sacred_time: Real::from_ratio(10, 100),
+        sacred_time: Real::percent(10),
     }
 }
 
@@ -170,17 +170,17 @@ pub fn push_for_relation_confirmed() -> Religion {
 pub fn push_for_refinement_proposed() -> Religion {
     Religion {
         theology: Real::ZERO,
-        ritual: -Real::from_ratio(8, 100),
-        sacred_time: Real::from_ratio(6, 100),
+        ritual: -Real::percent(8),
+        sacred_time: Real::percent(6),
     }
 }
 
 /// Confirmed refinement: same direction as proposed but stronger.
 pub fn push_for_refinement_confirmed() -> Religion {
     Religion {
-        theology: -Real::from_ratio(8, 100),
-        ritual: -Real::from_ratio(12, 100),
-        sacred_time: Real::from_ratio(10, 100),
+        theology: -Real::percent(8),
+        ritual: -Real::percent(12),
+        sacred_time: Real::percent(10),
     }
 }
 
@@ -189,9 +189,9 @@ pub fn push_for_refinement_confirmed() -> Religion {
 /// view), sacred time toward cyclical (return to tradition).
 pub fn push_for_refinement_rejected() -> Religion {
     Religion {
-        theology: Real::from_ratio(10, 100),
-        ritual: Real::from_ratio(15, 100),
-        sacred_time: -Real::from_ratio(8, 100),
+        theology: Real::percent(10),
+        ritual: Real::percent(15),
+        sacred_time: -Real::percent(8),
     }
 }
 
@@ -200,9 +200,9 @@ pub fn push_for_refinement_rejected() -> Religion {
 /// "end-times" framing.
 pub fn push_for_civ_collapsed() -> Religion {
     Religion {
-        theology: Real::from_ratio(25, 100),
-        ritual: Real::from_ratio(30, 100),
-        sacred_time: Real::from_ratio(40, 100),
+        theology: Real::percent(25),
+        ritual: Real::percent(30),
+        sacred_time: Real::percent(40),
     }
 }
 
@@ -230,7 +230,7 @@ mod tests {
             sacred_time: Real::ONE,
         };
         let dog = r.dogmatism();
-        assert!(dog > Real::from_ratio(99, 100));
+        assert!(dog > Real::percent(99));
         assert!(dog <= Real::ONE);
     }
 
@@ -268,7 +268,7 @@ mod tests {
     fn founding_religion_diverges_for_different_civs() {
         // Same trait inputs, different civ_ids should land on
         // different religion vectors (jitter does its job).
-        let mid = Real::from_ratio(50, 100);
+        let mid = Real::percent(50);
         let r1 = founding_religion(1, mid, mid, mid);
         let r2 = founding_religion(2, mid, mid, mid);
         assert_ne!(r1, r2);
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn founding_religion_deterministic_per_civ_id() {
-        let mid = Real::from_ratio(50, 100);
+        let mid = Real::percent(50);
         let a = founding_religion(7, mid, mid, mid);
         let b = founding_religion(7, mid, mid, mid);
         assert_eq!(a, b);

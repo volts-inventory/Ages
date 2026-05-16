@@ -34,11 +34,11 @@ pub fn habitability_multiplier(glyph: char) -> Real {
     match glyph {
         // ≈ deep ocean / ≡ gas band — uninhabitable.
         '\u{2248}' | '\u{2261}' => Real::ZERO,
-        '~' => Real::from_ratio(5, 100),          // shallow sea
-        '\u{2591}' => Real::from_ratio(120, 100), // ░ coast
-        '\u{2592}' => Real::from_ratio(90, 100),  // ▒ inland
-        '\u{25B3}' => Real::from_ratio(60, 100),  // △ hill / low mountain
-        '\u{25B2}' => Real::from_ratio(10, 100),  // ▲ peak
+        '~' => Real::percent(5),          // shallow sea
+        '\u{2591}' => Real::percent(120), // ░ coast
+        '\u{2592}' => Real::percent(90),  // ▒ inland
+        '\u{25B3}' => Real::percent(60),  // △ hill / low mountain
+        '\u{25B2}' => Real::percent(10),  // ▲ peak
         // · plain / featureless and any unrecognised glyph default
         // to baseline 1.00 — the explicit `·` arm is folded into
         // the wildcard for clippy's match-same-arms lint.

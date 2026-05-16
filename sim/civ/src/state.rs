@@ -126,7 +126,7 @@ impl Civ {
             // build a `Civ` without threading planet context (legacy
             // unit tests).
             carrying_capacity_per_unit: Real::from_int(50_000),
-            migration_pressure_threshold: Real::from_ratio(85, 100),
+            migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
             last_territory_emit_tick: founded_tick,

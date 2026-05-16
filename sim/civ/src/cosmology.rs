@@ -201,7 +201,7 @@ mod tests {
         };
         let dog = c.dogmatism();
         // Within ~0.01 of 1.0 (sqrt under Q32.32).
-        assert!(dog > Real::from_ratio(99, 100));
+        assert!(dog > Real::percent(99));
         assert!(dog <= Real::ONE);
     }
 

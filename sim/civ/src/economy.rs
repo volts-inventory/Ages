@@ -83,7 +83,7 @@ pub fn step_surplus(civ: &mut Civ, utilisation: Real, at_war_count: u64) {
     if pop_real <= Real::ZERO {
         // Empty civ: no surplus generation, and existing surplus
         // decays away over time (no one to hold it).
-        civ.surplus = (civ.surplus * Real::from_ratio(99, 100)).max(Real::ZERO);
+        civ.surplus = (civ.surplus * Real::percent(99)).max(Real::ZERO);
         return;
     }
     // Accumulation: scales by (utilisation - floor) clamped to
@@ -279,11 +279,11 @@ mod tests {
         let full = surplus_food_buffer(Real::from_int(SURPLUS_FOOD_BUFFER_FULL * 100), demand);
         let cap = Real::from(SURPLUS_FOOD_BUFFER_BONUS);
         let drift = if full > cap { full - cap } else { cap - full };
-        assert!(drift < Real::from_ratio(1, 100));
+        assert!(drift < Real::percent(1));
         // 10× full saturates at cap (no overflow).
         let huge = surplus_food_buffer(Real::from_int(10_000), demand);
         let drift_huge = if huge > cap { huge - cap } else { cap - huge };
-        assert!(drift_huge < Real::from_ratio(1, 100));
+        assert!(drift_huge < Real::percent(1));
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
         } else {
             expected_flow - flow
         };
-        assert!(drift < Real::from_ratio(1, 100));
+        assert!(drift < Real::percent(1));
         // Donor lost the flow; recipient gained it.
         let a_drop = Real::from_int(1_000) - a.surplus;
         assert!(a_drop > Real::ZERO);
@@ -313,7 +313,7 @@ mod tests {
         } else {
             exp_total - total
         };
-        assert!(total_drift < Real::from_ratio(1, 100));
+        assert!(total_drift < Real::percent(1));
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
         } else {
             expected - full
         };
-        assert!(drift_full < Real::from_ratio(1, 100));
+        assert!(drift_full < Real::percent(1));
         // Surplus > pop saturates at the cap.
         let over = surplus_war_strength_modifier(pop * Real::from_int(10), pop);
         let drift_over = if over > expected {
@@ -354,6 +354,6 @@ mod tests {
         } else {
             expected - over
         };
-        assert!(drift_over < Real::from_ratio(1, 100));
+        assert!(drift_over < Real::percent(1));
     }
 }

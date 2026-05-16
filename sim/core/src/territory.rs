@@ -283,16 +283,16 @@ fn score_for_habitat(glyph: char, habitat: sim_species::Habitat) -> sim_arith::R
         Habitat::Terrestrial | Habitat::Airborne => sim_world::habitability_multiplier(glyph),
         Habitat::Aquatic => match glyph {
             '\u{2248}' => Real::ONE,          // ≈ deep ocean — the deep-water home
-            '~' => Real::from_ratio(80, 100), // ~ shallow sea
-            '\u{2591}' => Real::from_ratio(120, 100), // ░ coast — richest (tidal feeding)
+            '~' => Real::percent(80),         // ~ shallow sea
+            '\u{2591}' => Real::percent(120), // ░ coast — richest (tidal feeding)
             _ => Real::ZERO,
         },
         Habitat::Amphibious => match glyph {
-            '\u{2591}' => Real::from_ratio(120, 100), // ░ coast — best of both
-            '\u{2592}' | '\u{00B7}' => Real::ONE,     // ▒ inland / · plain
-            '~' | '\u{2248}' => Real::from_ratio(80, 100), // ~ shallow / ≈ deep
-            '\u{25B3}' => Real::from_ratio(60, 100),  // △ hill
-            '\u{25B2}' => Real::from_ratio(10, 100),  // ▲ peak
+            '\u{2591}' => Real::percent(120),      // ░ coast — best of both
+            '\u{2592}' | '\u{00B7}' => Real::ONE,  // ▒ inland / · plain
+            '~' | '\u{2248}' => Real::percent(80), // ~ shallow / ≈ deep
+            '\u{25B3}' => Real::percent(60),       // △ hill
+            '\u{25B2}' => Real::percent(10),       // ▲ peak
             _ => Real::ZERO,
         },
     }

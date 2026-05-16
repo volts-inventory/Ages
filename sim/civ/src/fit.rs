@@ -421,7 +421,7 @@ pub fn rmse(form: Form, params: &[Real], samples: &[Sample]) -> Real {
 /// stays positive and finite.
 pub fn compute_tolerance(form: Form, intelligence: Real, n: usize) -> Real {
     let base = form.base_tolerance();
-    let intel = intelligence.max(Real::from_ratio(1, 100));
+    let intel = intelligence.max(Real::percent(1));
     let denom = sqrt(Real::from_int(i64::try_from(n).unwrap_or(i64::MAX)));
     if denom == Real::ZERO {
         return base;
@@ -450,7 +450,7 @@ mod tests {
     }
 
     fn small_tol() -> Real {
-        Real::from_ratio(1, 100)
+        Real::percent(1)
     }
 
     #[test]
@@ -537,7 +537,7 @@ mod tests {
             })
             .collect();
         let res = fit(Form::Logarithmic, &samples, Real::ONE).unwrap();
-        let tol = Real::from_ratio(5, 100);
+        let tol = Real::percent(5);
         assert!(close(res.params[0], Real::from_int(2), tol));
         assert!(close(res.params[1], Real::ONE, tol));
     }
@@ -552,14 +552,14 @@ mod tests {
             })
             .collect();
         let res = fit(Form::PowerLaw, &samples, Real::ONE).unwrap();
-        let tol = Real::from_ratio(15, 100);
+        let tol = Real::percent(15);
         assert!(
             close(res.params[1], Real::from_int(2), tol),
             "exponent {:?}",
             res.params[1]
         );
         assert!(
-            close(res.params[0], Real::from_int(3), Real::from_ratio(50, 100)),
+            close(res.params[0], Real::from_int(3), Real::percent(50)),
             "coefficient {:?}",
             res.params[0]
         );

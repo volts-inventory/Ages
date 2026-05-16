@@ -173,7 +173,7 @@ pub fn substrate_drift_factor(metabolism: Real) -> Real {
     // Linear: factor = max(0.25, metabolism). Aqueous (1.0) →
     // 1.0× (unchanged); silicate (~0.2) → 0.25× (4× slower
     // drift); ammoniacal (~0.5) → 0.5×.
-    m.max(Real::from_ratio(25, 100))
+    m.max(Real::percent(25))
 }
 
 /// Biosphere-driven drift width. Returns the multiplier applied
@@ -202,7 +202,7 @@ pub fn biosphere_drift_factor(biosphere: BiosphereClass) -> Real {
 #[must_use]
 pub fn drift_band_factor(metabolism: Real, biosphere: BiosphereClass) -> Real {
     let combined = substrate_drift_factor(metabolism) * biosphere_drift_factor(biosphere);
-    combined.max(Real::from_ratio(10, 100))
+    combined.max(Real::percent(10))
 }
 
 #[cfg(test)]
@@ -245,7 +245,7 @@ mod tests {
         assert!(drift_aq.abs() < Real::from_ratio(1, 1000));
         // Silicate metabolism ≈ 0.2 → factor 0.25 (the floor).
         let si = substrate_drift_factor(Real::from_ratio(2, 10));
-        let drift_si = si - Real::from_ratio(25, 100);
+        let drift_si = si - Real::percent(25);
         assert!(drift_si.abs() < Real::from_ratio(1, 1000));
         // Ammoniacal metabolism = 0.5 → factor 0.5.
         let am = substrate_drift_factor(Real::from_ratio(5, 10));
@@ -274,23 +274,23 @@ mod tests {
         } else {
             expected - f
         };
-        assert!(drift < Real::from_ratio(1, 100));
+        assert!(drift < Real::percent(1));
         // Aqueous + hyper-biodiverse: 1.0 × 1.5 = 1.5.
         let f2 = drift_band_factor(Real::ONE, BiosphereClass::HyperBiodiverse);
         let exp2 = Real::from_ratio(15, 10);
         let drift2 = if f2 > exp2 { f2 - exp2 } else { exp2 - f2 };
-        assert!(drift2 < Real::from_ratio(1, 100));
+        assert!(drift2 < Real::percent(1));
         // None biosphere on a very-low metabolism world: substrate
         // floor (0.25) × biosphere None (0.5) = 0.125, above the
         // 0.1 floor — so the formula doesn't hit the floor here.
-        let f3 = drift_band_factor(Real::from_ratio(1, 100), BiosphereClass::None);
+        let f3 = drift_band_factor(Real::percent(1), BiosphereClass::None);
         let expected3 = Real::from_ratio(125, 1000);
         let drift3 = if f3 > expected3 {
             f3 - expected3
         } else {
             expected3 - f3
         };
-        assert!(drift3 < Real::from_ratio(1, 100));
+        assert!(drift3 < Real::percent(1));
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         assert!(near(sum.sociality, Real::from_ratio(3, 10)));
         assert!(near(sum.lifespan_years, Real::from_int(3)));
         let scaled = a.scale(Real::from_ratio(5, 10));
-        assert!(near(scaled.cognition, Real::from_ratio(5, 100)));
+        assert!(near(scaled.cognition, Real::percent(5)));
         assert!(near(scaled.lifespan_years, Real::from_ratio(5, 10)));
     }
 }

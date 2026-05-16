@@ -171,7 +171,7 @@ impl Civ {
     /// in `step_population_per_cell` before the population step
     /// so newly-unlocked tools take effect immediately.
     pub fn tool_mortality_reduction_per_bracket(&self) -> [Real; 4] {
-        let cap = Real::from_ratio(80, 100);
+        let cap = Real::percent(80);
         let mut acc = [Real::ZERO; 4];
         for tool in &self.unlocked_tools {
             let r = tool.mortality_reduction_per_bracket();
@@ -208,7 +208,7 @@ impl Civ {
             .iter()
             .map(|t| t.effects.discovery_rate_bonus)
             .fold(Real::ZERO, |acc, b| acc + b);
-        (static_part + dynamic_part).min(Real::from_ratio(150, 100))
+        (static_part + dynamic_part).min(Real::percent(150))
     }
 
     /// Additive bonus to civ cohesion equilibrium target. Folded
@@ -230,7 +230,7 @@ impl Civ {
             .iter()
             .map(|t| t.effects.cohesion_bonus)
             .fold(Real::ZERO, |acc, b| acc + b);
-        (static_part + dynamic_part).min(Real::from_ratio(40, 100))
+        (static_part + dynamic_part).min(Real::percent(40))
     }
 
     /// Additive bonus to intra-civ migration rate (per-tick fraction
@@ -272,7 +272,7 @@ impl Civ {
             .iter()
             .map(|t| t.effects.fertility_bonus)
             .fold(Real::ZERO, |acc, b| acc + b);
-        (static_part + dynamic_part).min(Real::from_ratio(50, 100))
+        (static_part + dynamic_part).min(Real::percent(50))
     }
 
     /// Additive bonus to inter-civ knowledge-transmission fidelity
@@ -313,7 +313,7 @@ impl Civ {
     pub fn apply_catastrophe_resistance(&self, base_frac: Real) -> Real {
         let resistance = self
             .tool_catastrophe_resistance_bonus()
-            .min(Real::from_ratio(80, 100));
+            .min(Real::percent(80));
         base_frac * (Real::ONE - resistance)
     }
 

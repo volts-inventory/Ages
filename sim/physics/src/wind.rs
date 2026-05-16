@@ -116,13 +116,13 @@ impl Wind {
             // pair → v contribution ~0.001 / tick.
             wind_k: Real::from_ratio(1, 1_000),
             // 30%/tick friction → velocity half-life ~2 ticks.
-            friction_per_tick: Real::from_ratio(30, 100),
+            friction_per_tick: Real::percent(30),
             // Tuned so a typical 50 K equator-to-pole gradient
             // moves heat ~50×/tick faster than `HeatConduction`'s
             // alpha = 0.1 default. Combined with friction, gives
             // a stable steady-state where radiation, conduction,
             // and wind-advection all balance.
-            advect_k: Real::from_ratio(1, 100),
+            advect_k: Real::percent(1),
             has_atmosphere: true,
         }
     }

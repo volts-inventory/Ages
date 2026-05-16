@@ -65,7 +65,7 @@ impl Magnetism {
     pub fn earth_like() -> Self {
         Self {
             dipole_strength: Real::from_int(50),
-            diurnal_amplitude: Real::from_ratio(5, 100),
+            diurnal_amplitude: Real::percent(5),
             diurnal_period: 1,
         }
     }

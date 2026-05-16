@@ -46,9 +46,9 @@ impl RunConfig {
                 chemistry_macros_per_substep: 3,
                 em_substeps_per_macro: 1,
                 fluid_dt: Real::from_ratio(1, 50),
-                heat_dt: Real::from_ratio(1, 100),
+                heat_dt: Real::percent(1),
                 chemistry_dt: Real::from_int(3),
-                em_dt: Real::from_ratio(1, 100),
+                em_dt: Real::percent(1),
             },
         }
     }

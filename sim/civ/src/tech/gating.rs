@@ -279,7 +279,7 @@ pub fn serendipity_missing_prereqs(
     // Literacy gate is softer (represents the civ's general
     // scribal infrastructure). Allow serendipity at 75% of strict
     // floor.
-    let lit_floor = tool.literacy_floor() * Real::from_ratio(75, 100);
+    let lit_floor = tool.literacy_floor() * Real::percent(75);
     if civ_literacy < lit_floor {
         return None;
     }

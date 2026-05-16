@@ -44,7 +44,7 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
         Atmosphere::None => Real::ZERO,
         Atmosphere::Thin => Real::from_ratio(1, 10),
         Atmosphere::Oxidising => Real::from_int(2),
-        Atmosphere::Reducing => Real::from_ratio(1, 100),
+        Atmosphere::Reducing => Real::percent(1),
         Atmosphere::Hazy => Real::from_ratio(1, 5),
     };
     // Two separate combustible channels:
@@ -97,7 +97,7 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
     // `reducing_storm` + `hazy_obscuration` + `pressure_storm`.
     let atmosphere_vapour_baseline = match planet.atmosphere {
         Atmosphere::None => Real::ZERO,
-        Atmosphere::Thin => Real::from_ratio(5, 100),
+        Atmosphere::Thin => Real::percent(5),
         Atmosphere::Oxidising => Real::from_ratio(2, 10),
         Atmosphere::Reducing => Real::from_int(1),
         Atmosphere::Hazy => Real::from_int(2),

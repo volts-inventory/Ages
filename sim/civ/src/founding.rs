@@ -81,7 +81,7 @@ impl Civ {
             // (50,000/fuel-unit). `configure_substrate` overwrites
             // with a biosphere-derived value during full founding.
             carrying_capacity_per_unit: Real::from_int(50_000),
-            migration_pressure_threshold: Real::from_ratio(85, 100),
+            migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
             last_territory_emit_tick: founded_tick,
@@ -206,10 +206,10 @@ impl Civ {
     /// settlement labels used by the post-run report.
     pub fn settlement_persistence_multiplier(&self) -> Real {
         match self.peak_claimed_cells {
-            0..=1 => Real::from_ratio(85, 100),
+            0..=1 => Real::percent(85),
             2..=5 => Real::ONE,
-            6..=15 => Real::from_ratio(115, 100),
-            _ => Real::from_ratio(130, 100),
+            6..=15 => Real::percent(115),
+            _ => Real::percent(130),
         }
     }
 }

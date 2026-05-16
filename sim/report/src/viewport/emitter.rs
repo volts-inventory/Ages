@@ -52,26 +52,13 @@ pub struct ViewportEmitter<W: Write> {
     /// Mirrored from `SpeciesNomadsChanged` events. Rendered as
     /// `0` glyphs in the viewport map.
     nomad_cells: BTreeSet<u32>,
-    /// Per-civ deterministic name from `CivFounded::name`.
-    /// Captured in `apply_state` and read by the per-civ
-    /// sidebar panel. Removed on `CivCollapsed` alongside the
-    /// `civs` entry.
-    civ_names: BTreeMap<u32, String>,
-    /// Per-civ founding year, derived from the founding
-    /// tick at `CivFounded` time. Used by the per-civ sidebar
-    /// panel header line. Removed on `CivCollapsed`.
-    civ_founded_year: BTreeMap<u32, u64>,
-    /// Per-civ snapshot of the most recent `axes_q32`
-    /// vector (5-axis cosmology). Used to compute the delta on
-    /// the next `CosmologyShifted` event so the log can name the
-    /// dominant axis with signed magnitude. Reset on
-    /// `CivCollapsed` so a refound civ starts fresh.
-    civ_cosmology: BTreeMap<u32, [f64; 5]>,
-    /// Per-civ religion vector snapshots
-    /// `[theology, ritual, sacred_time]` mirrored from
-    /// `ReligionShifted` events. Used by the sidebar to render
-    /// `rel: theol+ rit-` style summaries.
-    civ_religion: BTreeMap<u32, [f64; 3]>,
+    /// Per-civ sidebar / log state — name, founding year, cosmology
+    /// + religion snapshots, tech tier, tools, cohesion, life
+    /// expectancy, last unlocked tool. All entries cleared together
+    /// on `CivCollapsed` so a re-emergent civ starts fresh. Read
+    /// via `Option<&CivState>` with field-level fallbacks where the
+    /// renderer needs "civ exists but X never set" semantics.
+    civ_state: BTreeMap<u32, CivState>,
     /// Latest tick observed (from `Tick` events). Frame caption
     /// reads "Year N" from here.
     current_tick: u64,
@@ -120,30 +107,6 @@ pub struct ViewportEmitter<W: Write> {
     /// `ConflictResolved` cell-overlap noise. Pair key is
     /// normalised `(min, max)`.
     wars_active: BTreeSet<(u32, u32)>,
-    /// Per-civ highest tech tier unlocked. Updated on each
-    /// `TechUnlocked` event by taking the max of the prior tier
-    /// (default 0 — stone-age) and the unlocked tool's tier.
-    /// Surfaces on the civ panel header line so the reader can
-    /// see "Karnan · t3" at a glance.
-    civ_tech_tier: BTreeMap<u32, u8>,
-    /// Per-civ set of tool names unlocked. Sized by `len()` to
-    /// surface "23 tools" on the civ panel identity line so the
-    /// reader can see breadth-of-tech-tree alongside the peak-tier
-    /// indicator. Set-keyed (rather than a bare counter) so any
-    /// double-emit of `TechUnlocked` for the same tool doesn't
-    /// inflate the count.
-    civ_tools_unlocked: BTreeMap<u32, BTreeSet<String>>,
-    /// Per-civ latest cohesion in `[0.0, 1.0]` from
-    /// `CohesionShifted`. Sidebar surfaces this so the reader can
-    /// tell which civs are near civil-war / breakaway thresholds
-    /// before the collapse event fires.
-    civ_cohesion: BTreeMap<u32, f64>,
-    /// Per-civ latest life expectancy in months from
-    /// `CivLifeExpectancyChanged`. Sidebar renders this as years
-    /// (months / planet's orbital period) so the reader sees the
-    /// effective lifespan a civ's drift / tools / catastrophes
-    /// have moved them to relative to their species baseline.
-    civ_life_expectancy_months: BTreeMap<u32, f64>,
     /// `relation_id` → `template_name` map populated on the first
     /// `RelationConfirmed` we see for each relation. Log lines for
     /// downstream relation events (falsified / lapsed / rival /
@@ -158,13 +121,25 @@ pub struct ViewportEmitter<W: Write> {
     /// the arrow stable under sub-tick noise. Cleared on
     /// `CivCollapsed`.
     civ_last_emitted_pop_q32: BTreeMap<u32, i128>,
-    /// Per-civ most-recent tool unlocked, from `TechUnlocked`.
-    /// Surfaces on the sidebar identity line as
-    /// `… · last: BulkCultivation` so a reader can scan which
-    /// civ just leveled up without diffing the tool count.
-    /// Stays until the next unlock overwrites it; cleared on
-    /// `CivCollapsed`.
-    civ_last_unlocked_tool: BTreeMap<u32, String>,
+}
+
+/// Per-civ snapshot state surfaced by the sidebar panels and
+/// log lines. One entry per active civ; cleared on `CivCollapsed`.
+/// Fields that have natural defaults (empty `String`, `0` tier,
+/// empty `BTreeSet`) use them directly; the rest are `Option` so
+/// "civ exists but field never observed" reads distinctly from
+/// "field has its default value".
+#[derive(Debug, Clone, Default)]
+struct CivState {
+    name: String,
+    founded_year: u64,
+    cosmology: Option<[f64; 5]>,
+    religion: Option<[f64; 3]>,
+    tech_tier: u8,
+    tools_unlocked: BTreeSet<String>,
+    cohesion: Option<f64>,
+    life_expectancy_months: Option<f64>,
+    last_unlocked_tool: Option<String>,
 }
 
 impl<W: Write> ViewportEmitter<W> {
@@ -179,10 +154,7 @@ impl<W: Write> ViewportEmitter<W> {
             civs: BTreeMap::new(),
             nomad_cells: BTreeSet::new(),
             nomad_total_pop: 0.0,
-            civ_names: BTreeMap::new(),
-            civ_founded_year: BTreeMap::new(),
-            civ_cosmology: BTreeMap::new(),
-            civ_religion: BTreeMap::new(),
+            civ_state: BTreeMap::new(),
             current_tick: 0,
             initialised: false,
             civ_founded_count: 0,
@@ -194,13 +166,8 @@ impl<W: Write> ViewportEmitter<W> {
             relations_lapsed_logged: BTreeSet::new(),
             transmissions_logged: BTreeSet::new(),
             wars_active: BTreeSet::new(),
-            civ_tech_tier: BTreeMap::new(),
-            civ_tools_unlocked: BTreeMap::new(),
-            civ_cohesion: BTreeMap::new(),
-            civ_life_expectancy_months: BTreeMap::new(),
             relation_template_names: BTreeMap::new(),
             civ_last_emitted_pop_q32: BTreeMap::new(),
-            civ_last_unlocked_tool: BTreeMap::new(),
         }
     }
 
@@ -235,9 +202,10 @@ impl<W: Write> ViewportEmitter<W> {
     /// also fall back — fine, the collapse log line itself logged
     /// the name while it was still present.
     fn civ_label(&self, civ_id: u32) -> String {
-        self.civ_names
+        self.civ_state
             .get(&civ_id)
-            .cloned()
+            .map(|s| s.name.clone())
+            .filter(|n| !n.is_empty())
             .unwrap_or_else(|| format!("civ {civ_id}"))
     }
 
@@ -246,7 +214,7 @@ impl<W: Write> ViewportEmitter<W> {
     /// event is "significant" enough to surface to a viewer;
     /// returns `None` for routine per-tick chatter (most events).
     ///
-    /// Reads `self.civ_cosmology` (the per-civ snapshot of the
+    /// Reads `self.civ_state` (the per-civ cosmology snapshot of the
     /// previous `axes_q32` vector, as 5-vec of f64) — when a
     /// `CosmologyShifted` arrives, the delta vector is computed
     /// against the prior snapshot so the log line can name the
@@ -382,9 +350,9 @@ impl<W: Write> ViewportEmitter<W> {
                     curr[i] = q32_to_f64(*raw);
                 }
                 let prev = self
-                    .civ_cosmology
+                    .civ_state
                     .get(&s.civ_id)
-                    .copied()
+                    .and_then(|c| c.cosmology)
                     .unwrap_or([0.0; 5]);
                 let mut best_idx = 0usize;
                 let mut best_abs = 0.0_f64;
@@ -845,18 +813,15 @@ impl<W: Write> ViewportEmitter<W> {
                 // Capture civ name and founding year for the
                 // per-civ sidebar panel. Year derives from the
                 // founding tick (sim ticks = months).
-                self.civ_names.insert(f.civ_id, f.name.clone());
-                // Planet-relative year. Until the Planet event
-                // arrives the period is unknown; fall back to the
-                // baseline 12-month calibration.
                 let period = self
                     .planet
                     .as_ref()
                     .map_or(protocol::BASELINE_MONTHS_PER_YEAR as u32, |p| {
                         p.orbital_period_months
                     });
-                self.civ_founded_year
-                    .insert(f.civ_id, protocol::year_of_tick_for_period(f.tick, period));
+                let s = self.civ_state.entry(f.civ_id).or_default();
+                s.name = f.name.clone();
+                s.founded_year = protocol::year_of_tick_for_period(f.tick, period);
             }
             Event::SpeciesNomadsChanged(n) => {
                 // Replace the nomad-cell set with the new tick's
@@ -903,20 +868,11 @@ impl<W: Write> ViewportEmitter<W> {
                 // Drop sidebar-only state for the collapsed civ
                 // so its panel disappears on the next frame. A
                 // refound civ gets a fresh `CivFounded` and
-                // re-populates these maps.
-                self.civ_names.remove(&c.civ_id);
-                self.civ_founded_year.remove(&c.civ_id);
-                // Forget the cosmology snapshot too; if the
-                // same civ_id ever rises again the next shift
-                // should compare against zero, not stale state.
-                self.civ_cosmology.remove(&c.civ_id);
-                self.civ_religion.remove(&c.civ_id);
-                self.civ_tech_tier.remove(&c.civ_id);
-                self.civ_tools_unlocked.remove(&c.civ_id);
-                self.civ_cohesion.remove(&c.civ_id);
-                self.civ_life_expectancy_months.remove(&c.civ_id);
+                // re-populates these entries. The cosmology
+                // snapshot drops too, so a re-emergent civ_id
+                // compares against zero, not stale state.
+                self.civ_state.remove(&c.civ_id);
                 self.civ_last_emitted_pop_q32.remove(&c.civ_id);
-                self.civ_last_unlocked_tool.remove(&c.civ_id);
                 // Drop any war pairs touching this civ so a
                 // re-emerged civ_id can re-trigger a fresh
                 // "conflict resolved" line. Pairs are stored as
@@ -947,26 +903,24 @@ impl<W: Write> ViewportEmitter<W> {
                 self.current_tick = t.tick;
             }
             Event::TechUnlocked(t) => {
-                let entry = self.civ_tech_tier.entry(t.civ_id).or_insert(0);
-                if t.tier > *entry {
-                    *entry = t.tier;
+                let s = self.civ_state.entry(t.civ_id).or_default();
+                if t.tier > s.tech_tier {
+                    s.tech_tier = t.tier;
                 }
-                self.civ_tools_unlocked
-                    .entry(t.civ_id)
-                    .or_default()
-                    .insert(t.tool_name.clone());
-                self.civ_last_unlocked_tool
-                    .insert(t.civ_id, t.tool_name.clone());
+                s.tools_unlocked.insert(t.tool_name.clone());
+                s.last_unlocked_tool = Some(t.tool_name.clone());
             }
             Event::CohesionShifted(c) => {
                 use crate::q32::q32_to_f64;
-                self.civ_cohesion
-                    .insert(c.civ_id, q32_to_f64(c.cohesion_q32));
+                self.civ_state.entry(c.civ_id).or_default().cohesion =
+                    Some(q32_to_f64(c.cohesion_q32));
             }
             Event::CivLifeExpectancyChanged(l) => {
                 use crate::q32::q32_to_f64;
-                self.civ_life_expectancy_months
-                    .insert(l.civ_id, q32_to_f64(l.life_expectancy_months_q32));
+                self.civ_state
+                    .entry(l.civ_id)
+                    .or_default()
+                    .life_expectancy_months = Some(q32_to_f64(l.life_expectancy_months_q32));
             }
             Event::RelationConfirmed(r) => {
                 // First-confirmation wins; later civs confirming
@@ -1010,7 +964,7 @@ impl<W: Write> ViewportEmitter<W> {
                 for (i, raw) in s.axes_q32.iter().take(5).enumerate() {
                     snap[i] = q32_to_f64(*raw);
                 }
-                self.civ_cosmology.insert(s.civ_id, snap);
+                self.civ_state.entry(s.civ_id).or_default().cosmology = Some(snap);
             }
         }
         // Mirror the religion vector so the per-civ sidebar
@@ -1022,7 +976,7 @@ impl<W: Write> ViewportEmitter<W> {
                 for (i, raw) in r.axes_q32.iter().take(3).enumerate() {
                     snap[i] = q32_to_f64(*raw);
                 }
-                self.civ_religion.insert(r.civ_id, snap);
+                self.civ_state.entry(r.civ_id).or_default().religion = Some(snap);
             }
         }
     }
@@ -1145,7 +1099,7 @@ impl<W: Write> ViewportEmitter<W> {
         });
         for (civ_id, claim) in civ_order {
             lines.push(String::new());
-            let name = self.civ_names.get(civ_id).map_or("", String::as_str);
+            let name = self.civ_state.get(civ_id).map_or("", |s| s.name.as_str());
             // In colored mode, paint the civ's name (or `civ N`
             // fallback) in its palette colour so the sidebar panel
             // doubles as a colour swatch — the user can match the
@@ -1172,8 +1126,9 @@ impl<W: Write> ViewportEmitter<W> {
             // scan "what marker, which population, what era" in
             // one row. Tier defaults to 0 until the first
             // `TechUnlocked` event arrives.
-            let tier = self.civ_tech_tier.get(civ_id).copied().unwrap_or(0);
-            let tool_count = self.civ_tools_unlocked.get(civ_id).map_or(0, BTreeSet::len);
+            let state = self.civ_state.get(civ_id);
+            let tier = state.map_or(0, |s| s.tech_tier);
+            let tool_count = state.map_or(0, |s| s.tools_unlocked.len());
             // Identity line: capital letter (still A..Z by civ_id)
             // is the on-map marker for this civ's centroid; the
             // `0-9` is a colored swatch standing in for the
@@ -1203,10 +1158,10 @@ impl<W: Write> ViewportEmitter<W> {
             // visually compact. The tool count above already says
             // "0 tools" in that case, so the missing `last:` line
             // is unambiguous.
-            if let Some(tool) = self.civ_last_unlocked_tool.get(civ_id) {
+            if let Some(tool) = state.and_then(|s| s.last_unlocked_tool.as_ref()) {
                 lines.push(format!("last: {tool}"));
             }
-            let founded_year = self.civ_founded_year.get(civ_id).copied().unwrap_or(0);
+            let founded_year = state.map_or(0, |s| s.founded_year);
             // Per-civ population count alongside founding
             // year + cell count. Sum the per-cell Q32.32
             // populations from `cell_populations_q32` so the
@@ -1260,10 +1215,8 @@ impl<W: Write> ViewportEmitter<W> {
             // the planet's actual orbital period (matches the
             // year display in the caption). Always emitted so the
             // panel keeps a fixed line count per civ.
-            let cohesion_pct = self
-                .civ_cohesion
-                .get(civ_id)
-                .copied()
+            let cohesion_pct = state
+                .and_then(|s| s.cohesion)
                 .map_or(100, |c| (c * 100.0).round().clamp(0.0, 100.0) as i64);
             let period_months = self
                 .planet
@@ -1271,10 +1224,8 @@ impl<W: Write> ViewportEmitter<W> {
                 .map_or(protocol::BASELINE_MONTHS_PER_YEAR as u32, |p| {
                     p.orbital_period_months
                 });
-            let life_y = self
-                .civ_life_expectancy_months
-                .get(civ_id)
-                .copied()
+            let life_y = state
+                .and_then(|s| s.life_expectancy_months)
                 .map_or(0.0, |m| m / f64::from(period_months));
             // Quick-scan war status: a single `· at war ⚔` /
             // `· peace` token rides the cohesion line so the
@@ -1300,7 +1251,7 @@ impl<W: Write> ViewportEmitter<W> {
             // system *is*, not just abbreviated suffixes. Hidden
             // entirely when both vectors are still neutral
             // (newborn civ, no drift yet).
-            let cosmo_axis: Option<(usize, f64)> = self.civ_cosmology.get(civ_id).and_then(|c| {
+            let cosmo_axis: Option<(usize, f64)> = state.and_then(|s| s.cosmology).and_then(|c| {
                 let mut best = None;
                 for (i, v) in c.iter().enumerate() {
                     if v.abs() < 0.20 {
@@ -1312,7 +1263,7 @@ impl<W: Write> ViewportEmitter<W> {
                 }
                 best
             });
-            let rel_axis: Option<(usize, f64)> = self.civ_religion.get(civ_id).and_then(|r| {
+            let rel_axis: Option<(usize, f64)> = state.and_then(|s| s.religion).and_then(|r| {
                 let mut best = None;
                 for (i, v) in r.iter().enumerate() {
                     if v.abs() < 0.20 {

@@ -147,7 +147,7 @@ impl Hydrology {
         Self {
             evap_rate: Real::from_ratio(1, 1_000),
             condense_rate: Real::from_ratio(1, 1_000),
-            vapour_advect_k: Real::from_ratio(1, 100),
+            vapour_advect_k: Real::percent(1),
             substrate_tag: "aqueous".to_string(),
             surface_pressure_pa: Real::from_int(101_325),
             scale_height_m: DEFAULT_SCALE_HEIGHT_M,

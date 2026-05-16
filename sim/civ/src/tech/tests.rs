@@ -414,7 +414,7 @@ fn no_fire_seed_reaches_information_age_but_not_orbit() {
     ] {
         unlocked.insert(t);
     }
-    let mature_lit = Real::from_ratio(75, 100);
+    let mature_lit = Real::percent(75);
 
     // DigitalComputation IS reachable.
     assert!(is_unlocked(
@@ -554,7 +554,7 @@ fn no_fire_seed_reaches_mechanisation_but_not_aerial() {
     let mut unlocked: BTreeSet<ToolKind> = BTreeSet::new();
     unlocked.insert(ToolKind::StoneWorking);
     unlocked.insert(ToolKind::MechanicalAdvantage);
-    let mature_lit = Real::from_ratio(60, 100);
+    let mature_lit = Real::percent(60);
 
     // Mechanisation IS reachable.
     assert!(is_unlocked(
@@ -653,7 +653,7 @@ fn no_fire_seed_reaches_mechanical_but_not_chemical() {
     // downstream of it.
     let mut unlocked: BTreeSet<ToolKind> = BTreeSet::new();
     unlocked.insert(ToolKind::StoneWorking);
-    let mature_lit = Real::from_ratio(50, 100);
+    let mature_lit = Real::percent(50);
 
     // MechanicalAdvantage IS reachable on the alternate path.
     assert!(is_unlocked(
@@ -737,7 +737,7 @@ fn tier2_combustion_chain_blocked_without_fire() {
                 Crust::Basaltic,
                 100_000,
                 100_000,
-                Real::from_ratio(80, 100),
+                Real::percent(80),
                 &confirmed,
                 &unlocked,
             ),
@@ -825,7 +825,7 @@ fn localised_combustion_blocked_without_confirmed_fire() {
     let unlocked: BTreeSet<ToolKind> = BTreeSet::new();
     // Massive observation count + literacy don't matter — the
     // missing relation prereq alone blocks the unlock.
-    let mature_literacy = Real::from_ratio(80, 100);
+    let mature_literacy = Real::percent(80);
     assert!(!is_unlocked(
         ToolKind::LocalisedCombustion,
         &species,
@@ -1020,9 +1020,9 @@ fn capacity_multiplier_stacks_multiplicatively() {
     let combustion = ToolKind::LocalisedCombustion.capacity_multiplier();
     let food = ToolKind::FoodProcessing.capacity_multiplier();
     let stone = ToolKind::StoneWorking.capacity_multiplier();
-    assert_eq!(combustion, Real::from_ratio(115, 100));
-    assert_eq!(food, Real::from_ratio(115, 100));
-    assert_eq!(stone, Real::from_ratio(105, 100));
+    assert_eq!(combustion, Real::percent(115));
+    assert_eq!(food, Real::percent(115));
+    assert_eq!(stone, Real::percent(105));
     let stacked = combustion * food * stone;
     // 1.15 × 1.15 × 1.05 ≈ 1.3886; check the integer ratio
     // 138 < stacked × 100 < 140.
@@ -1051,7 +1051,7 @@ fn war_strength_bonus_sums_additively() {
         + ToolKind::RangedMomentumWeapon.war_strength_bonus()
         + ToolKind::OrganizedHunting.war_strength_bonus()
         + ToolKind::StoneWorking.war_strength_bonus();
-    let expected = Real::from_ratio(30, 100);
+    let expected = Real::percent(30);
     let diff = (total - expected).abs();
     assert!(
         diff < Real::from_ratio(1, 1_000_000),

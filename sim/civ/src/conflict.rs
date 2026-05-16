@@ -233,7 +233,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
         Real::from_int(4)
     };
     let clamped = raw_ratio.max(Real::ONE).min(Real::from_int(4));
-    let tech_gap = (clamped - Real::ONE) * Real::from_ratio(10, 100);
+    let tech_gap = (clamped - Real::ONE) * Real::percent(10);
     // Hierarchy-size factor: the +0.30 hierarchy casualty bonus
     // is gated by organisational reach. A 14-cell tribe with a
     // hierarchical chief gets ~0.18 of the bonus, a 100-cell
@@ -245,7 +245,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
     let size_factor = hierarchy_size_factor(winner_civ.claimed_cells.len());
     let loss_frac = (min_loss + winner_hier * hier_bonus * size_factor + tech_gap)
         .max(Real::ZERO)
-        .min(Real::from_ratio(60, 100));
+        .min(Real::percent(60));
 
     let (loser, winner) = if loser_id == a.id { (a, b) } else { (b, a) };
     let flip_floor = Pop::from_int(CELL_FLIP_FLOOR);
@@ -269,7 +269,7 @@ pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
             // hits juveniles too — adolescents dragooned into the
             // levy take a smaller hit than fertile adults but more
             // than infants/elders.
-            let juvenile_loss = c.juvenile * loss_frac * Real::from_ratio(30, 100);
+            let juvenile_loss = c.juvenile * loss_frac * Real::percent(30);
             c.juvenile = (c.juvenile - juvenile_loss).max(Pop::ZERO);
         }
         loser.resync_aggregate_from_regions();
@@ -704,14 +704,14 @@ mod tests {
         civ.religion = crate::religion::Religion::NEUTRAL;
         civ.cosmology.hierarchical = Real::ONE;
         let h_pure = hierarchical_strength(&civ);
-        let expected = Real::from_ratio(65, 100);
+        let expected = Real::percent(65);
         let drift = if h_pure > expected {
             h_pure - expected
         } else {
             expected - h_pure
         };
         assert!(
-            drift < Real::from_ratio(1, 100),
+            drift < Real::percent(1),
             "pure-cosmology civ should land at ~0.65; got {h_pure:?}"
         );
 
@@ -802,18 +802,18 @@ mod tests {
         let f100 = hierarchy_size_factor(100);
         // log10(100) / 2 = 1.0 → factor 1.0.
         let drift = Real::ONE - f100;
-        assert!(drift < Real::from_ratio(1, 100));
+        assert!(drift < Real::percent(1));
 
         // Between: 14-cell tribe ≈ 0.57.
         let f14 = hierarchy_size_factor(14);
-        let target = Real::from_ratio(57, 100);
+        let target = Real::percent(57);
         let drift14 = if f14 > target {
             f14 - target
         } else {
             target - f14
         };
         assert!(
-            drift14 < Real::from_ratio(5, 100),
+            drift14 < Real::percent(5),
             "14-cell factor should be ~0.57; got {f14:?}"
         );
 
@@ -859,13 +859,13 @@ mod tests {
     #[test]
     fn decide_war_respects_declare_threshold_when_at_peace() {
         // Just below 0.25 → still peaceful.
-        let just_below = Real::from_ratio(24, 100);
+        let just_below = Real::percent(24);
         assert_eq!(decide_war(false, just_below), WarDecision::StayPeaceful);
         // At 0.25 → declare.
-        let at_threshold = Real::from_ratio(25, 100);
+        let at_threshold = Real::percent(25);
         assert_eq!(decide_war(false, at_threshold), WarDecision::DeclareWar);
         // Above 0.25 → declare.
-        let above = Real::from_ratio(70, 100);
+        let above = Real::percent(70);
         assert_eq!(decide_war(false, above), WarDecision::DeclareWar);
     }
 
@@ -873,13 +873,13 @@ mod tests {
     fn decide_war_respects_end_threshold_when_at_war() {
         // Above 0.15 → keep fighting (covers the 0.15–0.25
         // hysteresis band).
-        let mid_band = Real::from_ratio(20, 100);
+        let mid_band = Real::percent(20);
         assert_eq!(decide_war(true, mid_band), WarDecision::ContinueWar);
         // Just below 0.15 → conclude.
-        let just_below = Real::from_ratio(14, 100);
+        let just_below = Real::percent(14);
         assert_eq!(decide_war(true, just_below), WarDecision::ConcludePeace);
         // At 0.15 (boundary) → still fighting.
-        let at_threshold = Real::from_ratio(15, 100);
+        let at_threshold = Real::percent(15);
         assert_eq!(decide_war(true, at_threshold), WarDecision::ContinueWar);
     }
 
@@ -918,8 +918,8 @@ mod tests {
         let kin = kinship_pair(&a, &b, 100);
         // cosmo_gap = (2.0 / 4) = 0.5; with weight 0.15, it
         // subtracts 0.075 from full kinship → kinship ≈ 0.925.
-        assert!(kin < Real::from_ratio(95, 100));
-        assert!(kin > Real::from_ratio(90, 100));
+        assert!(kin < Real::percent(95));
+        assert!(kin > Real::percent(90));
     }
 
     #[test]
@@ -948,7 +948,7 @@ mod tests {
         // All cultural gaps clamp to 1; literacy gap stays 0
         // (default literacy_score ≈ 0). Weighted closeness =
         // 0.10·0 + 0.15·0 + 0.15·1 + 0.60·0 = 0.15.
-        assert!(kin < Real::from_ratio(20, 100));
+        assert!(kin < Real::percent(20));
     }
 
     #[test]
@@ -972,7 +972,7 @@ mod tests {
             target - ratio
         };
         assert!(
-            drift < Real::from_ratio(5, 100),
+            drift < Real::percent(5),
             "8-gen kinship should be ~0.37× same-gen; got ratio {ratio:?}"
         );
     }
@@ -988,19 +988,19 @@ mod tests {
         let kin_no_grudge = kinship_pair(&a, &b, 100);
         // Drop a sizeable grudge on both sides at the current
         // tick (no decay yet).
-        a.bump_grudge(2, Real::from_ratio(30, 100), 100);
-        b.bump_grudge(1, Real::from_ratio(30, 100), 100);
+        a.bump_grudge(2, Real::percent(30), 100);
+        b.bump_grudge(1, Real::percent(30), 100);
         let kin_with_grudge = kinship_pair(&a, &b, 100);
         let delta = kin_no_grudge - kin_with_grudge;
         // Average of (0.30, 0.30) = 0.30 subtracted.
-        let target = Real::from_ratio(30, 100);
+        let target = Real::percent(30);
         let drift = if delta > target {
             delta - target
         } else {
             target - delta
         };
         assert!(
-            drift < Real::from_ratio(2, 100),
+            drift < Real::percent(2),
             "grudge should subtract ~0.30 from kinship; got delta {delta:?}"
         );
     }
@@ -1009,21 +1009,21 @@ mod tests {
     fn grudge_decays_over_time() {
         let g: BTreeMap<u32, (Real, u64)> = {
             let mut m = BTreeMap::new();
-            m.insert(2u32, (Real::from_ratio(20, 100), 100));
+            m.insert(2u32, (Real::percent(20), 100));
             m
         };
         // Slowest decay (loser memory): 5/10_000 per tick.
         let decay = Real::from_ratio(GRUDGE_DECAY_PER_TICK_LOSER.0, GRUDGE_DECAY_PER_TICK_LOSER.1);
         // 200 ticks later: 0.20 - 0.0005*200 = 0.10.
         let d = decayed_grudge(&g, 2, 300, decay);
-        let expected = Real::from_ratio(10, 100);
+        let expected = Real::percent(10);
         let drift = if d > expected {
             d - expected
         } else {
             expected - d
         };
         assert!(
-            drift < Real::from_ratio(1, 100),
+            drift < Real::percent(1),
             "grudge should decay to ~0.10; got {d:?}"
         );
         // 1000 ticks later: 0.20 - 0.5 → clamped to 0.

@@ -190,8 +190,7 @@ pub fn diffuse_between(
     // crosses the linguistic gap; clamped at ×1.5 so a fully-
     // equipped civ still has to earn comprehension above the
     // threshold rather than getting it for free.
-    let fidelity =
-        (Real::ONE + source.tool_transmission_fidelity_bonus()).min(Real::from_ratio(150, 100));
+    let fidelity = (Real::ONE + source.tool_transmission_fidelity_bonus()).min(Real::percent(150));
     for (rid, mut rel) in best {
         // Skip relations the destination has already confirmed —
         // direct contact doesn't overwrite local knowledge.
@@ -277,8 +276,7 @@ pub fn transmit_from_parent(
     // wrote things down (CulturalEncoding) preserves them better
     // for successors than one that relied on oral tradition.
     // Capped at ×1.5 so the gate threshold still has to be cleared.
-    let fidelity =
-        (Real::ONE + parent.tool_transmission_fidelity_bonus()).min(Real::from_ratio(150, 100));
+    let fidelity = (Real::ONE + parent.tool_transmission_fidelity_bonus()).min(Real::percent(150));
 
     // Dedupe parent relations by relation_id, keep best confidence.
     let mut best: BTreeMap<u32, ConfirmedRelation> = BTreeMap::new();
@@ -429,16 +427,10 @@ mod tests {
         // post-run report (capital / town / village / hamlet).
         let mut civ = Civ::new(1, 0, Pop::from_int(1000));
         assert_eq!(civ.peak_claimed_cells, 0);
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(85, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(85));
 
         civ.peak_claimed_cells = 1;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(85, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(85));
 
         civ.peak_claimed_cells = 2;
         assert_eq!(civ.settlement_persistence_multiplier(), Real::ONE);
@@ -447,28 +439,16 @@ mod tests {
         assert_eq!(civ.settlement_persistence_multiplier(), Real::ONE);
 
         civ.peak_claimed_cells = 6;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(115, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(115));
 
         civ.peak_claimed_cells = 15;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(115, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(115));
 
         civ.peak_claimed_cells = 16;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(130, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(130));
 
         civ.peak_claimed_cells = 1000;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(130, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(130));
     }
 
     #[test]

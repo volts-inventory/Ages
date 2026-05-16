@@ -185,6 +185,16 @@ impl Real {
         Self(I32F32::from_num(num) / I32F32::from_num(den))
     }
 
+    /// Hundredths shorthand: `Real::percent(80)` is the same as
+    /// `from_ratio(80, 100)` (= `0.80`). The sim is full of
+    /// inline hundredths — habitat multipliers, decay rates, weight
+    /// tables — and this form lets each site read as the single
+    /// number it actually is. `n` can exceed 100 (a multiplier of
+    /// 1.20 reads `Real::percent(120)`) or go negative.
+    pub fn percent(n: i64) -> Self {
+        Self::from_ratio(n, 100)
+    }
+
     /// The underlying Q-format value. Internal — exposed for
     /// debugging and serialisation only.
     pub fn raw(self) -> I32F32 {

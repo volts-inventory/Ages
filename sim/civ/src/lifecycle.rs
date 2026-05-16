@@ -256,14 +256,14 @@ impl Civ {
     pub fn update_cohesion(&mut self, security: Real, tick: u64, metabolism: Real) {
         let cells = i64::try_from(self.claimed_cells.len()).unwrap_or(i64::MAX);
         let size_factor = (Real::from_int(cells) / Real::from_int(30)).clamp01();
-        let size_penalty = Real::from_ratio(30, 100) * size_factor;
-        let food_penalty = if security < Real::from_ratio(50, 100) {
-            Real::from_ratio(50, 100) * (Real::ONE - security)
+        let size_penalty = Real::percent(30) * size_factor;
+        let food_penalty = if security < Real::percent(50) {
+            Real::percent(50) * (Real::ONE - security)
         } else {
             Real::ZERO
         };
-        let dogma_bonus = Real::from_ratio(20, 100) * self.cosmology.dogmatism();
-        let literacy_bonus = Real::from_ratio(20, 100) * self.literacy_score(tick);
+        let dogma_bonus = Real::percent(20) * self.cosmology.dogmatism();
+        let literacy_bonus = Real::percent(20) * self.literacy_score(tick);
         // Tools that bind the polity together (canonised law, mass
         // literacy, network identity, urban anchors, defensive
         // institutions) lift the cohesion equilibrium directly.

@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(civ.selection_bias, SelectionBias::zero());
         // One disease wiping out 30%: bumps cognition by 0.024,
         // sociality by 0.018, lifespan by 0.6 years.
-        civ.record_catastrophe_selection_bias(CatastropheKind::Disease, Real::from_ratio(30, 100));
+        civ.record_catastrophe_selection_bias(CatastropheKind::Disease, Real::percent(30));
         assert!(civ.selection_bias.cognition > Real::ZERO);
         assert!(civ.selection_bias.sociality > Real::ZERO);
         // Drop the bias by repeating beyond the ceiling: 20 disease
@@ -219,7 +219,7 @@ mod tests {
         for _ in 0..20 {
             civ.record_catastrophe_selection_bias(CatastropheKind::Disease, Real::ONE);
         }
-        let ceiling = Real::from_ratio(15, 100);
+        let ceiling = Real::percent(15);
         assert!(civ.selection_bias.cognition <= ceiling);
         let life_ceiling = Real::from_int(10);
         assert!(civ.selection_bias.lifespan_years <= life_ceiling);
@@ -230,8 +230,7 @@ mod tests {
         let mut parent = fresh(1);
         // Parent survived a disease catastrophe — accumulate a
         // concrete bias.
-        parent
-            .record_catastrophe_selection_bias(CatastropheKind::Disease, Real::from_ratio(30, 100));
+        parent.record_catastrophe_selection_bias(CatastropheKind::Disease, Real::percent(30));
         let parent_bias_cog = parent.selection_bias.cognition;
         let mut child = fresh(2);
         child.inherit_species_drift_with_environment(

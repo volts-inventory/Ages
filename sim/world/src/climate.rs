@@ -129,8 +129,8 @@ pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
     if deviation <= half_grad {
         Real::ONE
     } else if deviation <= full_grad {
-        Real::from_ratio(92, 100)
+        Real::percent(92)
     } else {
-        Real::from_ratio(80, 100)
+        Real::percent(80)
     }
 }

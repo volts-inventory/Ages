@@ -169,14 +169,14 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
     let scale = Real::from_int(n.min(EMERGENT_TOOL_MAX_SCALE_CLUSTER))
         / Real::from_int(EMERGENT_TOOL_MAX_SCALE_CLUSTER);
     let mut effects = DynamicToolEffects {
-        capacity_multiplier: Real::ONE + Real::from_ratio(20, 100) * scale,
+        capacity_multiplier: Real::ONE + Real::percent(20) * scale,
         food_crisis_bonus: Real::ZERO,
         war_strength_bonus: Real::ZERO,
         seasonal_floor_bonus: Real::ZERO,
         catastrophe_resistance_bonus: Real::ZERO,
-        literacy_bonus: Real::from_ratio(5, 100) * scale,
+        literacy_bonus: Real::percent(5) * scale,
         expansion_rate_bonus: Real::ZERO,
-        transmission_fidelity_bonus: Real::from_ratio(5, 100) * scale,
+        transmission_fidelity_bonus: Real::percent(5) * scale,
         mortality_reduction_per_bracket: [Real::ZERO; 4],
         lifespan_extension_factor: Real::ZERO,
         discovery_rate_bonus: Real::ZERO,
@@ -189,44 +189,43 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
         // the seasonal floor and catastrophe resistance — the
         // species learns to buffer against thermal extremes.
         Channel::Temperature => {
-            effects.seasonal_floor_bonus = Real::from_ratio(5, 100) * scale;
-            effects.catastrophe_resistance_bonus = Real::from_ratio(5, 100) * scale;
+            effects.seasonal_floor_bonus = Real::percent(5) * scale;
+            effects.catastrophe_resistance_bonus = Real::percent(5) * scale;
         }
         // ChargeMagnitude: electromagnetic instrumentation —
         // detectors, batteries, primitive electronics. Accelerates
         // the science loop directly.
         Channel::ChargeMagnitude => {
-            effects.discovery_rate_bonus = Real::from_ratio(8, 100) * scale;
+            effects.discovery_rate_bonus = Real::percent(8) * scale;
         }
         // WaterDepth: hydrology — irrigation lifts food security,
         // waterways speed intra-civ migration.
         Channel::WaterDepth => {
-            effects.food_crisis_bonus = Real::from_ratio(5, 100) * scale;
-            effects.migration_speed_bonus = Real::from_ratio(8, 100) * scale;
+            effects.food_crisis_bonus = Real::percent(5) * scale;
+            effects.migration_speed_bonus = Real::percent(8) * scale;
         }
         // Elevation: cartographic / topographic knowledge —
         // territorial expansion benefits from knowing the terrain.
         Channel::Elevation => {
-            effects.expansion_rate_bonus = Real::from_ratio(8, 100) * scale;
+            effects.expansion_rate_bonus = Real::percent(8) * scale;
         }
         // Fuel: combustion engineering — extra capacity from
         // applied energy abundance, on top of the baseline.
         Channel::Fuel => {
-            effects.capacity_multiplier =
-                effects.capacity_multiplier + Real::from_ratio(10, 100) * scale;
+            effects.capacity_multiplier = effects.capacity_multiplier + Real::percent(10) * scale;
         }
         // Oxidiser: reactive chemistry — gunpowder, propellants,
         // explosive ordnance. Lifts war strength.
         Channel::Oxidiser => {
-            effects.war_strength_bonus = Real::from_ratio(8, 100) * scale;
+            effects.war_strength_bonus = Real::percent(8) * scale;
         }
         // Vapour: atmospheric / sanitation knowledge — clean-water
         // and disease-vector understanding cuts infant + juvenile
         // mortality (the historical "sanitation leap").
         Channel::Vapour => {
             effects.mortality_reduction_per_bracket = [
-                Real::from_ratio(8, 100) * scale,
-                Real::from_ratio(5, 100) * scale,
+                Real::percent(8) * scale,
+                Real::percent(5) * scale,
                 Real::ZERO,
                 Real::ZERO,
             ];
@@ -234,14 +233,13 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
         // Ice: cryogenic preservation — buffers seasonal scarcity
         // and stretches catastrophe resistance.
         Channel::Ice => {
-            effects.seasonal_floor_bonus = Real::from_ratio(5, 100) * scale;
-            effects.catastrophe_resistance_bonus = Real::from_ratio(5, 100) * scale;
+            effects.seasonal_floor_bonus = Real::percent(5) * scale;
+            effects.catastrophe_resistance_bonus = Real::percent(5) * scale;
         }
         // Fossil: fossil-fuel energy — capacity boost on top of
         // the scientific-instrument baseline.
         Channel::Fossil => {
-            effects.capacity_multiplier =
-                effects.capacity_multiplier + Real::from_ratio(10, 100) * scale;
+            effects.capacity_multiplier = effects.capacity_multiplier + Real::percent(10) * scale;
         }
     }
     effects
@@ -381,10 +379,7 @@ mod tests {
         assert!(big.capacity_multiplier > small.capacity_multiplier);
         // Saturated cluster on Temperature gives capacity ×1.20
         // (the baseline cap; Temperature adds no capacity flavour).
-        assert_eq!(
-            big.capacity_multiplier,
-            Real::ONE + Real::from_ratio(20, 100)
-        );
+        assert_eq!(big.capacity_multiplier, Real::ONE + Real::percent(20));
         // Past-saturation cluster doesn't grow further.
         let huge = effects_for_cluster(1000, Channel::Temperature);
         assert_eq!(huge.capacity_multiplier, big.capacity_multiplier);

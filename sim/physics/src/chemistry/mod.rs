@@ -126,7 +126,7 @@ impl Chemistry {
                     from: Substance::Water,
                     to: Substance::Ice,
                     threshold: freeze_point,
-                    rate: Real::from_ratio(1, 100),
+                    rate: Real::percent(1),
                     forward_when_hot: false,
                     latent_heat: lh_freeze,
                 },
@@ -134,7 +134,7 @@ impl Chemistry {
                     from: Substance::Ice,
                     to: Substance::Water,
                     threshold: freeze_point,
-                    rate: Real::from_ratio(1, 100),
+                    rate: Real::percent(1),
                     forward_when_hot: true,
                     latent_heat: lh_melt,
                 },
@@ -161,7 +161,7 @@ impl Chemistry {
                     oxidiser: Substance::Oxidiser,
                     product: Substance::Ash,
                     ignition_threshold: ignition_threshold_k,
-                    rate: Real::from_ratio(1, 100),
+                    rate: Real::percent(1),
                     latent_heat: lh_combustion,
                 },
                 // Fossil combustion: same stoichiometry, higher
@@ -175,7 +175,7 @@ impl Chemistry {
                     oxidiser: Substance::Oxidiser,
                     product: Substance::Ash,
                     ignition_threshold: ignition_threshold_k + Real::from_int(200),
-                    rate: Real::from_ratio(1, 100),
+                    rate: Real::percent(1),
                     latent_heat: lh_fossil_combustion,
                 },
             ],
@@ -188,7 +188,7 @@ impl Chemistry {
                 // Need at least a trace of liquid solvent to act as
                 // a cofactor — desert cells without surface water
                 // don't regrow.
-                water_cofactor_min: Real::from_ratio(1, 100),
+                water_cofactor_min: Real::percent(1),
                 // 1/1000 per tick: an ash-saturated cell at full
                 // deficit closes ~10% of the gap in 100 ticks,
                 // ~63% in 1000 ticks. Slow enough that combustion-

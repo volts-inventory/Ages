@@ -373,10 +373,10 @@ pub(crate) fn derive_initial_cosmology(
     planet: &Planet,
     modalities: &[Modality],
 ) -> [Real; 5] {
-    let high = Real::from_ratio(60, 100);
-    let mid_high = Real::from_ratio(70, 100);
-    let low = Real::from_ratio(30, 100);
-    let lower = Real::from_ratio(40, 100);
+    let high = Real::percent(60);
+    let mid_high = Real::percent(70);
+    let low = Real::percent(30);
+    let lower = Real::percent(40);
 
     let mut empirical = Real::ZERO;
     let mut communitarian = Real::ZERO;
@@ -390,55 +390,55 @@ pub(crate) fn derive_initial_cosmology(
 
     // Sociality bias.
     if sociality > high {
-        communitarian = communitarian + Real::from_ratio(20, 100);
+        communitarian = communitarian + Real::percent(20);
     } else if sociality < low {
-        communitarian = communitarian - Real::from_ratio(10, 100);
+        communitarian = communitarian - Real::percent(10);
     }
     // Cognition bias.
     if cognition > high {
-        empirical = empirical + Real::from_ratio(15, 100);
+        empirical = empirical + Real::percent(15);
     } else if cognition < low {
-        mystical = mystical + Real::from_ratio(10, 100);
+        mystical = mystical + Real::percent(10);
     }
     // Communication-fidelity bias.
     if communication_fidelity < lower {
-        mystical = mystical + Real::from_ratio(15, 100);
+        mystical = mystical + Real::percent(15);
     } else if communication_fidelity > mid_high {
-        empirical = empirical + Real::from_ratio(10, 100);
+        empirical = empirical + Real::percent(10);
     }
     // Habitat bias.
     match habitat {
-        Habitat::Aquatic => communitarian = communitarian + Real::from_ratio(15, 100),
-        Habitat::Terrestrial => reformist = reformist + Real::from_ratio(5, 100),
+        Habitat::Aquatic => communitarian = communitarian + Real::percent(15),
+        Habitat::Terrestrial => reformist = reformist + Real::percent(5),
         Habitat::Amphibious => {
             // A species that crosses domains is biased toward both
             // — half the habitat-specific bonuses on each axis.
-            communitarian = communitarian + Real::from_ratio(7, 100);
-            reformist = reformist + Real::from_ratio(2, 100);
+            communitarian = communitarian + Real::percent(7);
+            reformist = reformist + Real::percent(2);
         }
-        Habitat::Airborne => reformist = reformist + Real::from_ratio(5, 100),
+        Habitat::Airborne => reformist = reformist + Real::percent(5),
     }
     // Modality-count bias. Rich sensorium → analytical.
     if modalities.len() >= 4 {
-        empirical = empirical + Real::from_ratio(5, 100);
+        empirical = empirical + Real::percent(5);
     }
     // Axial-tilt bias.
     let high_tilt = Real::from_int(30);
     let low_tilt = Real::from_int(10);
     if planet.axial_tilt_deg > high_tilt {
-        reformist = reformist + Real::from_ratio(15, 100);
+        reformist = reformist + Real::percent(15);
     } else if planet.axial_tilt_deg < low_tilt {
-        communitarian = communitarian + Real::from_ratio(5, 100);
+        communitarian = communitarian + Real::percent(5);
     }
     // Crust bias — exotic crusts present richer physics.
     match planet.crust {
         sim_world::Crust::RareEarth | sim_world::Crust::Piezoelectric => {
-            empirical = empirical + Real::from_ratio(5, 100);
+            empirical = empirical + Real::percent(5);
         }
         _ => {}
     }
 
-    let cap = Real::from_ratio(50, 100);
+    let cap = Real::percent(50);
     let neg_cap = -cap;
     let clamp = |v: Real| -> Real { v.max(neg_cap).min(cap) };
     [
@@ -520,13 +520,12 @@ pub(crate) fn sample_unit(rng: &mut ChaCha20Rng) -> Real {
 pub(crate) fn compute_t0_loss(cog: Real, soc: Real, lifespan_y: Real, comm_fid: Real) -> Real {
     let lifespan_norm = lifespan_y / Real::from_int(70);
     let log_term = ln(Real::ONE + lifespan_norm);
-    let raw = Real::from_ratio(50, 100)
-        - Real::from_ratio(15, 100) * cog
-        - Real::from_ratio(10, 100) * soc
-        - Real::from_ratio(10, 100) * log_term
-        - Real::from_ratio(15, 100) * comm_fid;
-    raw.max(Real::from_ratio(5, 100))
-        .min(Real::from_ratio(70, 100))
+    let raw = Real::percent(50)
+        - Real::percent(15) * cog
+        - Real::percent(10) * soc
+        - Real::percent(10) * log_term
+        - Real::percent(15) * comm_fid;
+    raw.max(Real::percent(5)).min(Real::percent(70))
 }
 
 pub(crate) fn sample_modalities(planet: &Planet, rng: &mut ChaCha20Rng) -> Vec<Modality> {
@@ -701,7 +700,7 @@ pub(crate) fn default_manipulation(kind: ManipulationKind) -> Manipulation {
     let (force_n, precision_m, dexterity_score, dof_count) = match kind {
         ManipulationKind::LimbGrasp => (
             Real::from_int(200),
-            Real::from_ratio(1, 100),
+            Real::percent(1),
             Real::from_ratio(8, 10),
             5,
         ),
@@ -725,7 +724,7 @@ pub(crate) fn default_manipulation(kind: ManipulationKind) -> Manipulation {
         ),
         ManipulationKind::Trunk => (
             Real::from_int(300),
-            Real::from_ratio(1, 100),
+            Real::percent(1),
             Real::from_ratio(9, 10),
             6,
         ),
@@ -761,16 +760,13 @@ pub(crate) fn default_manipulation(kind: ManipulationKind) -> Manipulation {
         ),
         ManipulationKind::ElectricDischarge => (
             Real::from_int(10),
-            Real::from_ratio(1, 100),
+            Real::percent(1),
             Real::from_ratio(2, 10),
             1,
         ),
-        ManipulationKind::ChemicalSecretion => (
-            Real::ONE,
-            Real::from_ratio(1, 100),
-            Real::from_ratio(3, 10),
-            1,
-        ),
+        ManipulationKind::ChemicalSecretion => {
+            (Real::ONE, Real::percent(1), Real::from_ratio(3, 10), 1)
+        }
     };
     Manipulation {
         kind,
@@ -833,8 +829,8 @@ pub fn derive_population_biology(
     };
     let manip_r_lean = manipulation_r_lean(manipulation_modes);
     let habitat_r_shift = match habitat {
-        Habitat::Aquatic => Real::from_ratio(10, 100),
-        Habitat::Airborne => -Real::from_ratio(10, 100),
+        Habitat::Aquatic => Real::percent(10),
+        Habitat::Airborne => -Real::percent(10),
         _ => Real::ZERO,
     };
     let r_axis_raw = (Real::ONE - sociality) * Real::from_ratio(1, 3)
@@ -848,30 +844,29 @@ pub fn derive_population_biology(
     let clutch_size = Real::ONE + r_axis * r_axis * Real::from_int(499);
     // Infant fraction in [0.01, 0.10]; K-strategists have slightly
     // longer infancy (more parental care, slower growth).
-    let infant_fraction =
-        Real::from_ratio(1, 100) + (Real::ONE - r_axis) * Real::from_ratio(9, 100);
+    let infant_fraction = Real::percent(1) + (Real::ONE - r_axis) * Real::percent(9);
     // Maturity fraction in [0.04, 0.40]; K-strategists with
     // Centralized cognition get the long brain-development window.
     let centralized_bonus = match cognition_topology {
-        CognitionTopology::Centralized => Real::from_ratio(5, 100),
+        CognitionTopology::Centralized => Real::percent(5),
         CognitionTopology::Distributed => Real::ZERO,
     };
-    let maturity_base = Real::from_ratio(4, 100) + (Real::ONE - r_axis) * Real::from_ratio(31, 100);
-    let maturity_fraction = (maturity_base + centralized_bonus).min(Real::from_ratio(40, 100));
+    let maturity_base = Real::percent(4) + (Real::ONE - r_axis) * Real::percent(31);
+    let maturity_fraction = (maturity_base + centralized_bonus).min(Real::percent(40));
     // Eldership fraction in [0, 0.30]; only social + smart species
     // evolve a meaningful post-reproductive period. Pure r-strategists
     // have zero elders.
     let elder_drive = sociality * cognition;
-    let eldership_fraction = (elder_drive * Real::from_ratio(30, 100) * (Real::ONE - r_axis))
-        .min(Real::from_ratio(30, 100));
+    let eldership_fraction =
+        (elder_drive * Real::percent(30) * (Real::ONE - r_axis)).min(Real::percent(30));
     // Clamp so fertile_fraction >= 0.30. If the sum encroaches,
     // shave maturity_fraction first (the most variable term).
-    let fertile_min = Real::from_ratio(30, 100);
+    let fertile_min = Real::percent(30);
     let total_non_fertile = infant_fraction + maturity_fraction + eldership_fraction;
     let allowed_non_fertile = Real::ONE - fertile_min;
     let (maturity_fraction, eldership_fraction) = if total_non_fertile > allowed_non_fertile {
         let overflow = total_non_fertile - allowed_non_fertile;
-        let new_maturity = (maturity_fraction - overflow).max(Real::from_ratio(4, 100));
+        let new_maturity = (maturity_fraction - overflow).max(Real::percent(4));
         let still_over =
             (infant_fraction + new_maturity + eldership_fraction) - allowed_non_fertile;
         let new_eldership = if still_over > Real::ZERO {
@@ -885,20 +880,18 @@ pub fn derive_population_biology(
     };
     // Infant survival in [0.05, 0.95], inversely correlated with
     // r_axis (r-strategists invest little per offspring).
-    let infant_survival =
-        Real::from_ratio(5, 100) + (Real::ONE - r_axis) * Real::from_ratio(90, 100);
+    let infant_survival = Real::percent(5) + (Real::ONE - r_axis) * Real::percent(90);
     // Juvenile survival in [0.20, 0.99], same shape but compressed
     // — even r-strategists' juveniles (the ones that survived
     // infancy) have decent prospects.
-    let juvenile_survival =
-        Real::from_ratio(20, 100) + (Real::ONE - r_axis) * Real::from_ratio(79, 100);
+    let juvenile_survival = Real::percent(20) + (Real::ONE - r_axis) * Real::percent(79);
     // Per-bracket food multipliers: pinned. infants 0.30, juveniles
     // 0.60, fertile 1.00, elder 0.90.
     let food_multipliers = [
-        Real::from_ratio(30, 100),
-        Real::from_ratio(60, 100),
+        Real::percent(30),
+        Real::percent(60),
         Real::ONE,
-        Real::from_ratio(90, 100),
+        Real::percent(90),
     ];
     PopulationBiology {
         clutch_size,
@@ -916,7 +909,7 @@ pub fn derive_population_biology(
 /// higher; limbs / trunks / tongues score lower.
 fn manipulation_r_lean(modes: &[Manipulation]) -> Real {
     if modes.is_empty() {
-        return Real::from_ratio(50, 100);
+        return Real::percent(50);
     }
     let mut score = Real::ZERO;
     for m in modes {
@@ -926,12 +919,8 @@ fn manipulation_r_lean(modes: &[Manipulation]) -> Real {
             | ManipulationKind::FluidJet
             | ManipulationKind::Mandible
             | ManipulationKind::Burrow => Real::ONE,
-            ManipulationKind::ElectricDischarge | ManipulationKind::MouthBeak => {
-                Real::from_ratio(60, 100)
-            }
-            ManipulationKind::Tentacle | ManipulationKind::TonguePrehensile => {
-                Real::from_ratio(40, 100)
-            }
+            ManipulationKind::ElectricDischarge | ManipulationKind::MouthBeak => Real::percent(60),
+            ManipulationKind::Tentacle | ManipulationKind::TonguePrehensile => Real::percent(40),
             ManipulationKind::Trunk
             | ManipulationKind::LimbGrasp
             | ManipulationKind::ToolExtension => Real::ZERO,

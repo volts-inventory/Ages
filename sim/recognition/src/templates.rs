@@ -58,10 +58,7 @@ impl RecognitionLibrary {
                 RecognitionTemplate {
                     id: 3,
                     name: "ice_present",
-                    signature: Signature::Above(
-                        Field::Substance(Substance::Ice),
-                        Real::from_ratio(1, 100),
-                    ),
+                    signature: Signature::Above(Field::Substance(Substance::Ice), Real::percent(1)),
                     tags: &[FormTag::Threshold],
                     channels: &[
                         ChannelKind::VisualLight,
@@ -75,7 +72,7 @@ impl RecognitionLibrary {
                     name: "vapour_present",
                     signature: Signature::Above(
                         Field::Substance(Substance::Vapour),
-                        Real::from_ratio(1, 100),
+                        Real::percent(1),
                     ),
                     tags: &[FormTag::Threshold, FormTag::ExponentialChange],
                     channels: &[
@@ -250,7 +247,7 @@ impl RecognitionLibrary {
                             Field::Substance(Substance::Fuel),
                             Real::from_ratio(3, 10),
                         ),
-                        Signature::Below(Field::WaterDepth, Real::from_ratio(1, 100)),
+                        Signature::Below(Field::WaterDepth, Real::percent(1)),
                     ]),
                     tags: &[FormTag::Threshold, FormTag::Logistic],
                     channels: &[
@@ -353,7 +350,7 @@ impl RecognitionLibrary {
                     signature: Signature::All(vec![
                         Signature::AbsAbove(Field::Charge, Real::from_int(8)),
                         Signature::Below(Field::Charge, Real::from_int(40)),
-                        Signature::Below(Field::WaterDepth, Real::from_ratio(1, 100)),
+                        Signature::Below(Field::WaterDepth, Real::percent(1)),
                         Signature::Above(
                             Field::Substance(Substance::Fuel),
                             Real::from_ratio(2, 10),
@@ -376,7 +373,7 @@ impl RecognitionLibrary {
                     signature: Signature::All(vec![
                         Signature::AbsAbove(Field::Charge, Real::from_int(10)),
                         Signature::Below(Field::Charge, Real::from_int(20)),
-                        Signature::Below(Field::WaterDepth, Real::from_ratio(1, 100)),
+                        Signature::Below(Field::WaterDepth, Real::percent(1)),
                     ]),
                     tags: &[FormTag::DistanceDecay, FormTag::PowerOrLog],
                     channels: &[ChannelKind::MagneticSense, ChannelKind::Tactile],
@@ -392,10 +389,7 @@ impl RecognitionLibrary {
                     name: "hydrocarbon_seep",
                     signature: Signature::All(vec![
                         Signature::Above(Field::Substance(Substance::Fossil), Real::ZERO),
-                        Signature::Above(
-                            Field::Substance(Substance::Vapour),
-                            Real::from_ratio(1, 100),
-                        ),
+                        Signature::Above(Field::Substance(Substance::Vapour), Real::percent(1)),
                     ]),
                     tags: &[FormTag::Logistic, FormTag::Threshold],
                     channels: &[
