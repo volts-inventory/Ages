@@ -29,7 +29,7 @@ impl Mechanics {
     /// `Planet` field is already in m/s².
     pub fn earth_like() -> Self {
         Self {
-            gravity: Real::from_ratio(981, 100),
+            gravity: Real::percent(981),
         }
     }
 }

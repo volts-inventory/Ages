@@ -39,7 +39,7 @@ const RANGE_TIER3: u32 = 20;
 
 /// Hex contact range for a civ in cells. `u32::MAX` means unlimited
 /// (radio-equivalent or better — terrain-agnostic too).
-pub fn contact_range(civ: &Civ) -> u32 {
+fn contact_range(civ: &Civ) -> u32 {
     let has = |k: ToolKind| civ.unlocked_tools.contains(&k);
     if has(ToolKind::LongRangeCommunication)
         || has(ToolKind::InformationNetworking)
@@ -65,7 +65,7 @@ pub fn contact_range(civ: &Civ) -> u32 {
 /// always can; airborne species fly across water natively;
 /// terrestrial civs unlock it via watercraft, navigation, or
 /// amphibious construction. Aerial transport flies over water.
-pub fn can_traverse_water(civ: &Civ, habitat: Habitat) -> bool {
+fn can_traverse_water(civ: &Civ, habitat: Habitat) -> bool {
     if matches!(
         habitat,
         Habitat::Aquatic | Habitat::Amphibious | Habitat::Airborne
@@ -83,7 +83,7 @@ pub fn can_traverse_water(civ: &Civ, habitat: Habitat) -> bool {
 /// Can the civ traverse land cells? Terrestrial / amphibious /
 /// airborne species always can; aquatic civs unlock it via
 /// amphibious construction or aerial transport.
-pub fn can_traverse_land(civ: &Civ, habitat: Habitat) -> bool {
+fn can_traverse_land(civ: &Civ, habitat: Habitat) -> bool {
     if matches!(
         habitat,
         Habitat::Terrestrial | Habitat::Amphibious | Habitat::Airborne
@@ -102,18 +102,12 @@ pub fn can_traverse_land(civ: &Civ, habitat: Habitat) -> bool {
 ///    steps, traversing only cells passable by *either* civ (the
 ///    union: A's runners cover land, B's boats cover water — the
 ///    message hops via whichever can carry it on each cell).
-pub fn civs_in_contact(
-    civ_a: &Civ,
-    civ_b: &Civ,
-    habitat: Habitat,
-    state: &PhysicsState,
-) -> bool {
+pub fn civs_in_contact(civ_a: &Civ, civ_b: &Civ, habitat: Habitat, state: &PhysicsState) -> bool {
     /// Hex-axial neighbour offsets in `(dq, dr)` form, paired with
     /// the wrap convention used by the rest of the sim. Encoded as
     /// `i8` so the BFS can stay in unsigned arithmetic and still
     /// handle the −1 step via modular `+ (width-1) % width`.
-    const OFFSETS: [(i8, i8); 6] =
-        [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
+    const OFFSETS: [(i8, i8); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
 
     let range_a = contact_range(civ_a);
     let range_b = contact_range(civ_b);

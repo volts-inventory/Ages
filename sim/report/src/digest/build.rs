@@ -368,13 +368,13 @@ impl Digest {
                 for (i, v) in r.axes_q32.iter().take(3).enumerate() {
                     axes[i] = *v;
                 }
-                self.civ_or_pending(r.civ_id, r.tick)
-                    .religion_shifts
-                    .push(crate::digest::ReligionRecord {
+                self.civ_or_pending(r.civ_id, r.tick).religion_shifts.push(
+                    crate::digest::ReligionRecord {
                         tick: r.tick,
                         axes_q32: axes,
                         dogmatism_q32: r.dogmatism_q32,
-                    });
+                    },
+                );
             }
             Event::CivContact(c) => {
                 self.contacts.push(Contact {
@@ -517,12 +517,12 @@ impl Digest {
             // transition.
             Event::CivLifeExpectancyChanged(e) => {
                 let chapter = self.civ_or_pending(e.civ_id, e.tick);
-                chapter
-                    .life_expectancy_history
-                    .push(crate::digest::types::LifeExpectancySnapshot {
+                chapter.life_expectancy_history.push(
+                    crate::digest::types::LifeExpectancySnapshot {
                         tick: e.tick,
                         life_expectancy_months_q32: e.life_expectancy_months_q32,
-                    });
+                    },
+                );
             }
             // Surface emergent templates and tools in the
             // discovering civ's chapter. The civ might not exist
@@ -599,7 +599,7 @@ impl Digest {
             discovered_templates: Vec::new(),
             invented_tools: Vec::new(),
             life_expectancy_history: Vec::new(),
-                    surplus_history: Vec::new(),
+            surplus_history: Vec::new(),
         });
         if !self.founding_order.contains(&civ_id) {
             self.founding_order.push(civ_id);

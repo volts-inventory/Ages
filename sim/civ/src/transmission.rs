@@ -12,9 +12,9 @@ use crate::discovery::ConfirmedRelation;
 use crate::figures::NameGrammar;
 use crate::Civ;
 use sim_arith::transcendental::exp;
-use sim_arith::Real;
 #[cfg(test)]
 use sim_arith::Pop;
+use sim_arith::Real;
 use std::collections::BTreeMap;
 
 /// Placeholders under tuning. Threshold tuned
@@ -86,7 +86,7 @@ pub fn age_decay(age_ticks: u64, decay_ticks: u64) -> Real {
 pub fn comprehension(linguistic_dist: Real, age_ticks: u64, decay_ticks: u64) -> Real {
     let ling = (Real::ONE - linguistic_dist).max(Real::ZERO);
     let age = age_decay(age_ticks, decay_ticks);
-    let tier = Real::from_ratio(TIER_FACTOR.0, TIER_FACTOR.1);
+    let tier = Real::from(TIER_FACTOR);
     // Cultural-distance term defaults to 0 in v1 (factor = 1).
     let cult = Real::ONE;
     ling * age * tier * cult
@@ -165,7 +165,7 @@ pub fn diffuse_between(
         return Vec::new();
     }
     let drift = linguistic_distance(&source.grammar, &dest.grammar);
-    let threshold = Real::from_ratio(TRANSMIT_THRESHOLD.0, TRANSMIT_THRESHOLD.1);
+    let threshold = Real::from(TRANSMIT_THRESHOLD);
 
     let mut best: BTreeMap<u32, ConfirmedRelation> = BTreeMap::new();
     for fig in &source.figures {
@@ -190,8 +190,7 @@ pub fn diffuse_between(
     // crosses the linguistic gap; clamped at ×1.5 so a fully-
     // equipped civ still has to earn comprehension above the
     // threshold rather than getting it for free.
-    let fidelity =
-        (Real::ONE + source.tool_transmission_fidelity_bonus()).min(Real::from_ratio(150, 100));
+    let fidelity = (Real::ONE + source.tool_transmission_fidelity_bonus()).min(Real::percent(150));
     for (rid, mut rel) in best {
         // Skip relations the destination has already confirmed —
         // direct contact doesn't overwrite local knowledge.
@@ -206,7 +205,7 @@ pub fn diffuse_between(
         // tier factor; no age decay (live contact). fidelity
         // multiplier folds in.
         let ling = (Real::ONE - drift).max(Real::ZERO);
-        let tier = Real::from_ratio(TIER_FACTOR.0, TIER_FACTOR.1);
+        let tier = Real::from(TIER_FACTOR);
         let score = (ling * tier * fidelity).min(Real::ONE);
         if score <= threshold {
             continue;
@@ -248,7 +247,7 @@ pub fn transmit_from_parent(
         return (Vec::new(), Vec::new());
     }
     let dist = linguistic_distance(&parent.grammar, &successor.grammar);
-    let threshold = Real::from_ratio(TRANSMIT_THRESHOLD.0, TRANSMIT_THRESHOLD.1);
+    let threshold = Real::from(TRANSMIT_THRESHOLD);
 
     // communicativeness boost: the parent civ's most-communicative
     // figure scales the comprehension score on every transmitted
@@ -277,8 +276,7 @@ pub fn transmit_from_parent(
     // wrote things down (CulturalEncoding) preserves them better
     // for successors than one that relied on oral tradition.
     // Capped at ×1.5 so the gate threshold still has to be cleared.
-    let fidelity =
-        (Real::ONE + parent.tool_transmission_fidelity_bonus()).min(Real::from_ratio(150, 100));
+    let fidelity = (Real::ONE + parent.tool_transmission_fidelity_bonus()).min(Real::percent(150));
 
     // Dedupe parent relations by relation_id, keep best confidence.
     let mut best: BTreeMap<u32, ConfirmedRelation> = BTreeMap::new();
@@ -296,8 +294,8 @@ pub fn transmit_from_parent(
 
     let mut records = Vec::new();
     let mut myths = Vec::new();
-    let myth_floor = Real::from_ratio(MYTH_FLOOR.0, MYTH_FLOOR.1);
-    let myth_push_base = Real::from_ratio(MYTH_PUSH_BASE.0, MYTH_PUSH_BASE.1);
+    let myth_floor = Real::from(MYTH_FLOOR);
+    let myth_push_base = Real::from(MYTH_PUSH_BASE);
     let target_idx = 0; // First figure receives all inherited knowledge in v1.
     for (_rid, mut rel) in best {
         let parent_collapsed = parent.collapsed_tick.unwrap_or(transmitted_at_tick);
@@ -429,16 +427,10 @@ mod tests {
         // post-run report (capital / town / village / hamlet).
         let mut civ = Civ::new(1, 0, Pop::from_int(1000));
         assert_eq!(civ.peak_claimed_cells, 0);
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(85, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(85));
 
         civ.peak_claimed_cells = 1;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(85, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(85));
 
         civ.peak_claimed_cells = 2;
         assert_eq!(civ.settlement_persistence_multiplier(), Real::ONE);
@@ -447,28 +439,16 @@ mod tests {
         assert_eq!(civ.settlement_persistence_multiplier(), Real::ONE);
 
         civ.peak_claimed_cells = 6;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(115, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(115));
 
         civ.peak_claimed_cells = 15;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(115, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(115));
 
         civ.peak_claimed_cells = 16;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(130, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(130));
 
         civ.peak_claimed_cells = 1000;
-        assert_eq!(
-            civ.settlement_persistence_multiplier(),
-            Real::from_ratio(130, 100)
-        );
+        assert_eq!(civ.settlement_persistence_multiplier(), Real::percent(130));
     }
 
     #[test]

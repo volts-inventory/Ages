@@ -112,7 +112,7 @@ pub fn check_and_apply(
             // fraction. Aggregate cohort updates in sync.
             // PermanentMasonry / DefensiveFortification
             // soften the blow via apply_catastrophe_resistance.
-            let raw_frac = Real::from_ratio(VOLCANIC_POP_LOSS.0, VOLCANIC_POP_LOSS.1);
+            let raw_frac = Real::from(VOLCANIC_POP_LOSS);
             let frac = civ.apply_catastrophe_resistance(raw_frac);
             let cell_u32 = u32::try_from(cell).unwrap_or(u32::MAX);
             let lost_in_region = civ.drop_cell_pop(cell_u32, frac);
@@ -143,10 +143,8 @@ pub fn check_and_apply(
     // driven kinds (volcanic / asteroid / solar / ice age) keep raw
     // cooldowns: those are external to biology.
     let metabolism = planet.metabolic_substrate.metabolism();
-    let disease_cooldown = crate::demographics::streak_ticks_for_metabolism(
-        DISEASE_COOLDOWN_TICKS,
-        metabolism,
-    );
+    let disease_cooldown =
+        crate::demographics::streak_ticks_for_metabolism(DISEASE_COOLDOWN_TICKS, metabolism);
     let disease_ready = civ
         .last_disease_tick
         .is_none_or(|t| tick.saturating_sub(t) >= disease_cooldown);
@@ -156,7 +154,7 @@ pub fn check_and_apply(
         // GeneticManipulation reduce the realised loss via
         // apply_catastrophe_resistance — the headline catastrophe-
         // resistance effect for healthcare-bearing civs.
-        let base_frac = Real::from_ratio(DISEASE_POP_LOSS.0, DISEASE_POP_LOSS.1);
+        let base_frac = Real::from(DISEASE_POP_LOSS);
         let severity_frac = base_frac * disease_severity_factor(planet.biosphere);
         let frac = civ.apply_catastrophe_resistance(severity_frac);
         let center_frac = frac * Real::from_int(2);
@@ -186,10 +184,10 @@ pub fn check_and_apply(
         // pivot toward communitarian + mystical (plague-cosmology pattern).
         let push = Cosmology {
             empirical: Real::ZERO,
-            communitarian: Real::from_ratio(15, 100),
-            reformist: -Real::from_ratio(5, 100),
-            mystical: Real::from_ratio(15, 100),
-            hierarchical: Real::from_ratio(5, 100),
+            communitarian: Real::percent(15),
+            reformist: -Real::percent(5),
+            mystical: Real::percent(15),
+            hierarchical: Real::percent(5),
         };
         civ.apply_cosmology_push(&push, Real::ONE);
         return Some(CatastropheRecord {
@@ -211,7 +209,7 @@ pub fn check_and_apply(
         // pop drop so a brand-new civ still feels the global
         // aftermath. : catastrophe-resistance tools soften
         // the absolute loss (built shelter survives debris).
-        let raw_frac = Real::from_ratio(ASTEROID_POP_LOSS.0, ASTEROID_POP_LOSS.1);
+        let raw_frac = Real::from(ASTEROID_POP_LOSS);
         let frac = civ.apply_catastrophe_resistance(raw_frac);
         let center_frac = frac * Real::from_int(2);
         let neighbor_frac = frac / Real::from_int(2);
@@ -238,11 +236,11 @@ pub fn check_and_apply(
         // Asteroid pushes mystical strongly + reformist (rebuild
         // pressure) — civilization-shaking event.
         let push = Cosmology {
-            empirical: -Real::from_ratio(5, 100),
-            communitarian: Real::from_ratio(10, 100),
-            reformist: Real::from_ratio(15, 100),
-            mystical: Real::from_ratio(20, 100),
-            hierarchical: -Real::from_ratio(5, 100),
+            empirical: -Real::percent(5),
+            communitarian: Real::percent(10),
+            reformist: Real::percent(15),
+            mystical: Real::percent(20),
+            hierarchical: -Real::percent(5),
         };
         civ.apply_cosmology_push(&push, Real::ONE);
         return Some(CatastropheRecord {
@@ -261,7 +259,7 @@ pub fn check_and_apply(
         // catastrophe resistance softens the flare's hit
         // (advanced shielding / underground habitats / radiation
         // medicine).
-        let raw_frac = Real::from_ratio(SOLAR_FLARE_POP_LOSS.0, SOLAR_FLARE_POP_LOSS.1);
+        let raw_frac = Real::from(SOLAR_FLARE_POP_LOSS);
         let frac = civ.apply_catastrophe_resistance(raw_frac);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
@@ -271,10 +269,10 @@ pub fn check_and_apply(
         // Empirical + reformist (the species sees the sky's
         // role in their fate — drives observational science).
         let push = Cosmology {
-            empirical: Real::from_ratio(15, 100),
+            empirical: Real::percent(15),
             communitarian: Real::ZERO,
-            reformist: Real::from_ratio(10, 100),
-            mystical: Real::from_ratio(5, 100),
+            reformist: Real::percent(10),
+            mystical: Real::percent(5),
             hierarchical: Real::ZERO,
         };
         civ.apply_cosmology_push(&push, Real::ONE);
@@ -294,9 +292,9 @@ pub fn check_and_apply(
         // severity scales with planet's mean temperature —
         // colder planets suffer worse ice ages. : catastrophe
         // resistance + cryogenic-engineering tools soften the loss.
-        let base_frac = Real::from_ratio(ICE_AGE_POP_LOSS.0, ICE_AGE_POP_LOSS.1);
-        let severity_frac = (base_frac * ice_age_severity_factor(planet.mean_temperature))
-            .min(Real::from_ratio(60, 100));
+        let base_frac = Real::from(ICE_AGE_POP_LOSS);
+        let severity_frac =
+            (base_frac * ice_age_severity_factor(planet.mean_temperature)).min(Real::percent(60));
         let frac = civ.apply_catastrophe_resistance(severity_frac);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
@@ -305,10 +303,10 @@ pub fn check_and_apply(
         civ.last_catastrophe_tick = Some(tick);
         let push = Cosmology {
             empirical: Real::ZERO,
-            communitarian: Real::from_ratio(20, 100),
-            reformist: -Real::from_ratio(5, 100),
-            mystical: Real::from_ratio(5, 100),
-            hierarchical: Real::from_ratio(15, 100),
+            communitarian: Real::percent(20),
+            reformist: -Real::percent(5),
+            mystical: Real::percent(5),
+            hierarchical: Real::percent(15),
         };
         civ.apply_cosmology_push(&push, Real::ONE);
         return Some(CatastropheRecord {

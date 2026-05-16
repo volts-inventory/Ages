@@ -56,7 +56,7 @@ fn ln_sigma() -> Real {
 /// order-of-magnitude of real planetary thermal-equilibration
 /// timescales for surface layers.
 fn relaxation_rate() -> Real {
-    Real::from_ratio(2, 100)
+    Real::percent(2)
 }
 
 /// Number of seasonal slices per orbital year. 12 (one per
@@ -160,7 +160,7 @@ impl Radiation {
         // from atmospheric scattering / longitude variance our 1D
         // model can't represent. Without this, pole cells trend toward
         // 0 K and the climate gradient becomes unphysically extreme.
-        let lat_floor = Real::from_ratio(15, 100);
+        let lat_floor = Real::percent(15);
 
         let n_seasons = SEASONS_PER_YEAR as usize;
         let mut t_eq_per_row_per_season: Vec<Vec<Real>> =
@@ -194,7 +194,7 @@ impl Radiation {
             // gives 1.0 across all seasons.
             let one_minus_ecos = Real::ONE - eccentricity * cos_phase;
             let safe_denom = if one_minus_ecos <= Real::ZERO {
-                Real::from_ratio(5, 100)
+                Real::percent(5)
             } else {
                 one_minus_ecos
             };
@@ -220,11 +220,8 @@ impl Radiation {
                 // average factor 0.25 distributes a sun's
                 // irradiance over the sphere (the sub-solar point
                 // sees S, the average sees S/4).
-                let absorbed = stellar_w_per_m2
-                    * lat_factor
-                    * albedo_factor
-                    * Real::from_ratio(25, 100)
-                    * ecc_factor;
+                let absorbed =
+                    stellar_w_per_m2 * lat_factor * albedo_factor * Real::percent(25) * ecc_factor;
                 // T_eq = (absorbed / σ)^(1/4) in K. Compute via
                 // logs to dodge fixed-point overflow on `absorbed/σ ≈
                 // 10^9`:  T_eq = exp((ln(absorbed) - ln(σ)) / 4)

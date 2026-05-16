@@ -62,6 +62,22 @@ pub struct WorldFrame {
     pub nomad_cells: Vec<u32>,
 }
 
+/// Style flags for `render_world_frame_styled`. All-false is the
+/// monochrome non-compact digit-glyph default (`render_world_frame`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameStyle {
+    /// Emit 256-color ANSI escapes around per-civ identity symbols.
+    /// Live viewport only; markdown reports skip this.
+    pub use_color: bool,
+    /// One character per cell, no hex-row offset — halves grid
+    /// width so 24-wide grids fit on portrait phone terminals.
+    pub compact: bool,
+    /// Replace per-civ claim digits with Unicode block glyphs
+    /// (░ ▒ ▓ █) sized by per-cell pop fill-%. Centroid letters,
+    /// disputed `#`, and nomad markers are unchanged.
+    pub density: bool,
+}
+
 /// Render a `WorldFrame` as an ASCII grid. The output is a single
 /// fenced code block with a column header, hex-offset rows, and
 /// per-cell symbols chosen by overlay precedence:
@@ -87,103 +103,27 @@ pub fn render_world_frame(
     frame: &WorldFrame,
     caption: &str,
 ) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, false, false, false)
+    render_world_frame_styled(pm, planet, frame, caption, FrameStyle::default())
 }
 
-/// Compact variant — 1 character per cell, no hex-row
-/// offset. Halves the on-screen grid width so larger sim grids
-/// (e.g. 24-wide) still fit on portrait phone terminals.
-#[must_use]
-pub fn render_world_frame_compact(
+/// Style-parameterised renderer. `FrameStyle::default()` matches
+/// `render_world_frame` exactly. Colored output emits 256-color
+/// ANSI escapes around per-civ identity symbols, with each civ id
+/// mapped to a stable 24-step palette colour — use only on
+/// terminal sinks. Density mode swaps the claim-digit ladder for
+/// Unicode block glyphs (░ ▒ ▓ █) sized by per-cell pop / cap.
+pub fn render_world_frame_styled(
     pm: &protocol::PlanetMap,
     planet: Option<&protocol::PlanetDerived>,
     frame: &WorldFrame,
     caption: &str,
+    style: FrameStyle,
 ) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, false, true, false)
-}
-
-#[must_use]
-pub fn render_world_frame_colored_compact(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, true, true, false)
-}
-
-/// Same as `render_world_frame` but emits 256-color ANSI escapes
-/// around per-civ identity symbols (capital letter, claim digit,
-/// and `#` disputed marker). Each civ id maps to a stable colour
-/// from a 24-step palette so adjacent civs are visually distinct
-/// in the live viewport. Use only on terminal sinks; the report
-/// path stays on the no-colour `render_world_frame` because
-/// markdown viewers don't render ANSI escapes.
-pub fn render_world_frame_colored(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, true, false, false)
-}
-
-/// Density-glyph variants of the above — claim digits are
-/// replaced by Unicode block characters (░ ▒ ▓ █) sized by each
-/// cell's pop fill-% relative to its own cap. Centroid letters
-/// still mark capitals. Disputed cells and nomad markers are
-/// unchanged. Use for the `--cli viewport-density` flag.
-#[must_use]
-pub fn render_world_frame_density(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, false, false, true)
-}
-
-#[must_use]
-pub fn render_world_frame_density_compact(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, false, true, true)
-}
-
-#[must_use]
-pub fn render_world_frame_density_colored(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, true, false, true)
-}
-
-#[must_use]
-pub fn render_world_frame_density_colored_compact(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-) -> String {
-    render_world_frame_inner(pm, planet, frame, caption, true, true, true)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_world_frame_inner(
-    pm: &protocol::PlanetMap,
-    planet: Option<&protocol::PlanetDerived>,
-    frame: &WorldFrame,
-    caption: &str,
-    use_color: bool,
-    compact: bool,
-    density_mode: bool,
-) -> String {
+    let FrameStyle {
+        use_color,
+        compact,
+        density: density_mode,
+    } = style;
     let mut s = String::new();
     if pm.grid_width == 0 || pm.grid_height == 0 {
         return s;
@@ -366,9 +306,7 @@ fn render_world_frame_inner(
                         // saturation but keeps digits readable.
                         .unwrap_or(frame_max_pop);
                     pop_digit(pop, cap)
-                        .unwrap_or_else(|| {
-                            crate::render::terrain_symbol(pm, r, q, terrain_peak)
-                        })
+                        .unwrap_or_else(|| crate::render::terrain_symbol(pm, r, q, terrain_peak))
                 } else {
                     // Monochrome mode (markdown post-run report):
                     // keep the civ-id digit so civs are still
@@ -786,7 +724,16 @@ mod tests {
             }],
             nomad_cells: vec![],
         };
-        let s = render_world_frame_colored(&pm(4, 3), None, &frame, "");
+        let s = render_world_frame_styled(
+            &pm(4, 3),
+            None,
+            &frame,
+            "",
+            FrameStyle {
+                use_color: true,
+                ..Default::default()
+            },
+        );
         assert!(s.contains('A'));
         // Civ-color escape applied to the saturated `9`.
         let civ_color = civ_color_code(1);
@@ -826,7 +773,16 @@ mod tests {
             }],
             nomad_cells: vec![],
         };
-        let s = render_world_frame_density(&pm(4, 3), None, &frame, "");
+        let s = render_world_frame_styled(
+            &pm(4, 3),
+            None,
+            &frame,
+            "",
+            FrameStyle {
+                density: true,
+                ..Default::default()
+            },
+        );
         assert!(s.contains('A'), "centroid letter still present");
         assert!(s.contains('\u{2588}'), "100% cell renders as █");
         assert!(s.contains('\u{2592}'), "40% cell renders as ▒");

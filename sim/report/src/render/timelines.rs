@@ -173,7 +173,12 @@ pub(super) fn render_migration_patterns(s: &mut String, d: &Digest) {
                 .claimed_cells
                 .iter()
                 .copied()
-                .zip(prev.cell_populations_q32.iter().copied().map(pop_q32_to_f64))
+                .zip(
+                    prev.cell_populations_q32
+                        .iter()
+                        .copied()
+                        .map(pop_q32_to_f64),
+                )
                 .collect();
             for (i, &cell) in next.claimed_cells.iter().enumerate() {
                 let next_pop = pop_q32_to_f64(next.cell_populations_q32[i]);

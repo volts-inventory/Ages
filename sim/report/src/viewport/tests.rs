@@ -211,7 +211,11 @@ fn civ_pop_line_clamps_negative_zero() {
     }))
     .unwrap();
     let s = String::from_utf8(buf).unwrap();
-    assert!(!s.contains("-0p"), "sidebar should never render -0p; got:\n{}", s);
+    assert!(
+        !s.contains("-0p"),
+        "sidebar should never render -0p; got:\n{}",
+        s
+    );
     assert!(s.contains("0p"));
 }
 
@@ -247,8 +251,16 @@ fn freshly_founded_civ_sidebar_shows_initial_population() {
     }))
     .unwrap();
     let s = String::from_utf8(buf).unwrap();
-    assert!(s.contains("100p"), "sidebar should show founding pop; got:\n{}", s);
-    assert!(!s.contains("· 0p"), "sidebar should not show 0p for live civ; got:\n{}", s);
+    assert!(
+        s.contains("100p"),
+        "sidebar should show founding pop; got:\n{}",
+        s
+    );
+    assert!(
+        !s.contains("· 0p"),
+        "sidebar should not show 0p for live civ; got:\n{}",
+        s
+    );
 }
 
 #[test]
@@ -499,7 +511,11 @@ fn sidebar_cohesion_line_carries_war_or_peace_tag() {
     let s = String::from_utf8(buf).unwrap();
     let frames: Vec<&str> = s.split("-- map --").collect();
     // 4 splits: prologue + 3 frames.
-    assert!(frames.len() >= 4, "expected >=4 split segments; got {}", frames.len());
+    assert!(
+        frames.len() >= 4,
+        "expected >=4 split segments; got {}",
+        frames.len()
+    );
     assert!(
         frames[1].contains("peace"),
         "pre-war frame should tag peace; got:\n{}",

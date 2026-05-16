@@ -206,8 +206,7 @@ impl BiofuelRegrowth {
                 let ox_cur = state.substance(self.oxidiser.idx())[i];
                 state.substance_mut(self.oxidiser.idx())[i] = ox_cur + m;
                 if self.latent_heat != Real::ZERO {
-                    state.temperature_mut()[i] =
-                        state.temperature()[i] + (m * self.latent_heat);
+                    state.temperature_mut()[i] = state.temperature()[i] + (m * self.latent_heat);
                 }
             }
         }

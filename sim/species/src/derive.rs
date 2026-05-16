@@ -3,8 +3,7 @@
 
 use crate::sampling::{
     compute_t0_loss, derive_habitat, derive_initial_cosmology, derive_population_biology,
-    sample_manipulation, sample_modalities, sample_unit, species_name_from_seed,
-    template_channels,
+    sample_manipulation, sample_modalities, sample_unit, species_name_from_seed, template_channels,
 };
 use crate::species::Species;
 use crate::types::{CognitionTopology, ModalityKind, DYNAMIC_TOOL_ID_START};
@@ -64,7 +63,7 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
     // introspective edge" without adding a separate behavioural
     // fork branch. Ceiling at 1.0 so the trait stays in [0, 1].
     let cognition = if matches!(cognition_topology, CognitionTopology::Distributed) {
-        let bumped = cognition * Real::from_ratio(110, 100);
+        let bumped = cognition * Real::percent(110);
         if bumped > Real::ONE {
             Real::ONE
         } else {

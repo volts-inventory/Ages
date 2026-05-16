@@ -10,9 +10,9 @@
 //! constants stay here.
 
 use protocol::{
-    CatastropheFired, CivCollapsed, CivContact, CivFounded, CivTerritoryChanged,
-    ConflictResolved, Event, KnowledgeDiffused, KnowledgeTransmitted, PeaceConcluded,
-    PeaceReason, Phase, RunHeader, TickEvent, WarDeclared, SCHEMA_VERSION,
+    CatastropheFired, CivCollapsed, CivContact, CivFounded, CivTerritoryChanged, ConflictResolved,
+    Event, KnowledgeDiffused, KnowledgeTransmitted, PeaceConcluded, PeaceReason, Phase, RunHeader,
+    TickEvent, WarDeclared, SCHEMA_VERSION,
 };
 use sim_arith::Real;
 use sim_civ::{catastrophe, conflict, cosmology, tech, transmission, Civ};
@@ -36,10 +36,8 @@ pub use config::{rng_from_seed, Rng, RunConfig};
 use events::{claimed_cells_for_event, figure_born_event, planet_to_event, species_to_event};
 use laws::build_laws;
 use setup::{build_planet_context, emit_nomads_changed, emit_species_drift_if_meaningful};
-#[allow(unused_imports)] // pick_best retained for v3 use cases
 use territory::{
-    compute_territory, pick_best_habitable_cell, pick_distant_habitable_cell,
-    pick_habitable_cell, target_cell_count,
+    compute_territory, pick_distant_habitable_cell, pick_habitable_cell, target_cell_count,
 };
 
 /// Walk the per-tick phases in their fixed order. Returning a slice
@@ -395,10 +393,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 // cosmology — surviving founders attribute the
                 // catastrophe to gods/punishment, ritual hardens,
                 // sacred-time goes eschatological.
-                civ.apply_religion_push(
-                    &sim_civ::religion::push_for_civ_collapsed(),
-                    Real::ONE,
-                );
+                civ.apply_religion_push(&sim_civ::religion::push_for_civ_collapsed(), Real::ONE);
                 collapse_events.push(CivCollapsed {
                     tick,
                     civ_id,
@@ -448,11 +443,9 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             let pop = civ.aggregate_population();
             let cap = civ.carrying_capacity_with_terrain(&state, &planet);
             let utilisation = if cap.raw().to_num::<i64>() > 0 {
-                let pop_r = sim_arith::Real::from_int(pop.raw().to_num::<i64>().max(0));
+                let pop_r = pop.to_real_nonneg();
                 let cap_r = sim_arith::Real::from_int(cap.raw().to_num::<i64>().max(1));
-                (pop_r / cap_r)
-                    .max(sim_arith::Real::ZERO)
-                    .min(sim_arith::Real::ONE)
+                (pop_r / cap_r).clamp01()
             } else {
                 sim_arith::Real::ZERO
             };
@@ -462,8 +455,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             // delta crosses the emit floor, OR when this is the
             // civ's first non-zero emission so the founding state
             // surfaces in the log.
-            let emit_floor =
-                sim_arith::Real::from_int(sim_civ::economy::SURPLUS_EMIT_DELTA_FLOOR);
+            let emit_floor = sim_arith::Real::from_int(sim_civ::economy::SURPLUS_EMIT_DELTA_FLOOR);
             let delta = civ.surplus - civ.last_emitted_surplus;
             if delta.abs() >= emit_floor {
                 surplus_events.push(protocol::CivSurplusChanged {
@@ -528,10 +520,14 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             let parent_collapse = last_collapse_tick;
             let elapsed_collapse = parent_collapse.map(|t| tick.saturating_sub(t));
             let metabolism = planet.metabolic_substrate.metabolism();
-            let dark_age_min =
-                sim_civ::streak_ticks_for_metabolism(sim_civ::FOUNDING_MIN_DARK_AGE_TICKS, metabolism);
-            let remnant_window =
-                sim_civ::streak_ticks_for_metabolism(sim_civ::RECENT_REMNANT_WINDOW_TICKS, metabolism);
+            let dark_age_min = sim_civ::streak_ticks_for_metabolism(
+                sim_civ::FOUNDING_MIN_DARK_AGE_TICKS,
+                metabolism,
+            );
+            let remnant_window = sim_civ::streak_ticks_for_metabolism(
+                sim_civ::RECENT_REMNANT_WINDOW_TICKS,
+                metabolism,
+            );
             let v1_eligible =
                 elapsed_collapse.is_some_and(|e| (dark_age_min..=remnant_window).contains(&e));
             // Trigger v2: charismatic-founder + post-catastrophe.
@@ -688,7 +684,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     let new_cells = claimed_cells_for_event(&new_civ);
                     let new_caps: Vec<i128> = new_cells
                         .iter()
-                        .map(|&c| new_civ.cell_capacity(&state, c, tick, &planet).raw().to_bits())
+                        .map(|&c| {
+                            new_civ
+                                .cell_capacity(&state, c, tick, &planet)
+                                .raw()
+                                .to_bits()
+                        })
                         .collect();
                     emitter.emit(&Event::CivFounded(CivFounded {
                         tick,
@@ -839,330 +840,335 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 let breakaway_floor =
                     sim_civ::founding_min_population(planet.biosphere, species.cognition)
                         / Real::from_int(2);
-                if breakaway_share >= breakaway_floor { 'breakaway: {
-                    // Parent's centroid for the same successor-
-                    // centroid distinctness rule the stateless-refound
-                    // path uses (above). Read before mutating
-                    // region_cohorts so we capture the live capital.
-                    let parent_centroid = civs[parent_idx].territory_centroid;
-                    // Civil-war seizure: the breakaway's centroid IS
-                    // a parent border cell — a cell the parent claims
-                    // that has at least one non-parent neighbour
-                    // (frontier with water, unclaimed land, or
-                    // another civ). The faction seats itself in a
-                    // captured village rather than settling new
-                    // ground next door. If parent has no border cells
-                    // (degenerate: parent has zero claims), skip the
-                    // breakaway entirely.
-                    //
-                    // Selection: lowest cell id among border
-                    // candidates. Deterministic, no extra RNG draw,
-                    // bit-for-bit replayable.
-                    let mut border_candidates: Vec<u32> = Vec::new();
-                    for &cell in &civs[parent_idx].claimed_cells {
-                        let axial = state.grid().axial_of(sim_physics::CellId(cell));
-                        let has_non_parent_nbr =
-                            state.grid().neighbours(axial).iter().any(|nbr| {
-                                !civs[parent_idx].claimed_cells.contains(&nbr.0)
-                            });
-                        if has_non_parent_nbr {
-                            border_candidates.push(cell);
+                if breakaway_share >= breakaway_floor {
+                    'breakaway: {
+                        // Parent's centroid for the same successor-
+                        // centroid distinctness rule the stateless-refound
+                        // path uses (above). Read before mutating
+                        // region_cohorts so we capture the live capital.
+                        let parent_centroid = civs[parent_idx].territory_centroid;
+                        // Civil-war seizure: the breakaway's centroid IS
+                        // a parent border cell — a cell the parent claims
+                        // that has at least one non-parent neighbour
+                        // (frontier with water, unclaimed land, or
+                        // another civ). The faction seats itself in a
+                        // captured village rather than settling new
+                        // ground next door. If parent has no border cells
+                        // (degenerate: parent has zero claims), skip the
+                        // breakaway entirely.
+                        //
+                        // Selection: lowest cell id among border
+                        // candidates. Deterministic, no extra RNG draw,
+                        // bit-for-bit replayable.
+                        let mut border_candidates: Vec<u32> = Vec::new();
+                        for &cell in &civs[parent_idx].claimed_cells {
+                            let axial = state.grid().axial_of(sim_physics::CellId(cell));
+                            let has_non_parent_nbr = state
+                                .grid()
+                                .neighbours(axial)
+                                .iter()
+                                .any(|nbr| !civs[parent_idx].claimed_cells.contains(&nbr.0));
+                            if has_non_parent_nbr {
+                                border_candidates.push(cell);
+                            }
                         }
-                    }
-                    border_candidates.sort_unstable();
-                    let Some(&centroid) = border_candidates.first() else {
-                        break 'breakaway;
-                    };
-                    // Transfer the seized cell from parent to (the
-                    // eventual) breakaway: drop it from parent's
-                    // claim + region_cohorts, then resync parent's
-                    // aggregate so subsequent `scale_in_place(keep)`
-                    // operates on the smaller post-seize total.
-                    let mut seized_cohort = sim_civ::Cohort::empty_with_civ(next_civ_id);
-                    civs[parent_idx].claimed_cells.remove(&centroid);
-                    if let Some(c) = civs[parent_idx].region_cohorts.remove(&centroid) {
-                        seized_cohort.merge_in(&c);
-                    }
-                    civs[parent_idx].resync_aggregate_from_regions();
-                    let seized_cells: Vec<u32> = vec![centroid];
-                    // Recompute breakaway_share against the
-                    // post-seize parent so totals conserve:
-                    //   parent_remaining = (orig - seized) × keep
-                    //   breakaway_total  = (orig - seized) × share + seized
-                    //                    = orig - parent_remaining ✓
-                    let parent_aggregate_post = civs[parent_idx].cohort.total();
-                    let breakaway_share = parent_aggregate_post * share_ratio;
-                    let keep_share = Real::ONE - share_ratio;
-                    civs[parent_idx].cohort.scale_in_place(keep_share);
-                    for c in civs[parent_idx].region_cohorts.values_mut() {
-                        c.scale_in_place(keep_share);
-                    }
-                    let _ = parent_centroid; // retained for symmetry with stateless-refound path
-                    // Cohesion path — give the parent a small
-                    // recovery boost (the disgruntled faction left)
-                    // so it doesn't immediately re-trigger another
-                    // breakaway streak. Capped at 1.0 by clamp.
-                    if is_cohesion_breakaway {
-                        let recovery = Real::from_ratio(
-                            sim_civ::COHESION_PARENT_RECOVERY.0,
-                            sim_civ::COHESION_PARENT_RECOVERY.1,
+                        border_candidates.sort_unstable();
+                        let Some(&centroid) = border_candidates.first() else {
+                            break 'breakaway;
+                        };
+                        // Transfer the seized cell from parent to (the
+                        // eventual) breakaway: drop it from parent's
+                        // claim + region_cohorts, then resync parent's
+                        // aggregate so subsequent `scale_in_place(keep)`
+                        // operates on the smaller post-seize total.
+                        let mut seized_cohort = sim_civ::Cohort::empty_with_civ(next_civ_id);
+                        civs[parent_idx].claimed_cells.remove(&centroid);
+                        if let Some(c) = civs[parent_idx].region_cohorts.remove(&centroid) {
+                            seized_cohort.merge_in(&c);
+                        }
+                        civs[parent_idx].resync_aggregate_from_regions();
+                        let seized_cells: Vec<u32> = vec![centroid];
+                        // Recompute breakaway_share against the
+                        // post-seize parent so totals conserve:
+                        //   parent_remaining = (orig - seized) × keep
+                        //   breakaway_total  = (orig - seized) × share + seized
+                        //                    = orig - parent_remaining ✓
+                        let parent_aggregate_post = civs[parent_idx].cohort.total();
+                        let breakaway_share = parent_aggregate_post * share_ratio;
+                        let keep_share = Real::ONE - share_ratio;
+                        civs[parent_idx].cohort.scale_in_place(keep_share);
+                        for c in civs[parent_idx].region_cohorts.values_mut() {
+                            c.scale_in_place(keep_share);
+                        }
+                        let _ = parent_centroid; // retained for symmetry with stateless-refound path
+                                                 // Cohesion path — give the parent a small
+                                                 // recovery boost (the disgruntled faction left)
+                                                 // so it doesn't immediately re-trigger another
+                                                 // breakaway streak. Capped at 1.0 by clamp.
+                        if is_cohesion_breakaway {
+                            let recovery = Real::from_ratio(
+                                sim_civ::COHESION_PARENT_RECOVERY.0,
+                                sim_civ::COHESION_PARENT_RECOVERY.1,
+                            );
+                            civs[parent_idx].cohesion =
+                                (civs[parent_idx].cohesion + recovery).clamp01();
+                            civs[parent_idx].cohesion_breakaway_streak = 0;
+                        }
+                        // Emit the parent's post-seizure territory so
+                        // viewport / report consumers see the seized
+                        // cell leave the parent's claim immediately —
+                        // otherwise the next CivTerritoryChanged for
+                        // the parent doesn't fire until its next
+                        // expand_via_overflow tick, leaving a phantom
+                        // multi-claim where both civs appear to own the
+                        // seized cell. Only emit when seizure actually
+                        // happened (no-op if seized_cells is empty).
+                        if !seized_cells.is_empty() {
+                            let parent_civ_ref = &civs[parent_idx];
+                            let parent_claimed_sorted = claimed_cells_for_event(parent_civ_ref);
+                            let parent_cell_pops: Vec<i128> = parent_claimed_sorted
+                                .iter()
+                                .map(|c| {
+                                    parent_civ_ref
+                                        .region_cohorts
+                                        .get(c)
+                                        .map_or(0i128, |cohort| cohort.total().raw().to_bits())
+                                })
+                                .collect();
+                            let parent_cell_caps: Vec<i128> = parent_claimed_sorted
+                                .iter()
+                                .map(|&c| {
+                                    parent_civ_ref
+                                        .cell_capacity(&state, c, tick, &planet)
+                                        .raw()
+                                        .to_bits()
+                                })
+                                .collect();
+                            emitter.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
+                                tick,
+                                civ_id: parent_id,
+                                claimed_cells: parent_claimed_sorted,
+                                population_q32: parent_civ_ref.cohort.total().raw().to_bits(),
+                                cell_populations_q32: parent_cell_pops,
+                                cell_capacities_q32: parent_cell_caps,
+                            }))?;
+                            civs[parent_idx].last_territory_emit_tick = tick;
+                        }
+                        // Breakaway founding cohort: migrating dissidents
+                        // from the rest of parent territory + the full
+                        // residents of the seized cell. Merging brackets
+                        // (not just the scalar count) preserves the
+                        // seized cell's age structure so the breakaway
+                        // doesn't start with a synthetic all-fertile band.
+                        let mut breakaway_cohort =
+                            sim_civ::Cohort::with_civ(breakaway_share, next_civ_id);
+                        breakaway_cohort.merge_in(&seized_cohort);
+                        breakaway_cohort.civ_membership = Some(next_civ_id);
+                        let mut new_civ = Civ::refound_from_stateless(
+                            next_civ_id,
+                            tick,
+                            breakaway_cohort,
+                            species.cognition,
+                            species.seed,
+                            &species_modality_kinds,
+                            parent_id,
                         );
-                        civs[parent_idx].cohesion = (civs[parent_idx].cohesion + recovery)
-                            .max(Real::ZERO)
-                            .min(Real::ONE);
-                        civs[parent_idx].cohesion_breakaway_streak = 0;
-                    }
-                    // Emit the parent's post-seizure territory so
-                    // viewport / report consumers see the seized
-                    // cell leave the parent's claim immediately —
-                    // otherwise the next CivTerritoryChanged for
-                    // the parent doesn't fire until its next
-                    // expand_via_overflow tick, leaving a phantom
-                    // multi-claim where both civs appear to own the
-                    // seized cell. Only emit when seizure actually
-                    // happened (no-op if seized_cells is empty).
-                    if !seized_cells.is_empty() {
-                        let parent_civ_ref = &civs[parent_idx];
-                        let parent_claimed_sorted = claimed_cells_for_event(parent_civ_ref);
-                        let parent_cell_pops: Vec<i128> = parent_claimed_sorted
+                        // Deterministic kingdom-style civ name.
+                        new_civ.name = sim_civ::civ_name_from_seed(cfg.seed, next_civ_id);
+                        // Breakaway descends from a still-living
+                        // parent — inherit its drift verbatim and add a
+                        // step. The parent and child diverge from this
+                        // point on as separate civs.
+                        {
+                            let parent_civ = &civs[parent_idx];
+                            new_civ.inherit_species_drift_with_environment(
+                                parent_civ,
+                                planet.seed,
+                                planet.metabolic_substrate.metabolism(),
+                                planet.biosphere,
+                            );
+                            new_civ.inherit_lineage_from(parent_civ);
+                        }
+                        // Cohesion-driven breakaway starts at a
+                        // higher cohesion than its falling-apart parent
+                        // — fresh authority, shared cause, smaller scale.
+                        // Dogmatic-driven breakaway leaves the default
+                        // cohesion (1.0) since it's a charismatic split
+                        // rather than a fragmentation event.
+                        if is_cohesion_breakaway {
+                            new_civ.cohesion = Real::from_ratio(
+                                sim_civ::COHESION_BREAKAWAY_INITIAL.0,
+                                sim_civ::COHESION_BREAKAWAY_INITIAL.1,
+                            );
+                            new_civ.last_emitted_cohesion = new_civ.cohesion;
+                        }
+                        new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
+                        new_civ.configure_substrate(
+                            planet.biosphere,
+                            planet.gravity,
+                            new_civ.effective_cognition(&species),
+                            new_civ.effective_sociality(&species),
+                            planet.metabolic_substrate.metabolism(),
+                        );
+                        // Breakaway sized to its half-share of the
+                        // parent's population; centred on the seized
+                        // parent border cell (the rebellion seats itself
+                        // in a captured village). The civil-war /
+                        // cultural-secession model: dissidents take over
+                        // a chunk of parent territory rather than
+                        // migrating to virgin frontier. Stateless
+                        // refounds keep the distant-placement path
+                        // (`pick_distant_habitable_cell` above) for the
+                        // Sumatra-vs-China successor model — that's a
+                        // "parent is dead, successor rises elsewhere"
+                        // story; this is "parent still rules, faction
+                        // splits off from a border city."
+                        new_civ.territory_centroid = centroid;
+                        let target = target_cell_count(&new_civ, state.grid().n_cells());
+                        // Breakaway: parent still holds its (post-
+                        // seizure) territory. Pass a fresh `forbidden`
+                        // set computed from civs as they stand AFTER the
+                        // seizure — the seized cell is no longer in any
+                        // civ's claim, so the BFS will pick it up (it's
+                        // the centroid, force-included) plus any
+                        // unclaimed habitable neighbours. The breakaway
+                        // can BFS *through* remaining parent territory
+                        // (parent land is still traversable) but never
+                        // double-claims it.
+                        let occupied_post: BTreeSet<u32> = civs
                             .iter()
-                            .map(|c| {
-                                parent_civ_ref
-                                    .region_cohorts
-                                    .get(c)
-                                    .map_or(0i128, |cohort| cohort.total().raw().to_bits())
-                            })
+                            .flat_map(|c| c.claimed_cells.iter().copied())
                             .collect();
-                        let parent_cell_caps: Vec<i128> = parent_claimed_sorted
+                        let cells = compute_territory(
+                            new_civ.territory_centroid,
+                            target,
+                            state.grid(),
+                            &state,
+                            &planet,
+                            &new_civ,
+                            species.habitat,
+                            &occupied_post,
+                        );
+                        let _ = parent_centroid; // distant placement supersedes adjacency
+                        new_civ.claim_cells(&cells);
+                        new_civ.refresh_available_forms(&species_baseline, &recognition);
+                        let initial_pop_q32 = new_civ.cohort.total().raw().to_bits();
+                        let band = u32::try_from(new_civ.figures.len()).unwrap_or(0);
+                        for f in &new_civ.figures {
+                            emitter.emit(&Event::FigureBorn(figure_born_event(new_civ.id, f)))?;
+                        }
+                        let new_cells = claimed_cells_for_event(&new_civ);
+                        let new_caps: Vec<i128> = new_cells
                             .iter()
                             .map(|&c| {
-                                parent_civ_ref
+                                new_civ
                                     .cell_capacity(&state, c, tick, &planet)
                                     .raw()
                                     .to_bits()
                             })
                             .collect();
-                        emitter.emit(&Event::CivTerritoryChanged(CivTerritoryChanged {
+                        emitter.emit(&Event::CivFounded(CivFounded {
                             tick,
-                            civ_id: parent_id,
-                            claimed_cells: parent_claimed_sorted,
-                            population_q32: parent_civ_ref.cohort.total().raw().to_bits(),
-                            cell_populations_q32: parent_cell_pops,
-                            cell_capacities_q32: parent_cell_caps,
+                            civ_id: new_civ.id,
+                            parent_civ_id: Some(parent_id),
+                            name: new_civ.name.clone(),
+                            initial_population_q32: initial_pop_q32,
+                            founding_figure_count: band,
+                            claimed_cells: new_cells,
+                            cell_capacities_q32: new_caps,
                         }))?;
-                        civs[parent_idx].last_territory_emit_tick = tick;
-                    }
-                    // Breakaway founding cohort: migrating dissidents
-                    // from the rest of parent territory + the full
-                    // residents of the seized cell. Merging brackets
-                    // (not just the scalar count) preserves the
-                    // seized cell's age structure so the breakaway
-                    // doesn't start with a synthetic all-fertile band.
-                    let mut breakaway_cohort =
-                        sim_civ::Cohort::with_civ(breakaway_share, next_civ_id);
-                    breakaway_cohort.merge_in(&seized_cohort);
-                    breakaway_cohort.civ_membership = Some(next_civ_id);
-                    let mut new_civ = Civ::refound_from_stateless(
-                        next_civ_id,
-                        tick,
-                        breakaway_cohort,
-                        species.cognition,
-                        species.seed,
-                        &species_modality_kinds,
-                        parent_id,
-                    );
-                    // Deterministic kingdom-style civ name.
-                    new_civ.name = sim_civ::civ_name_from_seed(cfg.seed, next_civ_id);
-                    // Breakaway descends from a still-living
-                    // parent — inherit its drift verbatim and add a
-                    // step. The parent and child diverge from this
-                    // point on as separate civs.
-                    {
-                        let parent_civ = &civs[parent_idx];
-                        new_civ.inherit_species_drift_with_environment(
-                            parent_civ,
-                            planet.seed,
-                            planet.metabolic_substrate.metabolism(),
-                            planet.biosphere,
-                        );
-                        new_civ.inherit_lineage_from(parent_civ);
-                    }
-                    // Cohesion-driven breakaway starts at a
-                    // higher cohesion than its falling-apart parent
-                    // — fresh authority, shared cause, smaller scale.
-                    // Dogmatic-driven breakaway leaves the default
-                    // cohesion (1.0) since it's a charismatic split
-                    // rather than a fragmentation event.
-                    if is_cohesion_breakaway {
-                        new_civ.cohesion = Real::from_ratio(
-                            sim_civ::COHESION_BREAKAWAY_INITIAL.0,
-                            sim_civ::COHESION_BREAKAWAY_INITIAL.1,
-                        );
-                        new_civ.last_emitted_cohesion = new_civ.cohesion;
-                    }
-                    new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
-                    new_civ.configure_substrate(
-                        planet.biosphere,
-                        planet.gravity,
-                        new_civ.effective_cognition(&species),
-                        new_civ.effective_sociality(&species),
-                        planet.metabolic_substrate.metabolism(),
-                    );
-                    // Breakaway sized to its half-share of the
-                    // parent's population; centred on the seized
-                    // parent border cell (the rebellion seats itself
-                    // in a captured village). The civil-war /
-                    // cultural-secession model: dissidents take over
-                    // a chunk of parent territory rather than
-                    // migrating to virgin frontier. Stateless
-                    // refounds keep the distant-placement path
-                    // (`pick_distant_habitable_cell` above) for the
-                    // Sumatra-vs-China successor model — that's a
-                    // "parent is dead, successor rises elsewhere"
-                    // story; this is "parent still rules, faction
-                    // splits off from a border city."
-                    new_civ.territory_centroid = centroid;
-                    let target = target_cell_count(&new_civ, state.grid().n_cells());
-                    // Breakaway: parent still holds its (post-
-                    // seizure) territory. Pass a fresh `forbidden`
-                    // set computed from civs as they stand AFTER the
-                    // seizure — the seized cell is no longer in any
-                    // civ's claim, so the BFS will pick it up (it's
-                    // the centroid, force-included) plus any
-                    // unclaimed habitable neighbours. The breakaway
-                    // can BFS *through* remaining parent territory
-                    // (parent land is still traversable) but never
-                    // double-claims it.
-                    let occupied_post: BTreeSet<u32> = civs
-                        .iter()
-                        .flat_map(|c| c.claimed_cells.iter().copied())
-                        .collect();
-                    let cells = compute_territory(
-                        new_civ.territory_centroid,
-                        target,
-                        state.grid(),
-                        &state,
-                        &planet,
-                        &new_civ,
-                        species.habitat,
-                        &occupied_post,
-                    );
-                    let _ = parent_centroid; // distant placement supersedes adjacency
-                    new_civ.claim_cells(&cells);
-                    new_civ.refresh_available_forms(&species_baseline, &recognition);
-                    let initial_pop_q32 = new_civ.cohort.total().raw().to_bits();
-                    let band = u32::try_from(new_civ.figures.len()).unwrap_or(0);
-                    for f in &new_civ.figures {
-                        emitter.emit(&Event::FigureBorn(figure_born_event(new_civ.id, f)))?;
-                    }
-                    let new_cells = claimed_cells_for_event(&new_civ);
-                    let new_caps: Vec<i128> = new_cells
-                        .iter()
-                        .map(|&c| new_civ.cell_capacity(&state, c, tick, &planet).raw().to_bits())
-                        .collect();
-                    emitter.emit(&Event::CivFounded(CivFounded {
-                        tick,
-                        civ_id: new_civ.id,
-                        parent_civ_id: Some(parent_id),
-                        name: new_civ.name.clone(),
-                        initial_population_q32: initial_pop_q32,
-                        founding_figure_count: band,
-                        claimed_cells: new_cells,
-                        cell_capacities_q32: new_caps,
-                    }))?;
-                    new_civ.last_territory_emit_tick = tick;
-                    emit_species_drift_if_meaningful(emitter, &new_civ)?;
+                        new_civ.last_territory_emit_tick = tick;
+                        emit_species_drift_if_meaningful(emitter, &new_civ)?;
 
-                    // Inter-civ transmission for the breakaway
-                    // path. The parent is still alive, so age decay
-                    // is zero (the band leaves with current knowledge);
-                    // linguistic distance is the only gate that
-                    // matters here. Without this, breakaway successors
-                    // would start tabula rasa on the same planet the
-                    // parent already mapped — the opposite of the inaugural
-                    // "knowledge survives" promise.
-                    let (transmissions, mythologizations) = {
-                        let parent_civ = &civs[parent_idx];
-                        let decay_ticks = species.transmission_decay_ticks();
-                        transmission::transmit_from_parent(
-                            &mut new_civ,
-                            parent_civ,
-                            tick,
-                            decay_ticks,
-                        )
-                    };
-                    let dest_civ_id = new_civ.id;
-                    let dest_figure_id = new_civ.figures.first().map_or(0, |f| f.id);
-                    for record in &transmissions {
-                        emitter.emit(&Event::KnowledgeTransmitted(KnowledgeTransmitted {
-                            tick,
-                            source_civ_id: parent_id,
-                            dest_civ_id,
-                            dest_figure_id,
-                            relation_id: record.relation.relation_id,
-                            source_form: record.relation.form.tag().to_string(),
-                            comprehension_q32: record.comprehension.raw().to_bits(),
-                        }))?;
-                        total_knowledge_transmissions =
-                            total_knowledge_transmissions.saturating_add(1);
-                    }
-                    // Mythologization events for the breakaway
-                    // path's sub-threshold transmissions.
-                    for myth in &mythologizations {
-                        emitter.emit(&Event::RelationMythologized(
-                            protocol::RelationMythologized {
+                        // Inter-civ transmission for the breakaway
+                        // path. The parent is still alive, so age decay
+                        // is zero (the band leaves with current knowledge);
+                        // linguistic distance is the only gate that
+                        // matters here. Without this, breakaway successors
+                        // would start tabula rasa on the same planet the
+                        // parent already mapped — the opposite of the inaugural
+                        // "knowledge survives" promise.
+                        let (transmissions, mythologizations) = {
+                            let parent_civ = &civs[parent_idx];
+                            let decay_ticks = species.transmission_decay_ticks();
+                            transmission::transmit_from_parent(
+                                &mut new_civ,
+                                parent_civ,
+                                tick,
+                                decay_ticks,
+                            )
+                        };
+                        let dest_civ_id = new_civ.id;
+                        let dest_figure_id = new_civ.figures.first().map_or(0, |f| f.id);
+                        for record in &transmissions {
+                            emitter.emit(&Event::KnowledgeTransmitted(KnowledgeTransmitted {
                                 tick,
                                 source_civ_id: parent_id,
                                 dest_civ_id,
-                                relation_id: myth.relation_id,
-                                axis: myth.axis,
-                                magnitude_q32: myth.magnitude.raw().to_bits(),
-                                comprehension_q32: myth.comprehension.raw().to_bits(),
-                            },
-                        ))?;
-                    }
-
-                    let new_id = new_civ.id;
-                    civs.push(new_civ);
-                    next_civ_id += 1;
-                    last_breakaway_tick = Some(tick);
-                    // Emit CivContact for the (parent, breakaway) pair
-                    // *only* when they're actually within reach. Distant placement
-                    // places breakaways at distant habitable cells, so
-                    // a child dropped on the far side of the world
-                    // shouldn't fire the "they met" beat at the moment
-                    // of splintering — the M5 cadence-gated pass below
-                    // will pick them up later when/if either civ grows
-                    // into range or unlocks navigation tech.
-                    let pair = if parent_id < new_id {
-                        (parent_id, new_id)
-                    } else {
-                        (new_id, parent_id)
-                    };
-                    if !emitted_contacts.contains(&pair) {
-                        let parent_civ = civs
-                            .iter()
-                            .find(|c| c.id == parent_id)
-                            .expect("parent civ");
-                        let child_civ = civs
-                            .iter()
-                            .find(|c| c.id == new_id)
-                            .expect("just-pushed breakaway civ");
-                        if contact::civs_in_contact(
-                            parent_civ,
-                            child_civ,
-                            species.habitat,
-                            &state,
-                        ) {
-                            emitted_contacts.insert(pair);
-                            emitter.emit(&Event::CivContact(CivContact {
-                                tick,
-                                civ_a: pair.0,
-                                civ_b: pair.1,
+                                dest_figure_id,
+                                relation_id: record.relation.relation_id,
+                                source_form: record.relation.form.tag().to_string(),
+                                comprehension_q32: record.comprehension.raw().to_bits(),
                             }))?;
+                            total_knowledge_transmissions =
+                                total_knowledge_transmissions.saturating_add(1);
+                        }
+                        // Mythologization events for the breakaway
+                        // path's sub-threshold transmissions.
+                        for myth in &mythologizations {
+                            emitter.emit(&Event::RelationMythologized(
+                                protocol::RelationMythologized {
+                                    tick,
+                                    source_civ_id: parent_id,
+                                    dest_civ_id,
+                                    relation_id: myth.relation_id,
+                                    axis: myth.axis,
+                                    magnitude_q32: myth.magnitude.raw().to_bits(),
+                                    comprehension_q32: myth.comprehension.raw().to_bits(),
+                                },
+                            ))?;
+                        }
+
+                        let new_id = new_civ.id;
+                        civs.push(new_civ);
+                        next_civ_id += 1;
+                        last_breakaway_tick = Some(tick);
+                        // Emit CivContact for the (parent, breakaway) pair
+                        // *only* when they're actually within reach. Distant placement
+                        // places breakaways at distant habitable cells, so
+                        // a child dropped on the far side of the world
+                        // shouldn't fire the "they met" beat at the moment
+                        // of splintering — the M5 cadence-gated pass below
+                        // will pick them up later when/if either civ grows
+                        // into range or unlocks navigation tech.
+                        let pair = if parent_id < new_id {
+                            (parent_id, new_id)
+                        } else {
+                            (new_id, parent_id)
+                        };
+                        if !emitted_contacts.contains(&pair) {
+                            let parent_civ =
+                                civs.iter().find(|c| c.id == parent_id).expect("parent civ");
+                            let child_civ = civs
+                                .iter()
+                                .find(|c| c.id == new_id)
+                                .expect("just-pushed breakaway civ");
+                            if contact::civs_in_contact(
+                                parent_civ,
+                                child_civ,
+                                species.habitat,
+                                &state,
+                            ) {
+                                emitted_contacts.insert(pair);
+                                emitter.emit(&Event::CivContact(CivContact {
+                                    tick,
+                                    civ_a: pair.0,
+                                    civ_b: pair.1,
+                                }))?;
+                            }
                         }
                     }
-                }} // close 'breakaway: { ... } and `if breakaway_share >= ...`
+                } // close 'breakaway: { ... } and `if breakaway_share >= ...`
             }
         }
 
@@ -1384,10 +1390,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                                     tick,
                                     aggressor_civ_id: assessment.aggressor_id,
                                     defender_civ_id: assessment.defender_id,
-                                    belligerence_q32: assessment
-                                        .belligerence
-                                        .raw()
-                                        .to_bits(),
+                                    belligerence_q32: assessment.belligerence.raw().to_bits(),
                                     drive_q32: assessment.drive.raw().to_bits(),
                                     kinship_q32: assessment.kinship.raw().to_bits(),
                                 });
@@ -1396,14 +1399,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                                 // separately so consumers can show
                                 // the trade-collapse cascade.
                                 if trade_routes.remove(&pair).is_some() {
-                                    trade_close_events.push(
-                                        protocol::TradeRouteClosed {
-                                            tick,
-                                            civ_a: pair.0,
-                                            civ_b: pair.1,
-                                            reason: "war_declared".to_string(),
-                                        },
-                                    );
+                                    trade_close_events.push(protocol::TradeRouteClosed {
+                                        tick,
+                                        civ_a: pair.0,
+                                        civ_b: pair.1,
+                                        reason: "war_declared".to_string(),
+                                    });
                                 }
                                 // fall through to resolve()
                             }
@@ -1622,11 +1623,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     .max_by_key(|c| c.collapsed_tick.unwrap_or(0))
                 {
                     new_civ.inherit_species_drift_with_environment(
-                            parent_civ,
-                            planet.seed,
-                            planet.metabolic_substrate.metabolism(),
-                            planet.biosphere,
-                        );
+                        parent_civ,
+                        planet.seed,
+                        planet.metabolic_substrate.metabolism(),
+                        planet.biosphere,
+                    );
                     new_civ.inherit_lineage_from(parent_civ);
                 }
                 new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
@@ -1698,7 +1699,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 let claimed = claimed_cells_for_event(&new_civ);
                 let claimed_caps: Vec<i128> = claimed
                     .iter()
-                    .map(|&c| new_civ.cell_capacity(&state, c, tick, &planet).raw().to_bits())
+                    .map(|&c| {
+                        new_civ
+                            .cell_capacity(&state, c, tick, &planet)
+                            .raw()
+                            .to_bits()
+                    })
                     .collect();
                 emitter.emit(&Event::CivFounded(CivFounded {
                     tick,

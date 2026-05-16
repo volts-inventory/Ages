@@ -35,7 +35,7 @@ impl Civ {
             .cohort
             .weighted_demand_from_multipliers(&self.dynamics.food_multipliers);
         let security = sim_population::food_security(demand, self.carrying_capacity(state));
-        let crisis_floor = Real::from_ratio(FOOD_CRISIS_THRESHOLD.0, FOOD_CRISIS_THRESHOLD.1);
+        let crisis_floor = Real::from(FOOD_CRISIS_THRESHOLD);
         if security <= crisis_floor {
             self.low_food_streak = self.low_food_streak.saturating_add(1);
         } else {
@@ -44,7 +44,7 @@ impl Civ {
         // cultural-lock streak. High dogmatism + no
         // recent refinement → frozen civ.
         let dogma = self.cosmology.dogmatism();
-        let dogma_floor = Real::from_ratio(CULTURAL_LOCK_DOGMA.0, CULTURAL_LOCK_DOGMA.1);
+        let dogma_floor = Real::from(CULTURAL_LOCK_DOGMA);
         let no_recent_refinement =
             tick.saturating_sub(self.last_refinement_tick) >= CULTURAL_LOCK_STREAK_TICKS;
         if dogma >= dogma_floor && no_recent_refinement {
@@ -153,15 +153,14 @@ impl Civ {
         // tipping into crisis. Bounded at `SURPLUS_FOOD_BUFFER_BONUS`
         // (currently +0.20) so an infinite-surplus civ is still
         // *eventually* killable.
-        let surplus_buffer =
-            crate::economy::surplus_food_buffer(self.surplus, demand);
+        let surplus_buffer = crate::economy::surplus_food_buffer(self.surplus, demand);
         let security = raw_security + surplus_buffer;
         // tools that improve food security (BulkStorage,
         // OrganizedHunting, FluidGathering, BulkCultivation,
         // OrganicSynthesis) lower the crisis floor by their
         // additive bonus, so a civ with food-resilience tools
         // survives leaner runs without tipping into collapse.
-        let base_floor = Real::from_ratio(FOOD_CRISIS_THRESHOLD.0, FOOD_CRISIS_THRESHOLD.1);
+        let base_floor = Real::from(FOOD_CRISIS_THRESHOLD);
         let crisis_floor = (base_floor - self.tool_food_crisis_bonus()).max(Real::ZERO);
         if security <= crisis_floor {
             self.low_food_streak = self.low_food_streak.saturating_add(1);
@@ -169,7 +168,7 @@ impl Civ {
             self.low_food_streak = 0;
         }
         let dogma = self.cosmology.dogmatism();
-        let dogma_floor = Real::from_ratio(CULTURAL_LOCK_DOGMA.0, CULTURAL_LOCK_DOGMA.1);
+        let dogma_floor = Real::from(CULTURAL_LOCK_DOGMA);
         let no_recent_refinement =
             tick.saturating_sub(self.last_refinement_tick) >= cultural_lock_streak;
         if dogma >= dogma_floor && no_recent_refinement {
@@ -203,9 +202,8 @@ impl Civ {
         // metabolism so societal change unfolds at the same
         // per-generation rate.
         self.update_cohesion(security, tick, metabolism);
-        let cw_floor = Real::from_ratio(CIVIL_WAR_COHESION_FLOOR.0, CIVIL_WAR_COHESION_FLOOR.1);
-        let breakaway_trigger =
-            Real::from_ratio(COHESION_BREAKAWAY_TRIGGER.0, COHESION_BREAKAWAY_TRIGGER.1);
+        let cw_floor = Real::from(CIVIL_WAR_COHESION_FLOOR);
+        let breakaway_trigger = Real::from(COHESION_BREAKAWAY_TRIGGER);
         if self.cohesion < cw_floor {
             self.civil_war_streak = self.civil_war_streak.saturating_add(1);
         } else {
@@ -257,36 +255,29 @@ impl Civ {
     /// `literacy_score(tick)` for the bonus term.
     pub fn update_cohesion(&mut self, security: Real, tick: u64, metabolism: Real) {
         let cells = i64::try_from(self.claimed_cells.len()).unwrap_or(i64::MAX);
-        let size_factor = (Real::from_int(cells) / Real::from_int(30))
-            .max(Real::ZERO)
-            .min(Real::ONE);
-        let size_penalty = Real::from_ratio(30, 100) * size_factor;
-        let food_penalty = if security < Real::from_ratio(50, 100) {
-            Real::from_ratio(50, 100) * (Real::ONE - security)
+        let size_factor = (Real::from_int(cells) / Real::from_int(30)).clamp01();
+        let size_penalty = Real::percent(30) * size_factor;
+        let food_penalty = if security < Real::percent(50) {
+            Real::percent(50) * (Real::ONE - security)
         } else {
             Real::ZERO
         };
-        let dogma_bonus = Real::from_ratio(20, 100) * self.cosmology.dogmatism();
-        let literacy_bonus = Real::from_ratio(20, 100) * self.literacy_score(tick);
+        let dogma_bonus = Real::percent(20) * self.cosmology.dogmatism();
+        let literacy_bonus = Real::percent(20) * self.literacy_score(tick);
         // Tools that bind the polity together (canonised law, mass
         // literacy, network identity, urban anchors, defensive
         // institutions) lift the cohesion equilibrium directly.
         // `tool_cohesion_bonus` is capped at +0.40 so the equilibrium
         // can climb past 1.0 internally and clamp on the next line.
         let tool_bonus = self.tool_cohesion_bonus();
-        let target = (Real::ONE - size_penalty - food_penalty
-            + dogma_bonus
-            + literacy_bonus
-            + tool_bonus)
-            .max(Real::ZERO)
-            .min(Real::ONE);
+        let target =
+            (Real::ONE - size_penalty - food_penalty + dogma_bonus + literacy_bonus + tool_bonus)
+                .clamp01();
         // Drift toward target at 1/200 per tick on Aqueous; scaled
         // by metabolism so slow chemistries drift proportionally
         // slower and the streak thresholds (also stretched by
         // metabolism) still cover the same fraction of generations.
         let drift_rate = Real::from_ratio(1, 200) * metabolism;
-        self.cohesion = (self.cohesion + (target - self.cohesion) * drift_rate)
-            .max(Real::ZERO)
-            .min(Real::ONE);
+        self.cohesion = (self.cohesion + (target - self.cohesion) * drift_rate).clamp01();
     }
 }

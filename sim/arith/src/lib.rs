@@ -90,6 +90,15 @@ impl Pop {
         }
     }
 
+    /// Truncate to a non-negative integer `Real`. Drops the
+    /// fractional bits and saturates negatives to zero — the
+    /// expected behaviour wherever a population aggregate feeds a
+    /// ratio or weight that has no meaning for negative counts.
+    #[must_use]
+    pub fn to_real_nonneg(self) -> Real {
+        Real::from_int(self.0.to_num::<i64>().max(0))
+    }
+
     /// Return a `f64` *for display only*. Not for use in deterministic
     /// computation; if you call this in a sim loop you have a bug.
     pub fn to_f64_for_display(self) -> f64 {
@@ -176,6 +185,16 @@ impl Real {
         Self(I32F32::from_num(num) / I32F32::from_num(den))
     }
 
+    /// Hundredths shorthand: `Real::percent(80)` is the same as
+    /// `from_ratio(80, 100)` (= `0.80`). The sim is full of
+    /// inline hundredths — habitat multipliers, decay rates, weight
+    /// tables — and this form lets each site read as the single
+    /// number it actually is. `n` can exceed 100 (a multiplier of
+    /// 1.20 reads `Real::percent(120)`) or go negative.
+    pub fn percent(n: i64) -> Self {
+        Self::from_ratio(n, 100)
+    }
+
     /// The underlying Q-format value. Internal — exposed for
     /// debugging and serialisation only.
     pub fn raw(self) -> I32F32 {
@@ -211,6 +230,13 @@ impl Real {
         } else {
             self
         }
+    }
+
+    /// Saturate to `[0, 1]`. The dominant clamp shape across the
+    /// sim — fractions, probabilities, normalised inputs to fits.
+    #[must_use]
+    pub fn clamp01(self) -> Self {
+        self.max(Self::ZERO).min(Self::ONE)
     }
 
     /// Return a `f64` *for display only*. Not for use in deterministic
@@ -252,6 +278,17 @@ impl Neg for Real {
     type Output = Self;
     fn neg(self) -> Self {
         Self(-self.0)
+    }
+}
+
+/// Convert a `(numerator, denominator)` pair to `Real`. The
+/// codebase declares many tunable ratios as `(i64, i64)` tuple
+/// constants (e.g. `DRIVE_W_PRESSURE: (i64, i64) = (40, 100)`);
+/// this lets callers write `Real::from(CONST)` instead of
+/// the four-token `Real::from_ratio(CONST.0, CONST.1)`.
+impl From<(i64, i64)> for Real {
+    fn from((num, den): (i64, i64)) -> Self {
+        Self::from_ratio(num, den)
     }
 }
 

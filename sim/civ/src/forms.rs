@@ -97,17 +97,17 @@ impl Form {
     #[allow(clippy::match_same_arms)]
     pub fn base_tolerance(self) -> Real {
         match self {
-            Form::Constant => Real::from_ratio(5, 100),
-            Form::Linear => Real::from_ratio(10, 100),
-            Form::Polynomial2 => Real::from_ratio(15, 100),
-            Form::Polynomial3 => Real::from_ratio(20, 100),
-            Form::ExpDecay | Form::ExpGrowth => Real::from_ratio(15, 100),
-            Form::Logarithmic => Real::from_ratio(15, 100),
-            Form::PowerLaw => Real::from_ratio(20, 100),
-            Form::InverseSquare => Real::from_ratio(20, 100),
-            Form::ThresholdStep => Real::from_ratio(15, 100),
-            Form::Logistic => Real::from_ratio(25, 100),
-            Form::PeriodicSine => Real::from_ratio(30, 100),
+            Form::Constant => Real::percent(5),
+            Form::Linear => Real::percent(10),
+            Form::Polynomial2 => Real::percent(15),
+            Form::Polynomial3 => Real::percent(20),
+            Form::ExpDecay | Form::ExpGrowth => Real::percent(15),
+            Form::Logarithmic => Real::percent(15),
+            Form::PowerLaw => Real::percent(20),
+            Form::InverseSquare => Real::percent(20),
+            Form::ThresholdStep => Real::percent(15),
+            Form::Logistic => Real::percent(25),
+            Form::PeriodicSine => Real::percent(30),
         }
     }
 

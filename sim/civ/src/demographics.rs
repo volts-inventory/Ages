@@ -46,14 +46,12 @@ pub fn biosphere_birth_factor(biosphere: BiosphereClass) -> Real {
 #[must_use]
 pub fn biosphere_birth_factor_for_planet(planet: &Planet) -> Real {
     let base = biosphere_birth_factor(planet.biosphere);
-    let tilt_norm = (planet.axial_tilt_deg / Real::from_int(90))
-        .max(Real::ZERO)
-        .min(Real::ONE);
+    let tilt_norm = (planet.axial_tilt_deg / Real::from_int(90)).clamp01();
     let tilt_factor = Real::ONE - Real::from_ratio(1, 10) * tilt_norm;
     let earth_lum = Real::from_int(1361);
     let lum_norm = (planet.stellar_luminosity / earth_lum)
-        .max(Real::from_ratio(85, 100))
-        .min(Real::from_ratio(115, 100));
+        .max(Real::percent(85))
+        .min(Real::percent(115));
     base * tilt_factor * lum_norm
 }
 
@@ -68,9 +66,9 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Po
         BiosphereClass::None => Real::from_ratio(15, 10),
         BiosphereClass::Sparse => Real::ONE,
         BiosphereClass::Lush => Real::from_ratio(5, 10),
-        BiosphereClass::HyperBiodiverse => Real::from_ratio(25, 100),
+        BiosphereClass::HyperBiodiverse => Real::percent(25),
     };
-    let cog = cognition.max(Real::ZERO).min(Real::ONE);
+    let cog = cognition.clamp01();
     let cognition_penalty = Real::ONE - cog;
     Pop::from_int(50)
         + Pop::from_int(35) * biosphere_pressure
@@ -105,23 +103,22 @@ pub fn carrying_capacity_per_unit(
 ) -> Real {
     let biosphere_factor = match biosphere {
         BiosphereClass::None => Real::from_ratio(7, 10),
-        BiosphereClass::Sparse => Real::from_ratio(95, 100),
+        BiosphereClass::Sparse => Real::percent(95),
         BiosphereClass::Lush => Real::ONE,
-        BiosphereClass::HyperBiodiverse => Real::from_ratio(115, 100),
+        BiosphereClass::HyperBiodiverse => Real::percent(115),
     };
-    let earth_g = Real::from_ratio(981, 100);
+    let earth_g = Real::percent(981);
     let g_diff = if gravity > earth_g {
         gravity - earth_g
     } else {
         earth_g - gravity
     };
-    let g_factor =
-        (Real::ONE - Real::from_ratio(5, 100) * g_diff / earth_g).max(Real::from_ratio(5, 10));
-    let cog = cognition.max(Real::ZERO).min(Real::ONE);
+    let g_factor = (Real::ONE - Real::percent(5) * g_diff / earth_g).max(Real::from_ratio(5, 10));
+    let cog = cognition.clamp01();
     // Cognition factor narrows further (0.95–1.0) so low-cognition
     // species don't compound a capacity hit on top of the existing
     // attempt-period and stress-factor cognition penalties.
-    let cognition_factor = Real::from_ratio(95, 100) + Real::from_ratio(5, 100) * cog;
+    let cognition_factor = Real::percent(95) + Real::percent(5) * cog;
     Real::from_int(50_000) * biosphere_factor * g_factor * cognition_factor
 }
 
@@ -135,8 +132,8 @@ pub fn carrying_capacity_per_unit(
 /// (cells at 55–75% of cap) plus continued frontier expansion.
 #[must_use]
 pub fn migration_pressure_threshold(sociality: Real) -> Real {
-    let s = sociality.max(Real::ZERO).min(Real::ONE);
-    Real::from_ratio(55, 100) + Real::from_ratio(2, 10) * s
+    let s = sociality.clamp01();
+    Real::percent(55) + Real::from_ratio(2, 10) * s
 }
 
 /// Tech-augmented migration threshold. Tech surplus (urban
@@ -152,11 +149,8 @@ pub fn migration_pressure_threshold(sociality: Real) -> Real {
 /// migration entirely). Net: a high-tech civ tolerates 55-97%
 /// fill before spillover instead of the base 55-75%.
 #[must_use]
-pub fn tech_augmented_migration_threshold(
-    base: Real,
-    tool_capacity_multiplier: Real,
-) -> Real {
-    let safe_mult = tool_capacity_multiplier.max(Real::from_ratio(1, 100));
+pub fn tech_augmented_migration_threshold(base: Real, tool_capacity_multiplier: Real) -> Real {
+    let safe_mult = tool_capacity_multiplier.max(Real::percent(1));
     let raw_factor = sim_arith::transcendental::sqrt(safe_mult);
     let max_factor = Real::from_ratio(15, 10);
     let factor = if raw_factor > max_factor {
@@ -165,7 +159,7 @@ pub fn tech_augmented_migration_threshold(
         raw_factor
     };
     let augmented = base * factor;
-    let ceiling = Real::from_ratio(97, 100);
+    let ceiling = Real::percent(97);
     if augmented > ceiling {
         ceiling
     } else {
@@ -182,7 +176,7 @@ pub fn tech_augmented_migration_threshold(
 /// [`crate::Civ::configure_substrate`] once the planet is known.
 #[must_use]
 pub fn attempt_period_for_cognition(cognition: Real) -> u64 {
-    let cog = cognition.max(Real::ZERO).min(Real::ONE);
+    let cog = cognition.clamp01();
     let factor = Real::from_ratio(15, 10) - cog;
     let period_real = Real::from_int(20) * factor;
     let raw: i64 = period_real.raw().to_num();
@@ -196,7 +190,7 @@ pub fn attempt_period_for_cognition(cognition: Real) -> u64 {
 /// metabolism = 0.2 (Silicate) gives a 5× longer period.
 #[must_use]
 pub fn scale_attempt_period_for_metabolism(period: u64, metabolism: Real) -> u64 {
-    let m = metabolism.max(Real::from_ratio(1, 100));
+    let m = metabolism.max(Real::percent(1));
     let raw: i64 = (Real::from_int(i64::try_from(period).unwrap_or(i64::MAX)) / m)
         .raw()
         .to_num();
@@ -212,7 +206,7 @@ pub fn scale_attempt_period_for_metabolism(period: u64, metabolism: Real) -> u64
 /// when metabolism is Aqueous (1.0). Guarded against zero metabolism.
 #[must_use]
 pub fn streak_ticks_for_metabolism(base: u64, metabolism: Real) -> u64 {
-    let m = metabolism.max(Real::from_ratio(1, 100));
+    let m = metabolism.max(Real::percent(1));
     let raw: i64 = (Real::from_int(i64::try_from(base).unwrap_or(i64::MAX)) / m)
         .raw()
         .to_num();
@@ -293,7 +287,7 @@ mod tests {
     /// alone.
     #[test]
     fn carrying_capacity_envelope_is_calibrated() {
-        let earth_g = Real::from_ratio(981, 100);
+        let earth_g = Real::percent(981);
         let median_cog = Real::from_ratio(5, 10);
         let lush = carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE);
         let sparse = carrying_capacity_per_unit(BiosphereClass::Sparse, earth_g, median_cog);
@@ -312,7 +306,7 @@ mod tests {
     /// `0.97`. Vanilla civs (capacity_mult = 1.0) pass through.
     #[test]
     fn tech_augmented_migration_threshold_envelopes() {
-        let base = Real::from_ratio(70, 100);
+        let base = Real::percent(70);
         // No tools → unchanged.
         let t0 = tech_augmented_migration_threshold(base, Real::ONE);
         let drift0 = if t0 > base { t0 - base } else { base - t0 };
@@ -321,30 +315,30 @@ mod tests {
         // 4× capacity → sqrt = 2.0, capped at 1.5 → 0.70 * 1.5 = 1.05
         // → clamped to 0.97 ceiling.
         let t4 = tech_augmented_migration_threshold(base, Real::from_int(4));
-        let ceiling = Real::from_ratio(97, 100);
+        let ceiling = Real::percent(97);
         let drift_ceil = if t4 > ceiling {
             t4 - ceiling
         } else {
             ceiling - t4
         };
         assert!(
-            drift_ceil < Real::from_ratio(1, 100),
+            drift_ceil < Real::percent(1),
             "4× capacity should clamp to 0.97; got {t4:?}"
         );
 
         // 2.25× capacity → sqrt = 1.5 (boundary) → 0.70 * 1.5 = 1.05
         // → still clamped.
-        let t225 = tech_augmented_migration_threshold(base, Real::from_ratio(225, 100));
+        let t225 = tech_augmented_migration_threshold(base, Real::percent(225));
         let drift_ceil2 = if t225 > ceiling {
             t225 - ceiling
         } else {
             ceiling - t225
         };
-        assert!(drift_ceil2 < Real::from_ratio(1, 100));
+        assert!(drift_ceil2 < Real::percent(1));
 
         // Lower base with same 4× tech → factor 1.5 → 0.55 * 1.5 =
         // 0.825 (under the 0.97 ceiling).
-        let low_base = Real::from_ratio(55, 100);
+        let low_base = Real::percent(55);
         let t_low = tech_augmented_migration_threshold(low_base, Real::from_int(4));
         let expected = Real::from_ratio(825, 1000);
         let drift = if t_low > expected {
@@ -353,7 +347,7 @@ mod tests {
             expected - t_low
         };
         assert!(
-            drift < Real::from_ratio(1, 100),
+            drift < Real::percent(1),
             "0.55 × 1.5 = 0.825; got {t_low:?}"
         );
     }

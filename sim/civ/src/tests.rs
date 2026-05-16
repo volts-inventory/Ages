@@ -353,26 +353,17 @@ fn habitability_multipliers_match_published_table() {
     assert_eq!(habitability_multiplier('\u{2261}'), Real::ZERO); // ≡ gas
     assert_eq!(
         habitability_multiplier('~'),
-        Real::from_ratio(5, 100),
+        Real::percent(5),
         "shallow sea should be 0.05",
     );
     assert_eq!(
         habitability_multiplier('\u{2591}'),
-        Real::from_ratio(120, 100),
+        Real::percent(120),
         "coast should be 1.20",
     );
-    assert_eq!(
-        habitability_multiplier('\u{2592}'),
-        Real::from_ratio(90, 100)
-    ); // ▒ inland
-    assert_eq!(
-        habitability_multiplier('\u{25B3}'),
-        Real::from_ratio(60, 100)
-    ); // △ hill
-    assert_eq!(
-        habitability_multiplier('\u{25B2}'),
-        Real::from_ratio(10, 100)
-    ); // ▲ peak
+    assert_eq!(habitability_multiplier('\u{2592}'), Real::percent(90)); // ▒ inland
+    assert_eq!(habitability_multiplier('\u{25B3}'), Real::percent(60)); // △ hill
+    assert_eq!(habitability_multiplier('\u{25B2}'), Real::percent(10)); // ▲ peak
     assert_eq!(habitability_multiplier('\u{00B7}'), Real::ONE); // · plain
                                                                 // Unknown glyph defaults to 1.0 so the production path can
                                                                 // pass any char without crashing.
@@ -533,7 +524,7 @@ fn terrain_habitability_smoke_test() {
 fn seasonal_floor_lifts_winter_factor_with_shelter() {
     let mut civ = Civ::new(1, 0, Pop::from_int(50));
     // Pre-shelter: identity passthrough on raw factor.
-    let raw = Real::from_ratio(80, 100);
+    let raw = Real::percent(80);
     let no_shelter = civ.effective_seasonal_factor(raw);
     assert_eq!(
         no_shelter, raw,
@@ -559,8 +550,8 @@ fn seasonal_floor_lifts_winter_factor_with_shelter() {
 #[test]
 fn catastrophe_resistance_softens_loss_with_medical_tools() {
     let mut civ = Civ::new(1, 0, Pop::from_int(50));
-    let baseline_loss = Real::from_ratio(30, 100); // 30% baseline loss
-                                                   // Pre-tool: identity.
+    let baseline_loss = Real::percent(30); // 30% baseline loss
+                                           // Pre-tool: identity.
     let untouched = civ.apply_catastrophe_resistance(baseline_loss);
     assert_eq!(untouched, baseline_loss);
     // Unlock BasicHealing (+0.10 catastrophe resistance).
@@ -579,7 +570,7 @@ fn catastrophe_resistance_softens_loss_with_medical_tools() {
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::AdvancedMedicine);
     let with_full_med = civ.apply_catastrophe_resistance(baseline_loss);
-    let expected = Real::from_ratio(18, 100);
+    let expected = Real::percent(18);
     let diff = if with_full_med > expected {
         with_full_med - expected
     } else {
@@ -610,7 +601,7 @@ fn tool_lifespan_extension_lifts_effective_lifespan() {
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::GeneticManipulation);
     let stacked = civ.tool_lifespan_extension_factor();
-    let expected = Real::from_ratio(35, 100);
+    let expected = Real::percent(35);
     let diff = if stacked > expected {
         stacked - expected
     } else {
@@ -652,11 +643,11 @@ fn tool_mortality_reduction_aggregates_per_bracket() {
     let stacked = civ.tool_mortality_reduction_per_bracket();
     for (i, v) in stacked.iter().enumerate() {
         assert!(
-            *v > Real::from_ratio(30, 100),
+            *v > Real::percent(30),
             "stacked bracket {i} reduction {v:?} should exceed 0.30"
         );
         assert!(
-            *v <= Real::from_ratio(80, 100),
+            *v <= Real::percent(80),
             "stacked bracket {i} reduction {v:?} should respect 0.80 cap"
         );
     }
@@ -674,7 +665,7 @@ fn expansion_rate_aggregator_reflects_unlocked_navigation_tools() {
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::TradeNetworks); // +0.05
     let bonus = civ.tool_expansion_rate_bonus();
-    let expected = Real::from_ratio(15, 100);
+    let expected = Real::percent(15);
     let diff = if bonus > expected {
         bonus - expected
     } else {
@@ -700,7 +691,7 @@ fn transmission_fidelity_aggregator_reflects_unlocked_encoding_tools() {
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::MassLiteracy); // +0.15
     let bonus = civ.tool_transmission_fidelity_bonus();
-    let expected = Real::from_ratio(35, 100);
+    let expected = Real::percent(35);
     let diff = if bonus > expected {
         bonus - expected
     } else {
@@ -727,7 +718,7 @@ fn tool_discovery_rate_aggregates() {
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::AbstractMathematics);
     let bonus = civ.tool_discovery_rate_bonus();
-    let expected = Real::from_ratio(45, 100);
+    let expected = Real::percent(45);
     let diff = if bonus > expected {
         bonus - expected
     } else {
@@ -764,7 +755,7 @@ fn tool_cohesion_caps_at_forty() {
     let bonus = civ.tool_cohesion_bonus();
     assert_eq!(
         bonus,
-        Real::from_ratio(40, 100),
+        Real::percent(40),
         "cohesion bonus should clamp to +0.40; got {bonus:?}",
     );
 }
@@ -783,7 +774,7 @@ fn tool_migration_speed_aggregates() {
     civ.unlocked_tools
         .insert(crate::tech::ToolKind::MotivePropulsion);
     let bonus = civ.tool_migration_speed_bonus();
-    let expected = Real::from_ratio(50, 100);
+    let expected = Real::percent(50);
     let diff = if bonus > expected {
         bonus - expected
     } else {
@@ -816,7 +807,7 @@ fn tool_fertility_aggregates_and_caps() {
         civ.unlocked_tools.insert(tk);
     }
     let bonus = civ.tool_fertility_bonus();
-    let expected = Real::from_ratio(43, 100);
+    let expected = Real::percent(43);
     let diff = if bonus > expected {
         bonus - expected
     } else {

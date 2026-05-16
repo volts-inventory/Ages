@@ -58,10 +58,10 @@ pub struct Electromagnetism {
 impl Electromagnetism {
     pub fn earth_like() -> Self {
         Self {
-            conductivity: Real::from_ratio(1, 100),
+            conductivity: Real::percent(1),
             discharge_threshold: Real::from_int(50),
             discharge_energy: Real::from_int(5),
-            charge_advect_k: Real::from_ratio(1, 100),
+            charge_advect_k: Real::percent(1),
         }
     }
 }
@@ -170,7 +170,7 @@ mod discharge_tests {
         let initial_temp = state.temperature()[0];
 
         let em = Electromagnetism::earth_like();
-        em.integrate(&mut state, Real::from_ratio(1, 100));
+        em.integrate(&mut state, Real::percent(1));
 
         // After discharge, cell 0 charge is zero and its
         // temperature has risen.
@@ -193,7 +193,7 @@ mod discharge_tests {
             discharge_energy: Real::from_int(5),
             charge_advect_k: Real::ZERO,
         };
-        em.integrate(&mut state, Real::from_ratio(1, 100));
+        em.integrate(&mut state, Real::percent(1));
 
         // No discharge — charge approximately preserved (some
         // diffusion to neighbours), temperature unchanged.
@@ -208,7 +208,7 @@ mod discharge_tests {
         let initial_temp = state.temperature()[0];
 
         let em = Electromagnetism::earth_like();
-        em.integrate(&mut state, Real::from_ratio(1, 100));
+        em.integrate(&mut state, Real::percent(1));
 
         // Negative charge above |threshold| discharges too —
         // |charge| triggers the threshold, energy released is
@@ -358,7 +358,7 @@ mod tests {
             conductivity: Real::ZERO,
             discharge_threshold: Real::from_int(1_000_000),
             discharge_energy: Real::ZERO,
-            charge_advect_k: Real::from_ratio(1, 100),
+            charge_advect_k: Real::percent(1),
         };
         for _ in 0..40 {
             em.integrate(&mut state, Real::ONE);

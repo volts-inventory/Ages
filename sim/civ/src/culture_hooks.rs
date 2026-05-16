@@ -38,7 +38,7 @@ pub fn allow_observation(template_id: u32, cell: u32) -> bool {
 /// civ's cosmology and produces a global per-relation weight;
 /// per-relation novelty taxonomy lands in M4 v2.
 pub fn focus_weight_for(_relation_id: u32, cosmology: &Cosmology) -> Real {
-    let bonus = Real::from_ratio(25, 100);
+    let bonus = Real::percent(25);
     Real::ONE + bonus * cosmology.empirical + bonus * cosmology.reformist
 }
 
@@ -57,7 +57,7 @@ pub fn suppress_confidence_for(form: Form, cosmology: &Cosmology) -> Real {
     let dist = form_distance(form, cosmology);
     let dog = cosmology.dogmatism();
     let raw = Real::ONE - dog * dist;
-    raw.max(Real::ZERO).min(Real::ONE)
+    raw.clamp01()
 }
 
 /// Backwards-compatible signature (no cosmology in scope).

@@ -37,9 +37,9 @@ impl ToolKind {
     pub fn capacity_multiplier(self) -> Real {
         match self {
             // Tier-1
-            ToolKind::LocalisedCombustion => Real::from_ratio(115, 100),
-            ToolKind::FoodProcessing => Real::from_ratio(115, 100),
-            ToolKind::StoneWorking => Real::from_ratio(105, 100),
+            ToolKind::LocalisedCombustion => Real::percent(115),
+            ToolKind::FoodProcessing => Real::percent(115),
+            ToolKind::StoneWorking => Real::percent(105),
             // Tier-2: agriculture is the headline demographic-
             // transition jump — settled farming was *the* biggest
             // density bump in real history (paleolithic 0.1/km² →
@@ -50,10 +50,10 @@ impl ToolKind {
             // `MaterialRefining` (craft surplus) add the smaller
             // amplifications around it.
             ToolKind::BulkCultivation => Real::from_int(5),
-            ToolKind::AnimalSymbiosis => Real::from_ratio(250, 100),
-            ToolKind::FluidControl => Real::from_ratio(120, 100),
-            ToolKind::UrbanConstruction => Real::from_ratio(110, 100),
-            ToolKind::MaterialRefining => Real::from_ratio(105, 100),
+            ToolKind::AnimalSymbiosis => Real::percent(250),
+            ToolKind::FluidControl => Real::percent(120),
+            ToolKind::UrbanConstruction => Real::percent(110),
+            ToolKind::MaterialRefining => Real::percent(105),
             // Tier-3: `ArtisanalSpecialisation` + `MechanicalAdvantage`
             // give craft-amplification and labour-amplification
             // respectively. Both ×1.10 — the major capacity jumps
@@ -63,9 +63,9 @@ impl ToolKind {
             // mechanical effect, but living-on-water construction
             // (stilts, floating platforms, sea walls) also lifts cell
             // capacity directly.
-            ToolKind::ArtisanalSpecialisation => Real::from_ratio(110, 100),
-            ToolKind::MechanicalAdvantage => Real::from_ratio(110, 100),
-            ToolKind::AmphibiousConstruction => Real::from_ratio(105, 100),
+            ToolKind::ArtisanalSpecialisation => Real::percent(110),
+            ToolKind::MechanicalAdvantage => Real::percent(110),
+            ToolKind::AmphibiousConstruction => Real::percent(105),
             // Tier-4: the industrial-revolution headline. `Mechanisation`
             // ×10.0 — mechanised agriculture + rail logistics drove
             // the 19th-century population explosion. `ChemicalSynthesis`
@@ -75,7 +75,7 @@ impl ToolKind {
             // `PowerGeneration` ×1.15 (energy abundance).
             ToolKind::Mechanisation => Real::from_int(10),
             ToolKind::ChemicalSynthesis => Real::from_int(3),
-            ToolKind::PowerGeneration => Real::from_ratio(115, 100),
+            ToolKind::PowerGeneration => Real::percent(115),
             ToolKind::MedicalIntervention => Real::from_int(2),
             // Tier-5 (information-age): genetic engineering and
             // medicine push capacity hard. `AdvancedMedicine` ×3.0
@@ -87,16 +87,16 @@ impl ToolKind {
             // cryogenic engineering smooth the seasonal floor.
             ToolKind::GeneticManipulation => Real::from_int(2),
             ToolKind::AdvancedMedicine => Real::from_int(3),
-            ToolKind::AutonomousSystems => Real::from_ratio(115, 100),
-            ToolKind::MaterialFabrication => Real::from_ratio(110, 100),
-            ToolKind::EnergyStorage => Real::from_ratio(110, 100),
-            ToolKind::CryogenicEngineering => Real::from_ratio(105, 100),
-            ToolKind::OrganicSynthesis => Real::from_ratio(110, 100),
+            ToolKind::AutonomousSystems => Real::percent(115),
+            ToolKind::MaterialFabrication => Real::percent(110),
+            ToolKind::EnergyStorage => Real::percent(110),
+            ToolKind::CryogenicEngineering => Real::percent(105),
+            ToolKind::OrganicSynthesis => Real::percent(110),
             // Tier-5 transcendence trio: narrative milestones, but
             // they shouldn't be mechanically inert. MetamaterialLattice
             // is the capacity headline (programmable bulk materials
             // — pre-tested for arbitrary load specs).
-            ToolKind::MetamaterialLattice => Real::from_ratio(125, 100),
+            ToolKind::MetamaterialLattice => Real::percent(125),
             _ => Real::ONE,
         }
     }
@@ -107,17 +107,17 @@ impl ToolKind {
     #[allow(clippy::match_same_arms)]
     pub fn food_crisis_resistance_bonus(self) -> Real {
         match self {
-            ToolKind::FluidGathering => Real::from_ratio(5, 100),
-            ToolKind::OrganizedHunting => Real::from_ratio(10, 100),
+            ToolKind::FluidGathering => Real::percent(5),
+            ToolKind::OrganizedHunting => Real::percent(10),
             // Tier-2: BulkStorage is the headline contributor
             // (granaries / pottery / sealed vats); BulkCultivation
             // and AnimalSymbiosis add steady-state surplus.
             // BulkStorage's +0.12 represents the spec's ~-40%
             // sensitivity reduction on the FOOD_CRISIS_THRESHOLD
             // (0.30 → ~0.18 floor).
-            ToolKind::BulkStorage => Real::from_ratio(12, 100),
-            ToolKind::BulkCultivation => Real::from_ratio(8, 100),
-            ToolKind::AnimalSymbiosis => Real::from_ratio(5, 100),
+            ToolKind::BulkStorage => Real::percent(12),
+            ToolKind::BulkCultivation => Real::percent(8),
+            ToolKind::AnimalSymbiosis => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -129,37 +129,37 @@ impl ToolKind {
     #[allow(clippy::match_same_arms)]
     pub fn war_strength_bonus(self) -> Real {
         match self {
-            ToolKind::ContactWeapon => Real::from_ratio(10, 100),
-            ToolKind::RangedMomentumWeapon => Real::from_ratio(10, 100),
-            ToolKind::StoneWorking => Real::from_ratio(5, 100),
-            ToolKind::OrganizedHunting => Real::from_ratio(5, 100),
+            ToolKind::ContactWeapon => Real::percent(10),
+            ToolKind::RangedMomentumWeapon => Real::percent(10),
+            ToolKind::StoneWorking => Real::percent(5),
+            ToolKind::OrganizedHunting => Real::percent(5),
             // Tier-2: MaterialRefining gives the metallurgy bump
             // to weapons; PermanentMasonry hardens defensible
             // strongpoints.
-            ToolKind::MaterialRefining => Real::from_ratio(10, 100),
-            ToolKind::PermanentMasonry => Real::from_ratio(5, 100),
+            ToolKind::MaterialRefining => Real::percent(10),
+            ToolKind::PermanentMasonry => Real::percent(5),
             // Tier-3: ChemicalProjectile is the headline +0.20
             // (gunpowder is decisive); DefensiveFortification +0.15
             // (walls + keeps); MechanicalAdvantage adds +0.05 (siege
             // engines, lever-arms).
-            ToolKind::ChemicalProjectile => Real::from_ratio(20, 100),
-            ToolKind::DefensiveFortification => Real::from_ratio(15, 100),
-            ToolKind::MechanicalAdvantage => Real::from_ratio(5, 100),
+            ToolKind::ChemicalProjectile => Real::percent(20),
+            ToolKind::DefensiveFortification => Real::percent(15),
+            ToolKind::MechanicalAdvantage => Real::percent(5),
             // Tier-4: Mechanisation +0.10 (mechanised armies);
             // AdvancedMaterials +0.10 (alloyed weapons + armour).
-            ToolKind::Mechanisation => Real::from_ratio(10, 100),
-            ToolKind::AdvancedMaterials => Real::from_ratio(10, 100),
+            ToolKind::Mechanisation => Real::percent(10),
+            ToolKind::AdvancedMaterials => Real::percent(10),
             // Tier-5: MaterialFabrication +0.05 (custom-fabbed
             // armaments); AutonomousSystems +0.05 (drones).
-            ToolKind::MaterialFabrication => Real::from_ratio(5, 100),
-            ToolKind::AutonomousSystems => Real::from_ratio(5, 100),
+            ToolKind::MaterialFabrication => Real::percent(5),
+            ToolKind::AutonomousSystems => Real::percent(5),
             // Tier-5 transcendence: MetamaterialLattice +0.10
             // (cloaking-grade armour + active-response plating).
-            ToolKind::MetamaterialLattice => Real::from_ratio(10, 100),
+            ToolKind::MetamaterialLattice => Real::percent(10),
             // Tier-3 sensorium: DistanceImaging +0.05 — long-range
             // observation as a tactical advantage (rangefinding,
             // forward intelligence).
-            ToolKind::DistanceImaging => Real::from_ratio(5, 100),
+            ToolKind::DistanceImaging => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -171,16 +171,16 @@ impl ToolKind {
     #[allow(clippy::match_same_arms)]
     pub fn seasonal_floor_bonus(self) -> Real {
         match self {
-            ToolKind::SimpleShelter => Real::from_ratio(10, 100),
-            ToolKind::BasicTextiles => Real::from_ratio(5, 100),
+            ToolKind::SimpleShelter => Real::percent(10),
+            ToolKind::BasicTextiles => Real::percent(5),
             // Tier-2: PermanentMasonry adds seasonal-floor lift
             // (durable storerooms + sheltered urban interiors);
             // FluidControl helps too (irrigation buffers
             // dry-season collapse); UrbanConstruction adds
             // density-of-shelter.
-            ToolKind::PermanentMasonry => Real::from_ratio(5, 100),
-            ToolKind::FluidControl => Real::from_ratio(5, 100),
-            ToolKind::UrbanConstruction => Real::from_ratio(5, 100),
+            ToolKind::PermanentMasonry => Real::percent(5),
+            ToolKind::FluidControl => Real::percent(5),
+            ToolKind::UrbanConstruction => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -190,37 +190,37 @@ impl ToolKind {
     #[allow(clippy::match_same_arms)]
     pub fn catastrophe_resistance_bonus(self) -> Real {
         match self {
-            ToolKind::SimpleShelter => Real::from_ratio(5, 100),
-            ToolKind::BasicTextiles => Real::from_ratio(5, 100),
-            ToolKind::BasicHealing => Real::from_ratio(10, 100),
+            ToolKind::SimpleShelter => Real::percent(5),
+            ToolKind::BasicTextiles => Real::percent(5),
+            ToolKind::BasicHealing => Real::percent(10),
             // Tier-2: PermanentMasonry hardens against volcanism /
             // storms; BulkStorage softens the hit from disease /
             // famine waves.
-            ToolKind::PermanentMasonry => Real::from_ratio(10, 100),
-            ToolKind::BulkStorage => Real::from_ratio(5, 100),
+            ToolKind::PermanentMasonry => Real::percent(10),
+            ToolKind::BulkStorage => Real::percent(5),
             // Tier-3: DefensiveFortification reads the catastrophe
             // signal — walls don't only resist sieges, they shelter
             // populations from flood / volcanism / weather extremes.
-            ToolKind::DefensiveFortification => Real::from_ratio(10, 100),
+            ToolKind::DefensiveFortification => Real::percent(10),
             // Tier-4: MedicalIntervention is the spec's catastrophe
             // headline (epidemic mitigation); AdvancedMaterials
             // gives a small structural-resilience bump.
-            ToolKind::MedicalIntervention => Real::from_ratio(15, 100),
-            ToolKind::AdvancedMaterials => Real::from_ratio(5, 100),
+            ToolKind::MedicalIntervention => Real::percent(15),
+            ToolKind::AdvancedMaterials => Real::percent(5),
             // Tier-5: AdvancedMedicine + GeneticManipulation lift
             // disease resistance further; CryogenicEngineering
             // adds a small bump (cold-storage of medicine /
             // food).
-            ToolKind::AdvancedMedicine => Real::from_ratio(15, 100),
-            ToolKind::GeneticManipulation => Real::from_ratio(10, 100),
-            ToolKind::CryogenicEngineering => Real::from_ratio(5, 100),
+            ToolKind::AdvancedMedicine => Real::percent(15),
+            ToolKind::GeneticManipulation => Real::percent(10),
+            ToolKind::CryogenicEngineering => Real::percent(5),
             // Tier-5 transcendence: MetamaterialLattice +0.10
             // (active-response structural materials reduce loss to
             // floods, storms, blast events); BioelectricResonator
             // +0.05 (medical diagnostic resonance for early disease
             // detection).
-            ToolKind::MetamaterialLattice => Real::from_ratio(10, 100),
-            ToolKind::BioelectricResonator => Real::from_ratio(5, 100),
+            ToolKind::MetamaterialLattice => Real::percent(10),
+            ToolKind::BioelectricResonator => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -242,17 +242,17 @@ impl ToolKind {
             // (vaccines + clean water moved homo sapiens from
             // ~40 to ~70 mostly through reduced mortality, but
             // a few % comes from raising max lifespan).
-            ToolKind::MedicalIntervention => Real::from_ratio(5, 100),
+            ToolKind::MedicalIntervention => Real::percent(5),
             // Tier-5: advanced medicine adds another +10% via
             // chronic-disease control + organ replacement.
-            ToolKind::AdvancedMedicine => Real::from_ratio(10, 100),
+            ToolKind::AdvancedMedicine => Real::percent(10),
             // Tier-5: GeneticManipulation is the headline
             // lifespan extension — direct senescence treatment.
-            ToolKind::GeneticManipulation => Real::from_ratio(20, 100),
+            ToolKind::GeneticManipulation => Real::percent(20),
             // Tier-5 transcendence: BioelectricResonator +0.10
             // (continuous-monitor diagnostics catch organ failure
             // pre-symptom, extending elder lifespan further).
-            ToolKind::BioelectricResonator => Real::from_ratio(10, 100),
+            ToolKind::BioelectricResonator => Real::percent(10),
             _ => Real::ZERO,
         }
     }
@@ -281,67 +281,51 @@ impl ToolKind {
         match self {
             // Tier-1: shelter + clothing protect infants + elders
             // from cold-stress mortality.
-            ToolKind::SimpleShelter => [
-                Real::from_ratio(5, 100),
-                Real::ZERO,
-                Real::ZERO,
-                Real::from_ratio(5, 100),
-            ],
-            ToolKind::BasicTextiles => [
-                Real::from_ratio(5, 100),
-                Real::ZERO,
-                Real::ZERO,
-                Real::from_ratio(5, 100),
-            ],
-            ToolKind::FoodProcessing => [
-                Real::from_ratio(5, 100),
-                Real::from_ratio(5, 100),
-                Real::ZERO,
-                Real::ZERO,
-            ],
+            ToolKind::SimpleShelter => [Real::percent(5), Real::ZERO, Real::ZERO, Real::percent(5)],
+            ToolKind::BasicTextiles => [Real::percent(5), Real::ZERO, Real::ZERO, Real::percent(5)],
+            ToolKind::FoodProcessing => {
+                [Real::percent(5), Real::percent(5), Real::ZERO, Real::ZERO]
+            }
             // Tier-2: foundational medicine + storage.
             ToolKind::BasicHealing => [
-                Real::from_ratio(15, 100),
-                Real::from_ratio(10, 100),
-                Real::from_ratio(5, 100),
+                Real::percent(15),
+                Real::percent(10),
+                Real::percent(5),
                 Real::ZERO,
             ],
             ToolKind::BulkStorage => [
-                Real::from_ratio(5, 100),
-                Real::from_ratio(5, 100),
+                Real::percent(5),
+                Real::percent(5),
                 Real::ZERO,
-                Real::from_ratio(5, 100),
+                Real::percent(5),
             ],
             // Tier-3: sanitation (fluid control = clean water +
             // sewage management). Cuts infant + juvenile mortality
             // sharply — the historical clean-water leap halved
             // childhood deaths.
-            ToolKind::FluidControl => [
-                Real::from_ratio(15, 100),
-                Real::from_ratio(10, 100),
-                Real::ZERO,
-                Real::ZERO,
-            ],
+            ToolKind::FluidControl => {
+                [Real::percent(15), Real::percent(10), Real::ZERO, Real::ZERO]
+            }
             // Tier-4: modern medicine across the board.
             ToolKind::MedicalIntervention => [
-                Real::from_ratio(15, 100),
-                Real::from_ratio(15, 100),
-                Real::from_ratio(10, 100),
-                Real::from_ratio(5, 100),
+                Real::percent(15),
+                Real::percent(15),
+                Real::percent(10),
+                Real::percent(5),
             ],
             // Tier-5: advanced medicine + senescence treatment.
             ToolKind::AdvancedMedicine => [
-                Real::from_ratio(15, 100),
-                Real::from_ratio(15, 100),
-                Real::from_ratio(15, 100),
-                Real::from_ratio(10, 100),
+                Real::percent(15),
+                Real::percent(15),
+                Real::percent(15),
+                Real::percent(10),
             ],
             // GeneticManipulation: elder-bracket headline.
             ToolKind::GeneticManipulation => [
-                Real::from_ratio(10, 100),
-                Real::from_ratio(10, 100),
-                Real::from_ratio(10, 100),
-                Real::from_ratio(20, 100),
+                Real::percent(10),
+                Real::percent(10),
+                Real::percent(10),
+                Real::percent(20),
             ],
             // Tier-5 transcendence: BioelectricResonator —
             // bioelectric instrumentation reads physiology directly,
@@ -349,9 +333,9 @@ impl ToolKind {
             // than imaging-based diagnosis.
             ToolKind::BioelectricResonator => [
                 Real::ZERO,
-                Real::from_ratio(5, 100),
-                Real::from_ratio(10, 100),
-                Real::from_ratio(15, 100),
+                Real::percent(5),
+                Real::percent(10),
+                Real::percent(15),
             ],
             _ => zero,
         }
@@ -370,26 +354,26 @@ impl ToolKind {
             // (writing systems lift literacy directly); TradeNetworks
             // adds a small +0.05 (settled bands with surplus develop
             // record-keeping conventions even before formal writing).
-            ToolKind::CulturalEncoding => Real::from_ratio(10, 100),
-            ToolKind::TradeNetworks => Real::from_ratio(5, 100),
+            ToolKind::CulturalEncoding => Real::percent(10),
+            ToolKind::TradeNetworks => Real::percent(5),
             // Tier-3: WrittenJurisprudence is the spec's +0.15
             // headline; AbstractMathematics adds +0.10 (formal
             // notation lifts literacy further); PrecisionTimekeeping
             // a small +0.05 (calendar-keeping is a literacy
             // contributor).
-            ToolKind::WrittenJurisprudence => Real::from_ratio(15, 100),
-            ToolKind::AbstractMathematics => Real::from_ratio(10, 100),
-            ToolKind::PrecisionTimekeeping => Real::from_ratio(5, 100),
+            ToolKind::WrittenJurisprudence => Real::percent(15),
+            ToolKind::AbstractMathematics => Real::percent(10),
+            ToolKind::PrecisionTimekeeping => Real::percent(5),
             // Tier-4: MassLiteracy is the spec's headline +0.20
             // (universal symbol-encoding access); AnalyticalEngines
             // a small +0.05 (computation as a literacy boost).
-            ToolKind::MassLiteracy => Real::from_ratio(20, 100),
-            ToolKind::AnalyticalEngines => Real::from_ratio(5, 100),
+            ToolKind::MassLiteracy => Real::percent(20),
+            ToolKind::AnalyticalEngines => Real::percent(5),
             // Tier-5: DigitalComputation +0.10 (ubiquitous
             // computational tools); InformationNetworking +0.10
             // (knowledge-access at network speed).
-            ToolKind::DigitalComputation => Real::from_ratio(10, 100),
-            ToolKind::InformationNetworking => Real::from_ratio(10, 100),
+            ToolKind::DigitalComputation => Real::percent(10),
+            ToolKind::InformationNetworking => Real::percent(10),
             _ => Real::ZERO,
         }
     }
@@ -406,37 +390,37 @@ impl ToolKind {
             // Tier-2: WatercraftConstruction opens water domains
             // for expansion; TradeNetworks accelerates it via
             // exchange + survey.
-            ToolKind::WatercraftConstruction => Real::from_ratio(10, 100),
-            ToolKind::TradeNetworks => Real::from_ratio(5, 100),
+            ToolKind::WatercraftConstruction => Real::percent(10),
+            ToolKind::TradeNetworks => Real::percent(5),
             // Tier-3: LongRangeNavigation +0.15 (sextants /
             // compass cross oceans); MotivePropulsion +0.10
             // (sails / animal traction).
-            ToolKind::LongRangeNavigation => Real::from_ratio(15, 100),
-            ToolKind::MotivePropulsion => Real::from_ratio(10, 100),
+            ToolKind::LongRangeNavigation => Real::percent(15),
+            ToolKind::MotivePropulsion => Real::percent(10),
             // Tier-4: HeavyTransport + AerialTransport each +0.20
             // (mechanised land + air); LongRangeCommunication +0.05
             // (synchronised expansion via remote coordination).
-            ToolKind::HeavyTransport => Real::from_ratio(20, 100),
-            ToolKind::AerialTransport => Real::from_ratio(20, 100),
-            ToolKind::LongRangeCommunication => Real::from_ratio(5, 100),
+            ToolKind::HeavyTransport => Real::percent(20),
+            ToolKind::AerialTransport => Real::percent(20),
+            ToolKind::LongRangeCommunication => Real::percent(5),
             // Tier-5: OrbitalReach +0.30 (escape velocity opens
             // off-world expansion).
-            ToolKind::OrbitalReach => Real::from_ratio(30, 100),
+            ToolKind::OrbitalReach => Real::percent(30),
             // Tier-5 transcendence: FieldPropulsionEngine +0.30
             // (reactionless propulsion + atmospheric independence
             // — at parity with OrbitalReach).
-            ToolKind::FieldPropulsionEngine => Real::from_ratio(30, 100),
+            ToolKind::FieldPropulsionEngine => Real::percent(30),
             // Tier-3 sensorium: DistanceImaging +0.05 (telescopes
             // + cartography accelerate frontier surveying);
             // tier-2 RemoteAcoustic +0.05 (sonar + echolocation
             // for safer water transit).
-            ToolKind::DistanceImaging => Real::from_ratio(5, 100),
-            ToolKind::RemoteAcoustic => Real::from_ratio(5, 100),
+            ToolKind::DistanceImaging => Real::percent(5),
+            ToolKind::RemoteAcoustic => Real::percent(5),
             // AmphibiousConstruction +0.05 — habitat-lift via
             // `can_claim_glyph` is the headline, but built
             // amphibian platforms also speed expansion across
             // mixed terrain.
-            ToolKind::AmphibiousConstruction => Real::from_ratio(5, 100),
+            ToolKind::AmphibiousConstruction => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -454,32 +438,32 @@ impl ToolKind {
             // fidelity (written knowledge degrades less across
             // linguistic distance than oral); TradeNetworks adds
             // a small bump (cross-civ contact volume).
-            ToolKind::CulturalEncoding => Real::from_ratio(10, 100),
-            ToolKind::TradeNetworks => Real::from_ratio(5, 100),
+            ToolKind::CulturalEncoding => Real::percent(10),
+            ToolKind::TradeNetworks => Real::percent(5),
             // Tier-3: WrittenJurisprudence (canonised legal
             // codes are universally interpretable) +0.10;
             // AbstractMathematics +0.05 (formal notation
             // crosses linguistic boundaries); PrecisionTimekeeping
             // +0.05 (shared calendars synchronise records).
-            ToolKind::WrittenJurisprudence => Real::from_ratio(10, 100),
-            ToolKind::AbstractMathematics => Real::from_ratio(5, 100),
-            ToolKind::PrecisionTimekeeping => Real::from_ratio(5, 100),
+            ToolKind::WrittenJurisprudence => Real::percent(10),
+            ToolKind::AbstractMathematics => Real::percent(5),
+            ToolKind::PrecisionTimekeeping => Real::percent(5),
             // Tier-4: LongRangeCommunication +0.15 (radio /
             // EM telegraphy is the headline transmission lifter);
             // MassLiteracy +0.15 (universal access); AnalyticalEngines
             // +0.05 (computation aids canonisation).
-            ToolKind::LongRangeCommunication => Real::from_ratio(15, 100),
-            ToolKind::MassLiteracy => Real::from_ratio(15, 100),
-            ToolKind::AnalyticalEngines => Real::from_ratio(5, 100),
+            ToolKind::LongRangeCommunication => Real::percent(15),
+            ToolKind::MassLiteracy => Real::percent(15),
+            ToolKind::AnalyticalEngines => Real::percent(5),
             // Tier-5: InformationNetworking +0.15 (the spec's
             // "+0.15 networking" headline); DigitalComputation
             // +0.10 (lossless storage + retrieval).
-            ToolKind::InformationNetworking => Real::from_ratio(15, 100),
-            ToolKind::DigitalComputation => Real::from_ratio(10, 100),
+            ToolKind::InformationNetworking => Real::percent(15),
+            ToolKind::DigitalComputation => Real::percent(10),
             // Tier-2 sensorium: RemoteAcoustic +0.05 — long-range
             // acoustic signalling is the pre-EM telegraphy
             // (drum / horn networks).
-            ToolKind::RemoteAcoustic => Real::from_ratio(5, 100),
+            ToolKind::RemoteAcoustic => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -497,40 +481,40 @@ impl ToolKind {
             // Tier-2: ExperimentApparatus tightens the
             // observation-to-confirmation loop (controlled
             // conditions yield cleaner samples per attempt).
-            ToolKind::ExperimentApparatus => Real::from_ratio(10, 100),
+            ToolKind::ExperimentApparatus => Real::percent(10),
             // Tier-3: PrecisionTimekeeping synchronises
             // measurement; WrittenJurisprudence canonises
             // findings; AbstractMathematics lets formal
             // reasoning narrow candidate forms faster.
-            ToolKind::PrecisionTimekeeping => Real::from_ratio(5, 100),
-            ToolKind::WrittenJurisprudence => Real::from_ratio(5, 100),
-            ToolKind::AbstractMathematics => Real::from_ratio(10, 100),
+            ToolKind::PrecisionTimekeeping => Real::percent(5),
+            ToolKind::WrittenJurisprudence => Real::percent(5),
+            ToolKind::AbstractMathematics => Real::percent(10),
             // Tier-4: AnalyticalEngines is the headline pre-digital
             // computation jump; MassLiteracy widens the contributor
             // pool.
-            ToolKind::AnalyticalEngines => Real::from_ratio(15, 100),
-            ToolKind::MassLiteracy => Real::from_ratio(5, 100),
+            ToolKind::AnalyticalEngines => Real::percent(15),
+            ToolKind::MassLiteracy => Real::percent(5),
             // Tier-5: DigitalComputation is the headline +0.20;
             // InformationNetworking +0.10 (cross-civ idea exchange);
             // GeneticManipulation +0.05 (life-science instrumentation).
-            ToolKind::DigitalComputation => Real::from_ratio(20, 100),
-            ToolKind::InformationNetworking => Real::from_ratio(10, 100),
-            ToolKind::GeneticManipulation => Real::from_ratio(5, 100),
+            ToolKind::DigitalComputation => Real::percent(20),
+            ToolKind::InformationNetworking => Real::percent(10),
+            ToolKind::GeneticManipulation => Real::percent(5),
             // Tier-5 transcendence: BioelectricResonator +0.10
             // — direct-from-physiology measurement is a
             // life-sciences instrumentation jump.
-            ToolKind::BioelectricResonator => Real::from_ratio(10, 100),
+            ToolKind::BioelectricResonator => Real::percent(10),
             // Sensorium-extending tools accelerate discovery in
             // their domain by widening the perceivable channel set:
             // DistanceImaging +0.05 (telescopes/microscopes),
             // RemoteAcoustic +0.03 (sonar/echolocation),
             // ThermalSensor +0.05, FieldSensor +0.05,
             // MagneticSensor +0.05.
-            ToolKind::DistanceImaging => Real::from_ratio(5, 100),
-            ToolKind::RemoteAcoustic => Real::from_ratio(3, 100),
-            ToolKind::ThermalSensor => Real::from_ratio(5, 100),
-            ToolKind::FieldSensor => Real::from_ratio(5, 100),
-            ToolKind::MagneticSensor => Real::from_ratio(5, 100),
+            ToolKind::DistanceImaging => Real::percent(5),
+            ToolKind::RemoteAcoustic => Real::percent(3),
+            ToolKind::ThermalSensor => Real::percent(5),
+            ToolKind::FieldSensor => Real::percent(5),
+            ToolKind::MagneticSensor => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -548,19 +532,19 @@ impl ToolKind {
             // Tier-2: TradeNetworks (economic interdependence);
             // CulturalEncoding (canonical narrative);
             // UrbanConstruction (settled centres anchor identity).
-            ToolKind::TradeNetworks => Real::from_ratio(5, 100),
-            ToolKind::CulturalEncoding => Real::from_ratio(5, 100),
-            ToolKind::UrbanConstruction => Real::from_ratio(5, 100),
+            ToolKind::TradeNetworks => Real::percent(5),
+            ToolKind::CulturalEncoding => Real::percent(5),
+            ToolKind::UrbanConstruction => Real::percent(5),
             // Tier-3: WrittenJurisprudence is the headline +0.10
             // (legal codes bind a polity); DefensiveFortification
             // +0.05 (shared defence as identity).
-            ToolKind::WrittenJurisprudence => Real::from_ratio(10, 100),
-            ToolKind::DefensiveFortification => Real::from_ratio(5, 100),
+            ToolKind::WrittenJurisprudence => Real::percent(10),
+            ToolKind::DefensiveFortification => Real::percent(5),
             // Tier-4: MassLiteracy +0.10 (shared symbology at scale).
-            ToolKind::MassLiteracy => Real::from_ratio(10, 100),
+            ToolKind::MassLiteracy => Real::percent(10),
             // Tier-5: InformationNetworking +0.10 (network identity
             // — the modern "imagined community" lifter).
-            ToolKind::InformationNetworking => Real::from_ratio(10, 100),
+            ToolKind::InformationNetworking => Real::percent(10),
             _ => Real::ZERO,
         }
     }
@@ -577,33 +561,33 @@ impl ToolKind {
         match self {
             // Tier-2: WatercraftConstruction opens river / coast
             // movement.
-            ToolKind::WatercraftConstruction => Real::from_ratio(5, 100),
+            ToolKind::WatercraftConstruction => Real::percent(5),
             // Tier-3: MotivePropulsion (sails / animal traction);
             // LongRangeNavigation (knowing where to go, not just
             // how to get there).
-            ToolKind::MotivePropulsion => Real::from_ratio(10, 100),
-            ToolKind::LongRangeNavigation => Real::from_ratio(5, 100),
+            ToolKind::MotivePropulsion => Real::percent(10),
+            ToolKind::LongRangeNavigation => Real::percent(5),
             // Tier-4: HeavyTransport + AerialTransport are the
             // mechanised-mobility pair; LongRangeCommunication
             // adds coordination (refugees know where capacity exists).
-            ToolKind::HeavyTransport => Real::from_ratio(20, 100),
-            ToolKind::AerialTransport => Real::from_ratio(20, 100),
-            ToolKind::LongRangeCommunication => Real::from_ratio(5, 100),
+            ToolKind::HeavyTransport => Real::percent(20),
+            ToolKind::AerialTransport => Real::percent(20),
+            ToolKind::LongRangeCommunication => Real::percent(5),
             // Tier-5: AutonomousSystems +0.10 (logistics
             // automation); InformationNetworking +0.05
             // (real-time pressure / opportunity dissemination).
-            ToolKind::AutonomousSystems => Real::from_ratio(10, 100),
-            ToolKind::InformationNetworking => Real::from_ratio(5, 100),
+            ToolKind::AutonomousSystems => Real::percent(10),
+            ToolKind::InformationNetworking => Real::percent(5),
             // Tier-5 transcendence: FieldPropulsionEngine +0.30
             // — once reactionless propulsion lands, intra-planetary
             // movement is bottleneck-free and migrations realise
             // at near-instantaneous speeds.
-            ToolKind::FieldPropulsionEngine => Real::from_ratio(30, 100),
+            ToolKind::FieldPropulsionEngine => Real::percent(30),
             // AmphibiousConstruction +0.05 — built bridges /
             // floating platforms speed migration across mixed
             // terrain (the habitat-lift in `can_claim_glyph` is
             // the headline mechanical effect).
-            ToolKind::AmphibiousConstruction => Real::from_ratio(5, 100),
+            ToolKind::AmphibiousConstruction => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -620,20 +604,20 @@ impl ToolKind {
         match self {
             // Tier-1: FoodProcessing improves nutritional density —
             // better-nourished fertile adults conceive more often.
-            ToolKind::FoodProcessing => Real::from_ratio(5, 100),
+            ToolKind::FoodProcessing => Real::percent(5),
             // Tier-2: BulkCultivation (food security); BulkStorage
             // (nutritional consistency through lean seasons);
             // BasicHealing (reduces miscarriage / improves
             // maternal health).
-            ToolKind::BulkCultivation => Real::from_ratio(5, 100),
-            ToolKind::BulkStorage => Real::from_ratio(3, 100),
-            ToolKind::BasicHealing => Real::from_ratio(5, 100),
+            ToolKind::BulkCultivation => Real::percent(5),
+            ToolKind::BulkStorage => Real::percent(3),
+            ToolKind::BasicHealing => Real::percent(5),
             // Tier-4: MedicalIntervention (modern obstetrics).
-            ToolKind::MedicalIntervention => Real::from_ratio(10, 100),
+            ToolKind::MedicalIntervention => Real::percent(10),
             // Tier-5: AdvancedMedicine (assisted reproduction,
             // NICUs); GeneticManipulation (fertility treatment).
-            ToolKind::AdvancedMedicine => Real::from_ratio(10, 100),
-            ToolKind::GeneticManipulation => Real::from_ratio(5, 100),
+            ToolKind::AdvancedMedicine => Real::percent(10),
+            ToolKind::GeneticManipulation => Real::percent(5),
             _ => Real::ZERO,
         }
     }

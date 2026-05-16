@@ -243,7 +243,7 @@ mod tests {
         let l = Lorentz {
             // Aggressive coefficient — explicit Euler would have
             // exploded. Boris stays bounded.
-            lorentz_k: Real::from_ratio(1, 100),
+            lorentz_k: Real::percent(1),
         };
         for _ in 0..1000 {
             l.integrate(&mut state, Real::ONE);

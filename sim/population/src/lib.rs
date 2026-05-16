@@ -153,7 +153,7 @@ impl Cohort {
     /// seed a new cell with a slice of an existing centroid.
     #[must_use]
     pub fn split_off_fraction(&mut self, fraction: Real) -> Cohort {
-        let f = fraction.max(Real::ZERO).min(Real::ONE);
+        let f = fraction.clamp01();
         let moved = Cohort {
             infant: self.infant * f,
             juvenile: self.juvenile * f,
@@ -284,7 +284,7 @@ pub struct PopulationDynamics {
     pub mortality_reduction: [Real; 4],
     /// Multiplier on per-tick births from tech (nutrition,
     /// healing, modern medicine). `Real::ONE` = no change;
-    /// `Real::from_ratio(150, 100)` = 50% more births per fertile.
+    /// `Real::percent(150)` = 50% more births per fertile.
     /// Distinct from `mortality_reduction[0]` (infant deaths
     /// *after* birth) — this is the conception-through-viable-
     /// birth gate. Defaults to `1.0` so pre-tech civs and test
@@ -321,10 +321,10 @@ impl PopulationDynamics {
             Real::from_int(i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12));
         // Defensive: lifespan can't be sub-monthly.
         let lifespan = lifespan_years.max(Real::ONE);
-        let infant_months = (lifespan * biology.infant_fraction * baseline_months_per_year)
-            .max(Real::ONE);
-        let juvenile_months = (lifespan * biology.maturity_fraction * baseline_months_per_year)
-            .max(Real::ONE);
+        let infant_months =
+            (lifespan * biology.infant_fraction * baseline_months_per_year).max(Real::ONE);
+        let juvenile_months =
+            (lifespan * biology.maturity_fraction * baseline_months_per_year).max(Real::ONE);
         let fertile_months =
             (lifespan * biology.fertile_fraction() * baseline_months_per_year).max(Real::ONE);
         // Eldership can be zero by construction; clamp the
@@ -339,19 +339,20 @@ impl PopulationDynamics {
         // / months). For window_survival in (0, 1] this returns a
         // per-tick fraction in (0, 1].
         let to_per_tick = |window_survival: Real, months: Real| -> Real {
-            let s = window_survival.max(Real::from_ratio(1, 1000)).min(Real::ONE);
+            let s = window_survival
+                .max(Real::from_ratio(1, 1000))
+                .min(Real::ONE);
             let log_s = ln(s);
             let exponent = log_s / months;
-            exp(exponent).max(Real::ZERO).min(Real::ONE)
+            exp(exponent).clamp01()
         };
         // Fertile baseline survival over the entire fertile window:
         // 0.85 + 0.10 * cognition (range [0.85, 0.95]).
-        let cog_clamped = cognition.max(Real::ZERO).min(Real::ONE);
-        let fertile_window_survival =
-            Real::from_ratio(85, 100) + cog_clamped * Real::from_ratio(10, 100);
+        let cog_clamped = cognition.clamp01();
+        let fertile_window_survival = Real::percent(85) + cog_clamped * Real::percent(10);
         // Elder window survival: baseline 0.30 (senescence dominates;
         // most species kill their elders within the elder window).
-        let elder_window_survival = Real::from_ratio(30, 100);
+        let elder_window_survival = Real::percent(30);
         let infant_survival_per_tick = to_per_tick(biology.infant_survival, infant_months);
         let juvenile_survival_per_tick = to_per_tick(biology.juvenile_survival, juvenile_months);
         let fertile_survival_per_tick = to_per_tick(fertile_window_survival, fertile_months);
@@ -375,9 +376,8 @@ impl PopulationDynamics {
         // Stress factor (carried over from earlier model). Mutual
         // aid + adaptive behaviour buffer the death amplification.
         // Centred at 4.0; range [2, 5].
-        let soc_clamped = sociality.max(Real::ZERO).min(Real::ONE);
-        let stress_factor =
-            (Real::from_int(5) - soc_clamped - cog_clamped).max(Real::from_int(2));
+        let soc_clamped = sociality.clamp01();
+        let stress_factor = (Real::from_int(5) - soc_clamped - cog_clamped).max(Real::from_int(2));
         Self {
             birth_rate,
             infant_survival_per_tick,
@@ -409,10 +409,10 @@ impl PopulationDynamics {
             fertile_to_elder: Real::from_ratio(1, 600),
             stress_factor: Real::from_int(4),
             food_multipliers: [
-                Real::from_ratio(30, 100),
-                Real::from_ratio(60, 100),
+                Real::percent(30),
+                Real::percent(60),
                 Real::ONE,
-                Real::from_ratio(90, 100),
+                Real::percent(90),
             ],
             mortality_reduction: [Real::ZERO; 4],
             birth_rate_multiplier: Real::ONE,
@@ -456,7 +456,7 @@ impl PopulationDynamics {
         // vulnerability — infants and juveniles can't withstand
         // food shortfall as well as adults; elders are fragile too.
         let amp = Real::ONE + stress * self.stress_factor;
-        let starvation = stress * Real::from_ratio(10, 100);
+        let starvation = stress * Real::percent(10);
         let starvation_infant = starvation * Real::from_ratio(20, 10);
         let starvation_juvenile = starvation * Real::from_ratio(15, 10);
         let starvation_fertile = starvation;
@@ -468,7 +468,7 @@ impl PopulationDynamics {
         // a bracket would otherwise see, and the cuts compound with
         // (rather than replacing) the stress-and-starvation terms.
         let combine = |s: Real, extra: Real, reduction: Real| -> Real {
-            let r = reduction.max(Real::ZERO).min(Real::ONE);
+            let r = reduction.clamp01();
             let reduced_baseline = (Real::ONE - s) * (Real::ONE - r) * amp;
             let total = (reduced_baseline + extra).min(Real::ONE);
             (Real::ONE - total).max(Real::ZERO)
@@ -563,7 +563,7 @@ impl PopulationDynamics {
         // without stress amplification (so this is the neutral-
         // environment expectancy).
         let apply_reduction = |s: Real, r: Real| -> Real {
-            let red = r.max(Real::ZERO).min(Real::ONE);
+            let red = r.clamp01();
             Real::ONE - (Real::ONE - s) * (Real::ONE - red)
         };
         let s_i = apply_reduction(self.infant_survival_per_tick, self.mortality_reduction[0]);
@@ -624,7 +624,7 @@ pub fn food_security(demand: Pop, capacity: Pop) -> Real {
         Real::ZERO
     };
     let raw = Real::ONE - stress;
-    raw.max(Real::ZERO).min(Real::ONE)
+    raw.clamp01()
 }
 
 #[cfg(test)]
@@ -637,16 +637,16 @@ mod tests {
         // Survivals: infant=0.5, juvenile=0.85.
         PopulationBiology {
             clutch_size: Real::from_int(10),
-            infant_fraction: Real::from_ratio(5, 100),
-            maturity_fraction: Real::from_ratio(20, 100),
-            eldership_fraction: Real::from_ratio(15, 100),
-            infant_survival: Real::from_ratio(50, 100),
-            juvenile_survival: Real::from_ratio(85, 100),
+            infant_fraction: Real::percent(5),
+            maturity_fraction: Real::percent(20),
+            eldership_fraction: Real::percent(15),
+            infant_survival: Real::percent(50),
+            juvenile_survival: Real::percent(85),
             food_multipliers: [
-                Real::from_ratio(30, 100),
-                Real::from_ratio(60, 100),
+                Real::percent(30),
+                Real::percent(60),
                 Real::ONE,
-                Real::from_ratio(90, 100),
+                Real::percent(90),
             ],
         }
     }
@@ -677,8 +677,8 @@ mod tests {
         let dyn_ = PopulationDynamics::for_species(
             &biology,
             lifespan,
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
+            Real::percent(50),
+            Real::percent(50),
         );
         // fertile_window_months = 40 × 0.60 × 12 = 288.
         // birth_rate = 10 / 288 ≈ 0.0347.
@@ -702,8 +702,8 @@ mod tests {
         let dyn_ = PopulationDynamics::for_species(
             &biology,
             Real::from_int(40),
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
+            Real::percent(50),
+            Real::percent(50),
         );
         let mut c = Cohort::new(Pop::from_int(100));
         // Big capacity so no stress.
@@ -724,8 +724,8 @@ mod tests {
         let dyn_ = PopulationDynamics::for_species(
             &biology,
             Real::from_int(40),
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
+            Real::percent(50),
+            Real::percent(50),
         );
         let mut c = Cohort::new(Pop::from_int(100));
         for _ in 0..200 {
@@ -750,8 +750,15 @@ mod tests {
         // tolerate within 0.001.
         let d = c.weighted_demand(&biology);
         let expected = Pop::from_int(28);
-        let diff = if d > expected { d - expected } else { expected - d };
-        assert!(diff < Pop::from_ratio(1, 1_000), "demand {d:?} != 28 within tol");
+        let diff = if d > expected {
+            d - expected
+        } else {
+            expected - d
+        };
+        assert!(
+            diff < Pop::from_ratio(1, 1_000),
+            "demand {d:?} != 28 within tol"
+        );
     }
 
     #[test]
@@ -795,8 +802,8 @@ mod tests {
         let dyn_ = PopulationDynamics::for_species(
             &biology,
             Real::from_int(40),
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
+            Real::percent(50),
+            Real::percent(50),
         );
         let mut a = Cohort::new(Pop::from_int(100));
         let mut b = Cohort::new(Pop::from_int(100));
@@ -813,44 +820,44 @@ mod tests {
         // r-strategist: clutch=200, lifespan=4yr, low survival.
         let r_bio = PopulationBiology {
             clutch_size: Real::from_int(200),
-            infant_fraction: Real::from_ratio(2, 100),
-            maturity_fraction: Real::from_ratio(8, 100),
+            infant_fraction: Real::percent(2),
+            maturity_fraction: Real::percent(8),
             eldership_fraction: Real::ZERO,
-            infant_survival: Real::from_ratio(8, 100),
-            juvenile_survival: Real::from_ratio(40, 100),
+            infant_survival: Real::percent(8),
+            juvenile_survival: Real::percent(40),
             food_multipliers: [
-                Real::from_ratio(30, 100),
-                Real::from_ratio(60, 100),
+                Real::percent(30),
+                Real::percent(60),
                 Real::ONE,
-                Real::from_ratio(90, 100),
+                Real::percent(90),
             ],
         };
         // K-strategist: clutch=1, lifespan=80yr, high survival.
         let k_bio = PopulationBiology {
             clutch_size: Real::ONE,
-            infant_fraction: Real::from_ratio(3, 100),
-            maturity_fraction: Real::from_ratio(20, 100),
-            eldership_fraction: Real::from_ratio(20, 100),
-            infant_survival: Real::from_ratio(90, 100),
-            juvenile_survival: Real::from_ratio(95, 100),
+            infant_fraction: Real::percent(3),
+            maturity_fraction: Real::percent(20),
+            eldership_fraction: Real::percent(20),
+            infant_survival: Real::percent(90),
+            juvenile_survival: Real::percent(95),
             food_multipliers: [
-                Real::from_ratio(30, 100),
-                Real::from_ratio(60, 100),
+                Real::percent(30),
+                Real::percent(60),
                 Real::ONE,
-                Real::from_ratio(90, 100),
+                Real::percent(90),
             ],
         };
         let r_dyn = PopulationDynamics::for_species(
             &r_bio,
             Real::from_int(4),
-            Real::from_ratio(30, 100),
-            Real::from_ratio(20, 100),
+            Real::percent(30),
+            Real::percent(20),
         );
         let k_dyn = PopulationDynamics::for_species(
             &k_bio,
             Real::from_int(80),
-            Real::from_ratio(80, 100),
-            Real::from_ratio(80, 100),
+            Real::percent(80),
+            Real::percent(80),
         );
         let mut r_cohort = Cohort::new(Pop::from_int(100));
         let mut k_cohort = Cohort::new(Pop::from_int(100));
@@ -879,18 +886,18 @@ mod tests {
         let baseline = PopulationDynamics::for_species(
             &biology,
             Real::from_int(40),
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
+            Real::percent(50),
+            Real::percent(50),
         );
         let baseline_le = baseline.life_expectancy_months();
         // Apply 50% mortality reduction across every bracket — a
         // fully-equipped medicine + sanitation civ.
         let mut buffed = baseline;
         buffed.mortality_reduction = [
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
-            Real::from_ratio(50, 100),
+            Real::percent(50),
+            Real::percent(50),
+            Real::percent(50),
+            Real::percent(50),
         ];
         let buffed_le = buffed.life_expectancy_months();
         assert!(
@@ -907,18 +914,18 @@ mod tests {
     #[test]
     fn mortality_reduction_lifts_population() {
         let biology = test_biology();
-        let cog = Real::from_ratio(50, 100);
-        let soc = Real::from_ratio(50, 100);
+        let cog = Real::percent(50);
+        let soc = Real::percent(50);
         let lifespan = Real::from_int(40);
         let baseline_dyn = PopulationDynamics::for_species(&biology, lifespan, cog, soc);
         let mut tech_dyn = baseline_dyn;
         // Generous reduction across all brackets — simulates a
         // tier-4/5 medicine + sanitation civ.
         tech_dyn.mortality_reduction = [
-            Real::from_ratio(40, 100),
-            Real::from_ratio(40, 100),
-            Real::from_ratio(40, 100),
-            Real::from_ratio(40, 100),
+            Real::percent(40),
+            Real::percent(40),
+            Real::percent(40),
+            Real::percent(40),
         ];
         let mut baseline_cohort = Cohort::new(Pop::from_int(200));
         let mut tech_cohort = Cohort::new(Pop::from_int(200));

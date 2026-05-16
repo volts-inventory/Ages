@@ -241,7 +241,7 @@ mod tests {
             *w = Real::from_int(100);
         }
         let tides = Tides {
-            tide_k: Real::from_ratio(1, 100),
+            tide_k: Real::percent(1),
             // freeze sub_lunar at 0 with a huge period
             moons: vec![MoonTide {
                 mass_relative: Real::ONE,

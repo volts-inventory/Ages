@@ -69,9 +69,8 @@ impl Civ {
             }
             let centroid = self.territory_centroid;
             if cells.contains(&centroid) && cells.len() > 1 {
-                let centroid_share = Real::from_ratio(70, 100);
-                let mut centroid_cohort =
-                    Cohort::with_civ(Pop::ZERO, self.id);
+                let centroid_share = Real::percent(70);
+                let mut centroid_cohort = Cohort::with_civ(Pop::ZERO, self.id);
                 centroid_cohort.merge_in(&self.cohort);
                 centroid_cohort.scale_in_place(centroid_share);
                 let mut others_pool = Cohort::with_civ(Pop::ZERO, self.id);
@@ -154,9 +153,8 @@ impl Civ {
             let n_new = i64::try_from(new_cells.len()).unwrap_or(0).max(1);
             // 10% of centroid per new cell, capped at 80% total so
             // we never drain the capital below 20%.
-            let per_cell_fraction = Real::from_ratio(10, 100);
-            let total_fraction =
-                (per_cell_fraction * Real::from_int(n_new)).min(Real::from_ratio(80, 100));
+            let per_cell_fraction = Real::percent(10);
+            let total_fraction = (per_cell_fraction * Real::from_int(n_new)).min(Real::percent(80));
             let actual_per_cell = total_fraction / Real::from_int(n_new);
             // Slice the centroid in one operation.
             let mut centroid_seed = self
@@ -223,7 +221,7 @@ impl Civ {
     /// catastrophe events can carry the magnitude. The aggregate
     /// cohort is re-synced after the loss.
     pub fn drop_cell_pop(&mut self, cell: u32, fraction: Real) -> Pop {
-        let frac = fraction.max(Real::ZERO).min(Real::ONE);
+        let frac = fraction.clamp01();
         let mut lost = Pop::ZERO;
         if let Some(c) = self.region_cohorts.get_mut(&cell) {
             let before = c.total();
@@ -268,8 +266,7 @@ impl Civ {
         // intra-civ population redistribution (transport, navigation,
         // logistics coordination). `tool_migration_speed_bonus` is
         // capped at +1.00 so the rate can at most double from base.
-        let migration_rate =
-            Real::from_ratio(5, 100) * (Real::ONE + self.tool_migration_speed_bonus());
+        let migration_rate = Real::percent(5) * (Real::ONE + self.tool_migration_speed_bonus());
 
         let caps: BTreeMap<u32, Pop> = self
             .region_cohorts
@@ -427,7 +424,7 @@ impl Civ {
             self.migration_pressure_threshold,
             self.tool_capacity_multiplier(),
         );
-        let seed_fraction = Real::from_ratio(20, 100);
+        let seed_fraction = Real::percent(20);
 
         let caps: BTreeMap<u32, Pop> = self
             .region_cohorts

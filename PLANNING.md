@@ -66,20 +66,44 @@ campaigns, ~1000 lines of report.
 
 ## Last change
 
-Pacing retune — substrate-derived biological time + spatial
-densification. Added `MetabolicSubstrate::metabolism()` (Aqueous
-1.0 / Ammoniacal 0.5 / Hydrocarbon 0.4 / Silicate 0.2) threaded
-through birth rate, civ-claim cadence, hypothesis cadence,
-emergence-check cadence, cohesion drift, civil-war / cultural-lock
-/ food-crisis / knowledge-plateau / breakaway / dark-age streaks,
-and the disease catastrophe cooldown (physics catastrophes left
-unscaled). Raised base `carrying_capacity_per_unit` from 500 to
-2500 (5× spatial densification) and lowered
-`migration_pressure_threshold` to the 0.55–0.75 band so claim
-activity continues. Auto-scaled the live viewport's
-`--frame-every-ticks` default for long runs (~1200 frames target,
-floor 50). Conservative initial spread per substrate; iterate
-values from seed-495-equivalent observation.
+Workspace audit pass — three iterations of concrete duplication
+removal, no behavioural change (post-run reports byte-identical
+seed-42 / 50-year before and after).
+
+Iter 1 — helpers + dead code. `Real::clamp01()`,
+`Pop::to_real_nonneg()`, `impl From<(i64, i64)> for Real` added to
+`sim/arith`; ~65 inline `.max(Real::ZERO).min(Real::ONE)` shapes,
+5 `Real::from_int(p.raw().to_num::<i64>().max(0))` chains, and 56
+`Real::from_ratio(CONST.0, CONST.1)` calls rewritten through the
+crates. Collapsed eight `render_world_frame_*` wrappers in
+`sim/report/src/frame.rs` into one `render_world_frame_styled` +
+`FrameStyle`; the viewport emitter's 47-line dispatch shrinks to
+one call. Deleted dead `pick_best_habitable_cell` and its stale
+`#[allow(unused_imports)]` shim; tightened `contact.rs` helpers to
+private.
+
+Iter 2 — `Real::percent(n)`. 549 literal `Real::from_ratio(n, 100)`
+sites across every crate rewritten as `Real::percent(n)`.
+
+Iter 3 — module + struct splits. `sim/civ/src/tech/specs.rs`
+(1969 lines, nine methods) split into a `specs/` directory:
+`mod.rs` keeps the six smaller methods + the resource-threshold
+tables; `relations.rs`, `tools.rs`, `manipulation.rs` each hold
+one big match. Viewport emitter's ten parallel
+`BTreeMap<u32, …>` fields for per-civ sidebar state folded into a
+single `CivState` struct (`name`, `founded_year`, `cosmology`,
+`religion`, `tech_tier`, `tools_unlocked`, `cohesion`,
+`life_expectancy_months`, `last_unlocked_tool`); ten `.remove()`
+calls in the `CivCollapsed` handler collapse to one. The
+render-cycle pop-snapshot cache (`civ_last_emitted_pop_q32`)
+stays separate — wholesale-replace semantics don't fit the
+struct model.
+
+Form-fit dispatch in `sim/civ/src/fit.rs` was evaluated and left
+alone: the audit's proposed `FormFitter` trait would require 12
+unit structs + dyn dispatch to replicate what `match self` already
+does in one place, with seven different return types that no
+single trait can capture.
 
 ## How to use this file
 

@@ -178,7 +178,7 @@ mod tests {
         state.fluid_velocity_mut().0[south_cell] = Real::ONE;
 
         let c = Coriolis {
-            coriolis_k: Real::from_ratio(1, 100),
+            coriolis_k: Real::percent(1),
             has_atmosphere: true,
         };
         for _ in 0..30 {

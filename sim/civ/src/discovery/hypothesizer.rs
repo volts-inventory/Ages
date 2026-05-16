@@ -71,11 +71,11 @@ fn falsification_drift_ratio() -> Real {
 const PROBATION_WINDOW_TICKS: u64 = 200;
 
 fn occam_lambda() -> Real {
-    Real::from_ratio(2, 100)
+    Real::percent(2)
 }
 
 fn switch_margin() -> Real {
-    Real::from_ratio(5, 100)
+    Real::percent(5)
 }
 
 /// Civ-scoped quantitative discovery pipeline. Holds a per-relation

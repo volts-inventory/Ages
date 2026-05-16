@@ -66,9 +66,9 @@ impl VerticalConvection {
     #[must_use]
     pub fn earth_like() -> Self {
         Self {
-            exchange_k: Real::from_ratio(5, 100),
+            exchange_k: Real::percent(5),
             space_temperature: Real::from_int(100),
-            radiative_loss_k: Real::from_ratio(1, 100),
+            radiative_loss_k: Real::percent(1),
         }
     }
 }

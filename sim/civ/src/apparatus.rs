@@ -134,8 +134,14 @@ impl Channel {
 #[must_use]
 pub fn pick_apparatus_cell(civ: &Civ) -> Option<u32> {
     civ.claimed_cells.iter().copied().min_by(|a, b| {
-        let pop_a = civ.region_cohorts.get(a).map_or(Pop::ZERO, sim_population::Cohort::total);
-        let pop_b = civ.region_cohorts.get(b).map_or(Pop::ZERO, sim_population::Cohort::total);
+        let pop_a = civ
+            .region_cohorts
+            .get(a)
+            .map_or(Pop::ZERO, sim_population::Cohort::total);
+        let pop_b = civ
+            .region_cohorts
+            .get(b)
+            .map_or(Pop::ZERO, sim_population::Cohort::total);
         pop_a.cmp(&pop_b).then_with(|| a.cmp(b))
     })
 }

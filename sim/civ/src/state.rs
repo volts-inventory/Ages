@@ -126,7 +126,7 @@ impl Civ {
             // build a `Civ` without threading planet context (legacy
             // unit tests).
             carrying_capacity_per_unit: Real::from_int(50_000),
-            migration_pressure_threshold: Real::from_ratio(85, 100),
+            migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
             last_territory_emit_tick: founded_tick,
@@ -286,9 +286,8 @@ impl Civ {
 
     /// Life expectancy at birth, in years.
     pub fn life_expectancy_years(&self) -> Real {
-        let baseline_months_per_year = Real::from_int(
-            i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12),
-        );
+        let baseline_months_per_year =
+            Real::from_int(i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12));
         self.life_expectancy_months() / baseline_months_per_year
     }
 

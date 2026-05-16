@@ -337,14 +337,14 @@ fn add_rival_rejects_same_form_as_primary() {
         channel: Channel::Temperature,
         form: Form::Linear,
         params: vec![],
-        residual: Real::from_ratio(1, 100),
-        confidence: Real::from_ratio(80, 100),
+        residual: Real::percent(1),
+        confidence: Real::percent(80),
         n_samples: 32,
         confirmed_at_tick: 0,
         low_confidence_streak: 0,
         cooldown_until: 0,
         refinement: None,
-        initial_residual: Real::from_ratio(1, 100),
+        initial_residual: Real::percent(1),
         falsification_streak: 0,
         inherited_from_tick: None,
         inherited_from_civ_id: None,
@@ -355,7 +355,7 @@ fn add_rival_rejects_same_form_as_primary() {
     // Different-form rival accepted.
     let mut alt = primary.clone();
     alt.form = Form::ThresholdStep;
-    alt.confidence = Real::from_ratio(70, 100);
+    alt.confidence = Real::percent(70);
     assert!(h.add_rival_hypothesis(100, alt));
     assert_eq!(h.rivals.get(&100).map(Vec::len), Some(1));
 }
@@ -371,14 +371,14 @@ fn displace_swaps_when_rival_confidence_higher() {
         channel: Channel::Temperature,
         form: Form::Linear,
         params: vec![],
-        residual: Real::from_ratio(2, 100),
-        confidence: Real::from_ratio(60, 100),
+        residual: Real::percent(2),
+        confidence: Real::percent(60),
         n_samples: 32,
         confirmed_at_tick: 0,
         low_confidence_streak: 0,
         cooldown_until: 0,
         refinement: None,
-        initial_residual: Real::from_ratio(2, 100),
+        initial_residual: Real::percent(2),
         falsification_streak: 0,
         inherited_from_tick: None,
         inherited_from_civ_id: None,
@@ -386,7 +386,7 @@ fn displace_swaps_when_rival_confidence_higher() {
     h.confirmed.insert(200, primary.clone());
     let mut high_conf_rival = primary.clone();
     high_conf_rival.form = Form::ThresholdStep;
-    high_conf_rival.confidence = Real::from_ratio(90, 100);
+    high_conf_rival.confidence = Real::percent(90);
     assert!(h.add_rival_hypothesis(200, high_conf_rival));
     let swap = h.displace_primary_with_best_rival(200);
     assert!(swap.is_some());

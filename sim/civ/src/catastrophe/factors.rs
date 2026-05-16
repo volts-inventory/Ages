@@ -11,10 +11,10 @@ use sim_world::{BiosphereClass, Crust};
 #[must_use]
 pub fn disease_severity_factor(biosphere: BiosphereClass) -> Real {
     match biosphere {
-        BiosphereClass::None => Real::from_ratio(20, 100),
-        BiosphereClass::Sparse => Real::from_ratio(60, 100),
+        BiosphereClass::None => Real::percent(20),
+        BiosphereClass::Sparse => Real::percent(60),
         BiosphereClass::Lush => Real::ONE,
-        BiosphereClass::HyperBiodiverse => Real::from_ratio(150, 100),
+        BiosphereClass::HyperBiodiverse => Real::percent(150),
     }
 }
 
@@ -27,10 +27,10 @@ pub fn disease_severity_factor(biosphere: BiosphereClass) -> Real {
 pub fn volcanic_cooldown_factor(crust: Crust) -> Real {
     match crust {
         Crust::Basaltic => Real::ONE,
-        Crust::Hydrocarbon => Real::from_ratio(80, 100),
-        Crust::Piezoelectric => Real::from_ratio(140, 100),
-        Crust::Ferrous => Real::from_ratio(110, 100),
-        Crust::RareEarth => Real::from_ratio(150, 100),
+        Crust::Hydrocarbon => Real::percent(80),
+        Crust::Piezoelectric => Real::percent(140),
+        Crust::Ferrous => Real::percent(110),
+        Crust::RareEarth => Real::percent(150),
     }
 }
 
