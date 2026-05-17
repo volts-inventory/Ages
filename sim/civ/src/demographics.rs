@@ -89,60 +89,50 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Po
 pub const REFERENCE_PLANET_CELL_COUNT: u32 = 1080;
 
 /// Substrate-derived carrying-capacity scale (individuals per
-/// unit fuel-density). Lush biospheres + high-cognition species push
-/// the scale up; sparse / low-cognition push it down. High-gravity
-/// worlds cost more per individual; low-gravity worlds save energy.
-/// `cell_count` rescales the per-cell base so total planet capacity
-/// is grid-resolution-invariant: per_unit ∝ REFERENCE / cell_count.
+/// unit fuel-density). High-cognition species push the scale up;
+/// low-cognition push it down. `cell_count` rescales per-cell so
+/// total planet capacity is grid-resolution-invariant: per_unit ∝
+/// REFERENCE / cell_count.
 ///
-/// Earth-equivalent baseline (Lush, g≈9.81, cog≈1) at the reference
-/// grid resolution is ~50,000/unit. The 20× lift from the prior
-/// 2,500 puts paleolithic civs at ~50k people per cell (city-state
-/// density) so the tech-tier multiplier stack (see
-/// `tools::tool_capacity_multiplier` / `tech::effects`) can carry
-/// agricultural civs to ~M/cell, industrial civs to ~10M/cell, and
-/// modern/future-age civs to ~hundreds of M/cell without needing
-/// any further global retune. The ratio thresholds (food security
-/// `demand / capacity`, migration pressure `pop / cell_capacity`)
-/// are scale-invariant — both still trigger at the same fractions
-/// of cap regardless of the absolute number.
+/// Earth-equivalent baseline (max-cog) at the reference grid
+/// resolution is ~50,000/unit. Biosphere is *not* multiplied here
+/// — it's already captured by the per-cell `Substance::Fuel`
+/// ceiling (`bio_fuel` in `world/init.rs`: Sparse 0.20, Lush 1.0,
+/// HyperBio 3.0). Gravity is *not* multiplied either — native
+/// species are adapted to their home gravity, so penalising them
+/// against a 1g Earth anchor is Earth-centrism. The downstream
+/// per-cell `cell_capacity` multiplication by `fuel` still gives
+/// biosphere its effect (and `tech_multiplier × tool_multiplier`
+/// gives tech its effect) without the prior double-count.
+///
+/// The 20× lift from the prior 2,500 puts paleolithic civs at ~50k
+/// people per cell (city-state density) so the tech-tier multiplier
+/// stack (see `tools::tool_capacity_multiplier` / `tech::effects`)
+/// can carry agricultural civs to ~M/cell, industrial civs to ~10M/
+/// cell, and modern/future-age civs to ~hundreds of M/cell without
+/// needing any further global retune. The ratio thresholds (food
+/// security, migration pressure) are scale-invariant — both still
+/// trigger at the same fractions of cap regardless of the absolute
+/// number.
 ///
 /// Total demographic span baseline → fully-teched is ~8,000× (see
 /// `tech::effects::capacity_multiplier`), reproducing the real
 /// paleolithic → modern density growth of ~1000–5000× plus headroom
 /// for speculative future-age tools.
 #[must_use]
-pub fn carrying_capacity_per_unit(
-    biosphere: BiosphereClass,
-    gravity: Real,
-    cognition: Real,
-    cell_count: u32,
-) -> Real {
-    let biosphere_factor = match biosphere {
-        BiosphereClass::None => Real::from_ratio(7, 10),
-        BiosphereClass::Sparse => Real::percent(95),
-        BiosphereClass::Lush => Real::ONE,
-        BiosphereClass::HyperBiodiverse => Real::percent(115),
-    };
-    let earth_g = Real::percent(981);
-    let g_diff = if gravity > earth_g {
-        gravity - earth_g
-    } else {
-        earth_g - gravity
-    };
-    let g_factor = (Real::ONE - Real::percent(5) * g_diff / earth_g).max(Real::from_ratio(5, 10));
+pub fn carrying_capacity_per_unit(cognition: Real, cell_count: u32) -> Real {
     let cog = cognition.clamp01();
-    // Cognition factor narrows further (0.95–1.0) so low-cognition
-    // species don't compound a capacity hit on top of the existing
-    // attempt-period and stress-factor cognition penalties.
-    let cognition_factor = Real::percent(95) + Real::percent(5) * cog;
-    // Grid-resolution scaling: at the reference grid the factor is
-    // 1.0; halving the grid doubles per-cell cap (each cell stands
-    // for twice the planetary area), doubling it halves.
+    // Widened from the prior 0.95-1.0 no-op band to 0.85-1.15 so
+    // cognition is a real signal — low-cognition species pay a
+    // small capacity tax, high-cognition species get a small bonus.
+    // Still narrow enough that low-cog species aren't doomed; the
+    // hypothesizer-cadence and stress-factor penalties carry most
+    // of the cognition signal elsewhere.
+    let cognition_factor = Real::percent(85) + Real::percent(30) * cog;
     let effective_cells = cell_count.max(1);
-    let resolution_factor =
-        Real::from_int(i64::from(REFERENCE_PLANET_CELL_COUNT)) / Real::from_int(i64::from(effective_cells));
-    Real::from_int(50_000) * biosphere_factor * g_factor * cognition_factor * resolution_factor
+    let resolution_factor = Real::from_int(i64::from(REFERENCE_PLANET_CELL_COUNT))
+        / Real::from_int(i64::from(effective_cells));
+    Real::from_int(50_000) * cognition_factor * resolution_factor
 }
 
 /// Substrate-derived migration pressure threshold. Solitary
@@ -310,24 +300,20 @@ mod tests {
     /// alone.
     #[test]
     fn carrying_capacity_envelope_is_calibrated() {
-        let earth_g = Real::percent(981);
-        let median_cog = Real::from_ratio(5, 10);
-        // Use the reference grid resolution so the per-cell base
-        // recovers the historical ~50,000 anchor; smaller / larger
-        // grids legitimately rescale per-cell from that point.
         let ref_cells = REFERENCE_PLANET_CELL_COUNT;
-        let lush = carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE, ref_cells);
-        let sparse =
-            carrying_capacity_per_unit(BiosphereClass::Sparse, earth_g, median_cog, ref_cells);
-        let hyper =
-            carrying_capacity_per_unit(BiosphereClass::HyperBiodiverse, earth_g, Real::ONE, ref_cells);
-        // Earth-equivalent (Lush + Earth-g + max-cog) recovers ~50,000.
-        assert!(lush >= Real::from_int(45_000) && lush <= Real::from_int(55_000));
-        // Sparse + median-cog stays within 10% of Earth-equivalent
-        // so marginal habitability holds.
-        assert!(sparse >= Real::from_int(45_000));
-        // Hyper bonus is real but bounded — no surprise 2× scaling.
-        assert!(hyper >= Real::from_int(50_000) && hyper <= Real::from_int(65_000));
+        let max_cog = carrying_capacity_per_unit(Real::ONE, ref_cells);
+        let median_cog =
+            carrying_capacity_per_unit(Real::from_ratio(5, 10), ref_cells);
+        let no_cog = carrying_capacity_per_unit(Real::ZERO, ref_cells);
+        // Max-cog at reference grid recovers the ~50,000 anchor
+        // (cognition_factor = 1.15 → 50,000 × 1.15 = 57,500).
+        assert!(max_cog >= Real::from_int(55_000) && max_cog <= Real::from_int(60_000));
+        // Median-cog sits exactly between (cognition_factor = 1.0).
+        assert!(median_cog >= Real::from_int(49_000) && median_cog <= Real::from_int(51_000));
+        // Zero-cog is the floor (cognition_factor = 0.85). Still
+        // viable — a low-cog species can found cities, just denser
+        // tools/tech are needed to match a high-cog peer.
+        assert!(no_cog >= Real::from_int(42_000) && no_cog <= Real::from_int(43_000));
     }
 
     #[test]
@@ -336,15 +322,11 @@ mod tests {
         // total planet-wide capacity stays invariant: a coarse grid
         // models the same planet with each cell standing for more
         // physical area.
-        let earth_g = Real::percent(981);
         let ref_cells = REFERENCE_PLANET_CELL_COUNT;
         let half_cells = ref_cells / 2;
-        let base = carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE, ref_cells);
-        let coarse =
-            carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE, half_cells);
+        let base = carrying_capacity_per_unit(Real::ONE, ref_cells);
+        let coarse = carrying_capacity_per_unit(Real::ONE, half_cells);
         let ratio = coarse / base;
-        // Within ~1% of 2× (rounding from Q32.32 division on small
-        // ints is tight here).
         assert!(ratio > Real::from_ratio(195, 100));
         assert!(ratio < Real::from_ratio(205, 100));
     }

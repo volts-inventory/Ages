@@ -5,6 +5,79 @@
 
 use crate::Civ;
 use sim_arith::{Pop, Real};
+use sim_species::Habitat;
+
+/// Per-cell habitability scaled to this civ's species habitat.
+/// Terrestrial / Airborne see water cells as marginal (shallow sea
+/// at 0.05, deep ocean at 0.00) and land cells as native (0.10
+/// peak through 1.20 coast). Aquatic flip the relationship —
+/// water is native, land cells drop to 0.05-0.10. Amphibious see
+/// both as native. Coast stays universally habitable (transition
+/// zone, valued by every habitat for the same reason).
+fn species_habitability(glyph: char, habitat: Habitat) -> Real {
+    let water_native = matches!(habitat, Habitat::Aquatic | Habitat::Amphibious);
+    let land_native = matches!(
+        habitat,
+        Habitat::Terrestrial | Habitat::Airborne | Habitat::Amphibious
+    );
+    let water_bonus = Real::percent(120);
+    let water_marginal = Real::percent(5);
+    let land_marginal = Real::percent(5);
+    match glyph {
+        // ≈ deep ocean — only Aquatic / Amphibious can live here.
+        '\u{2248}' => {
+            if water_native {
+                Real::ONE
+            } else {
+                Real::ZERO
+            }
+        }
+        // ≡ gas band — uninhabitable for everyone.
+        '\u{2261}' => Real::ZERO,
+        // ~ shallow sea — native for aquatic, marginal for land.
+        '~' => {
+            if water_native {
+                water_bonus
+            } else {
+                water_marginal
+            }
+        }
+        // ░ coast — both habitats value the transition zone.
+        '\u{2591}' => water_bonus,
+        // ▒ inland — native for land, marginal for aquatic.
+        '\u{2592}' => {
+            if land_native {
+                Real::percent(90)
+            } else {
+                land_marginal * Real::from_int(2)
+            }
+        }
+        // △ hill / low mountain.
+        '\u{25B3}' => {
+            if land_native {
+                Real::percent(60)
+            } else {
+                land_marginal
+            }
+        }
+        // ▲ peak.
+        '\u{25B2}' => {
+            if land_native {
+                Real::percent(10)
+            } else {
+                land_marginal
+            }
+        }
+        // · plain / featureless / wildcard.
+        _ => {
+            if land_native {
+                Real::ONE
+            } else {
+                land_marginal * Real::from_int(2)
+            }
+        }
+    }
+}
 
 impl Civ {
     /// Carrying capacity: derived from the civ's claimed cells'
@@ -70,7 +143,8 @@ impl Civ {
                 .iter()
                 .map(|&c| {
                     let f = fuel.get(c as usize).copied().unwrap_or(Real::ZERO);
-                    let h = sim_world::cell_habitability(state, planet, c);
+                    let glyph = sim_world::terrain_glyph_at(state, planet, c);
+                    let h = species_habitability(glyph, self.species_habitat);
                     f * h
                 })
                 .fold(Real::ZERO, |a, b| a + b)
@@ -117,7 +191,8 @@ impl Civ {
                 // glyph-derived multiplier so deep ocean / gas band
                 // contribute zero, coast gets a 1.20× boost, peaks
                 // contribute ~10%.
-                let hab = sim_world::cell_habitability(state, planet, c);
+                let glyph = sim_world::terrain_glyph_at(state, planet, c);
+                let hab = species_habitability(glyph, self.species_habitat);
                 let mult = base_fuel
                     * self.tech_multiplier
                     * self.tool_capacity_multiplier()
@@ -184,7 +259,8 @@ impl Civ {
         // or gas, ~10% for peaks, 1.20 for coast). Per-cell
         // migration sees the gated capacity, so high-
         // pressure cells naturally shed pop toward better terrain.
-        let hab = sim_world::cell_habitability(state, planet, cell);
+        let glyph = sim_world::terrain_glyph_at(state, planet, cell);
+        let hab = species_habitability(glyph, self.species_habitat);
         let mult =
             base_fuel * self.tech_multiplier * self.tool_capacity_multiplier() * factor * hab;
         Pop::from_real(self.carrying_capacity_per_unit) * mult
