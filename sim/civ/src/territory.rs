@@ -275,12 +275,18 @@ impl Civ {
             .map(|cell| (cell, self.cell_capacity(state, cell, tick, planet)))
             .collect();
 
-        // Two-phase: pass 1 computes per-source decisions
-        // (target neighbours + per-neighbour fertile-to-move),
-        // pass 2 applies them via `migrate_family_to` so each
-        // moved adult drags their proportional dependents (infants
-        // + juveniles) but elders stay rooted. Determinism is
-        // preserved by `BTreeMap` iteration order.
+        // Two-phase: pass 1 computes per-source decisions (target
+        // neighbours + per-neighbour total-to-move), pass 2 applies
+        // them via `migrate_balanced_to` so the move preserves the
+        // source cell's age structure. The earlier family-only model
+        // hollowed out saturated interior cells over centuries:
+        // fertile + dependents bled outward, elders aged in place
+        // without replacement, the cell dropped below the prune
+        // floor, and previously-contiguous territory developed gaps.
+        // Balanced migration drains every bracket proportionally so
+        // source cells stay demographically viable. All units below
+        // are in *total people* (no fertile-vs-total unit mismatch).
+        // Determinism is preserved by `BTreeMap` iteration order.
         let mut moves: Vec<(u32, u32, Pop)> = Vec::new();
         for (&cell, cohort) in &self.region_cohorts {
             let cap = caps.get(&cell).copied().unwrap_or(Pop::ZERO);
@@ -291,15 +297,7 @@ impl Civ {
             if cohort.total() <= pressure_count {
                 continue;
             }
-            // Only fertile + dependents migrate (option 2.b);
-            // elders stay. Cap "movable adults" at the source's
-            // fertile bracket so we never try to send more adults
-            // than the source has.
             let overflow = cohort.total() - pressure_count;
-            let movable_fertile = overflow.min(cohort.fertile);
-            if movable_fertile <= Pop::ZERO {
-                continue;
-            }
             // Compute per-neighbour headroom over claimed
             // neighbours. Headroom is per-cell capacity minus the
             // neighbour's *total* current pop (all brackets count
@@ -325,27 +323,27 @@ impl Civ {
             if headroom_total <= Pop::ZERO || nbr_headrooms.is_empty() {
                 continue;
             }
-            // Total fertile move: 5% of fertile-overflow, capped at
-            // total headroom. Note: the cap is in *people* (total),
-            // so a fertile-only move still respects whole-cohort
-            // capacity since dependents come along on top.
-            let want = movable_fertile * migration_rate;
-            let total_move_f = if want > headroom_total {
+            // Total move: `migration_rate` × overflow, capped at the
+            // sum of neighbour headroom. Units throughout are total
+            // people, matching the headroom cap.
+            let want = overflow * migration_rate;
+            let total_move = if want > headroom_total {
                 headroom_total
             } else {
                 want
             };
             // Distribute proportionally to neighbour headroom.
             for (nbr, h) in nbr_headrooms {
-                let share = total_move_f * (h / headroom_total);
+                let share = total_move * (h / headroom_total);
                 if share > Pop::ZERO {
                     moves.push((cell, nbr, share));
                 }
             }
         }
-        // Pass 2: apply via family-aware migration. We need to
-        // borrow two cohorts at once, so resolve via remove + insert.
-        for (src_cell, dst_cell, fertile_amount) in moves {
+        // Pass 2: apply via balanced migration so source cells
+        // preserve their age structure. We need to borrow two
+        // cohorts at once, so resolve via remove + insert.
+        for (src_cell, dst_cell, total_amount) in moves {
             if src_cell == dst_cell {
                 continue;
             }
@@ -358,7 +356,7 @@ impl Civ {
                 self.region_cohorts.insert(src_cell, src);
                 continue;
             };
-            src.migrate_family_to(&mut dst, fertile_amount);
+            src.migrate_balanced_to(&mut dst, total_amount);
             self.region_cohorts.insert(src_cell, src);
             self.region_cohorts.insert(dst_cell, dst);
         }
