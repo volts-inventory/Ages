@@ -741,6 +741,53 @@ impl<W: Write> ViewportEmitter<W> {
     /// frame would differ); the actual frame cadence is still
     /// gated on `frame_every`.
     fn apply_state(&mut self, ev: &Event) {
+        // Run log_message *before* the state-mutation match below.
+        // Some events (notably CivCollapsed) clear identifying state
+        // — civ_state.remove drops the civ's name — and the log line
+        // then falls back to "civ {id}" instead of the civ's actual
+        // name. Logging first reads the still-present name, then the
+        // match block does the cleanup.
+        if self.cfg.log_lines > 0 {
+            if let Some(msg) = self.log_message(ev) {
+                let period = self
+                    .planet
+                    .as_ref()
+                    .map_or(protocol::BASELINE_MONTHS_PER_YEAR as u32, |p| {
+                        p.orbital_period_months
+                    });
+                let year = protocol::year_of_tick_for_period(self.current_tick, period);
+                // Same-tick contact coalescing: when several civs
+                // contact the same partner in one tick (typically a
+                // newly-founded civ being met by all neighbours at
+                // once), merge into one line — "Karnan, Goran met
+                // Yothan" instead of two separate "X met Y" lines.
+                if let Event::CivContact(c) = ev {
+                    let partner = self.civ_label(c.civ_b);
+                    let initiator = self.civ_label(c.civ_a);
+                    let suffix = format!(" met {partner}");
+                    let line_to_push = if let Some(last) = self.recent_events.back_mut() {
+                        let prefix = format!("y{year} ");
+                        if last.starts_with(&prefix) && last.ends_with(&suffix) {
+                            let head = &last[prefix.len()..last.len() - suffix.len()];
+                            *last = format!("{prefix}{head}, {initiator}{suffix}");
+                            None
+                        } else {
+                            Some(format!("y{year} {msg}"))
+                        }
+                    } else {
+                        Some(format!("y{year} {msg}"))
+                    };
+                    if let Some(line) = line_to_push {
+                        self.recent_events.push_back(line);
+                    }
+                } else {
+                    self.recent_events.push_back(format!("y{year} {msg}"));
+                }
+                while self.recent_events.len() > self.cfg.log_lines {
+                    self.recent_events.pop_front();
+                }
+            }
+        }
         match ev {
             Event::PlanetMap(pm) => {
                 self.planet_map = Some(pm.clone());
@@ -934,26 +981,10 @@ impl<W: Write> ViewportEmitter<W> {
             }
             _ => {}
         }
-        // Push a formatted log line for significant events.
-        // Skipped when the log section is disabled (`log_lines = 0`).
-        // Compact `y{n} {msg}` form fits narrow phone terminals
-        // without padding overflow.
-        if self.cfg.log_lines > 0 {
-            if let Some(msg) = self.log_message(ev) {
-                // Planet-relative year for log entries.
-                let period = self
-                    .planet
-                    .as_ref()
-                    .map_or(protocol::BASELINE_MONTHS_PER_YEAR as u32, |p| {
-                        p.orbital_period_months
-                    });
-                let year = protocol::year_of_tick_for_period(self.current_tick, period);
-                self.recent_events.push_back(format!("y{year} {msg}"));
-                while self.recent_events.len() > self.cfg.log_lines {
-                    self.recent_events.pop_front();
-                }
-            }
-        }
+        // Log line emission happens *before* the match block above
+        // so events that drop identifying state (e.g. CivCollapsed
+        // removing civ_state) don't strip names before they're
+        // logged.
         // Update the per-civ cosmology snapshot *after*
         // `log_message` reads it, so the next shift's delta is
         // computed against this just-arrived axes vector.

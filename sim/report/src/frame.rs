@@ -343,6 +343,14 @@ pub fn render_world_frame_styled(
                         civ_color_code(civ_id),
                         symbol
                     );
+                } else if symbol == '0' && nomad_set.contains(&cell) {
+                    // Nomadic species presence has no civ identity,
+                    // so it doesn't get a civ palette colour, but it
+                    // also shouldn't fade into the muted terrain
+                    // palette. Render in bold bright white (256-col
+                    // index 15) so a nomad marker reads as "people
+                    // here, no flag" against any background.
+                    let _ = write!(line, "\x1b[1;38;5;15m{symbol}\x1b[0m");
                 } else if let Some(tcolor) = terrain_color_code(symbol) {
                     // Terrain glyphs get their own
                     // 256-color codes when `use_color` is on,
