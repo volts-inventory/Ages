@@ -489,8 +489,25 @@ impl Civ {
             // cells; elders stay) as the founding seed — enough
             // that the new frontier cell isn't instantly pruned,
             // but small enough that the source cell remains dense.
+            //
+            // Seed floor: if the overflow×20% would leave a sub-
+            // prune-threshold seed (and the source has at least one
+            // fertile adult to spare), bump the seed to a small
+            // viable founding band. Without this, tiny-overflow
+            // claims on low-cap frontier cells stake the territory
+            // for one tick and then get pruned the next, leaving
+            // "phantom" cell flickers on heterogeneous terrain.
+            // The 1-fertile-person floor (with dragged dependents,
+            // ~1.5 total) is comfortably above the 0.1 prune
+            // threshold.
             let overflow = count - pressure_count;
-            let seed_fertile = (overflow * seed_fraction).min(fertile_count);
+            let raw_seed = (overflow * seed_fraction).min(fertile_count);
+            let seed_floor = Pop::from_int(1).min(fertile_count);
+            let seed_fertile = if raw_seed >= seed_floor {
+                raw_seed
+            } else {
+                seed_floor
+            };
             if seed_fertile <= Pop::ZERO {
                 continue;
             }
