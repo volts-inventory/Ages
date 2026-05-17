@@ -19,17 +19,31 @@ use std::collections::BTreeSet;
 /// civs with the same numeric centroid even though fixed the
 /// display tie.
 ///
+/// `forbidden_centroids` carries the live capital cell of every
+/// other civ already on the map at pick time, so two successors
+/// spawning in the same tick (e.g. cohesion breakaway + stateless
+/// refound, or two siblings of the same parent) can't both land on
+/// the same cell and overwrite each other on the viewport. Pass an
+/// empty set when no other live civs are relevant.
+///
 /// Selection rules, in order:
-/// 1. **Adjacent-to-parent**: prefer a `claimed` cell that is one
-///    of the parent centroid's six hex neighbours (cardinal hex
-///    adjacency on the torus). The new capital then sits "next
-///    door" to the predecessor's, which reads narratively as a
-///    successor settling on the parent's frontier rather than
-///    spawning an arbitrary distance away.
-/// 2. **Any other claimed cell**: if no adjacent neighbour is in
-///    `claimed`, return any claimed cell != parent's centroid
-///    (lowest cell-id wins for determinism via `BTreeSet` order).
-/// 3. **Fallback**: if `claimed` is empty or every claimed cell
+/// 1. **Adjacent-to-parent, non-colliding**: prefer a `claimed`
+///    cell that is one of the parent centroid's six hex neighbours
+///    (cardinal hex adjacency on the torus) and isn't already
+///    another civ's capital. The new capital then sits "next door"
+///    to the predecessor's, which reads narratively as a successor
+///    settling on the parent's frontier rather than spawning an
+///    arbitrary distance away.
+/// 2. **Any other claimed cell, non-colliding**: if no adjacent
+///    neighbour qualifies, return any claimed cell that isn't the
+///    parent centroid and isn't in `forbidden_centroids` (lowest
+///    cell-id wins for determinism via `BTreeSet` order).
+/// 3. **Relaxed**: if every non-parent claimed cell collides with
+///    another capital, return any claimed cell != parent's centroid
+///    anyway. The anti-collision intent is best-effort — staying
+///    inside the successor's actual territory beats a clean
+///    centroid that isn't even in `claimed`.
+/// 4. **Fallback**: if `claimed` is empty or every claimed cell
 ///    coincides with `parent_centroid`, return `fallback` (the
 ///    figure-derived default). Preserves prior behaviour rather
 ///    than panicking on degenerate inputs.
@@ -39,27 +53,38 @@ pub fn pick_successor_centroid(
     claimed: &BTreeSet<u32>,
     fallback: u32,
     grid: &sim_physics::HexGrid,
+    forbidden_centroids: &BTreeSet<u32>,
 ) -> u32 {
     if claimed.is_empty() {
         return fallback;
     }
+    let is_taken =
+        |cell: u32| cell == parent_centroid || forbidden_centroids.contains(&cell);
     let parent_axial = grid.axial_of(sim_physics::CellId(parent_centroid));
-    // Rule 1: adjacent-to-parent. Iterate the canonical neighbour
-    // order so the pick is byte-deterministic across runs (the hex
-    // neighbour list is fixed E,NE,NW,W,SW,SE per ).
+    // Rule 1: adjacent-to-parent, non-colliding. Iterate the
+    // canonical neighbour order so the pick is byte-deterministic
+    // across runs (the hex neighbour list is fixed E,NE,NW,W,SW,SE).
     for nb in grid.neighbours(parent_axial) {
-        if nb.0 != parent_centroid && claimed.contains(&nb.0) {
+        if !is_taken(nb.0) && claimed.contains(&nb.0) {
             return nb.0;
         }
     }
-    // Rule 2: any other claimed cell. BTreeSet iterates in sorted
-    // order so the lowest non-parent cell wins.
+    // Rule 2: any other claimed cell, non-colliding. BTreeSet
+    // iterates in sorted order so the lowest qualifying cell wins.
+    for &cell in claimed {
+        if !is_taken(cell) {
+            return cell;
+        }
+    }
+    // Rule 3: relaxed — every non-parent claim collides with
+    // another capital. Pick anyway; a doubled capital is still
+    // better than a centroid that isn't in the successor's claim.
     for &cell in claimed {
         if cell != parent_centroid {
             return cell;
         }
     }
-    // Rule 3: fallback (every claimed cell is the parent centroid).
+    // Rule 4: fallback (every claimed cell is the parent centroid).
     fallback
 }
 
@@ -86,7 +111,13 @@ mod tests {
         for nb in grid.neighbours(parent_axial) {
             claimed.insert(nb.0);
         }
-        let chosen = pick_successor_centroid(parent_centroid, &claimed, parent_centroid, &grid);
+        let chosen = pick_successor_centroid(
+            parent_centroid,
+            &claimed,
+            parent_centroid,
+            &grid,
+            &BTreeSet::new(),
+        );
         assert_ne!(chosen, parent_centroid);
         let neighbour_ids: BTreeSet<u32> =
             grid.neighbours(parent_axial).iter().map(|c| c.0).collect();
@@ -113,7 +144,13 @@ mod tests {
         for nb in &neighbour_ids {
             assert!(!claimed.contains(nb));
         }
-        let chosen = pick_successor_centroid(parent_centroid, &claimed, parent_centroid, &grid);
+        let chosen = pick_successor_centroid(
+            parent_centroid,
+            &claimed,
+            parent_centroid,
+            &grid,
+            &BTreeSet::new(),
+        );
         assert!(claimed.contains(&chosen));
         assert_ne!(chosen, parent_centroid);
     }
@@ -125,7 +162,65 @@ mod tests {
     fn successor_centroid_falls_back_when_claimed_empty() {
         let grid = HexGrid::new(4, 4);
         let claimed: BTreeSet<u32> = BTreeSet::new();
-        let chosen = pick_successor_centroid(0, &claimed, 7, &grid);
+        let chosen = pick_successor_centroid(0, &claimed, 7, &grid, &BTreeSet::new());
         assert_eq!(chosen, 7);
+    }
+
+    /// when a sibling successor already holds the parent-adjacent
+    /// neighbour that rule 1 would pick, the helper steps off it and
+    /// picks the next valid neighbour. Models the Volkaran/Veruman
+    /// case where two breakaways of the same parent spawn in one
+    /// tick — without this filter the second successor's capital
+    /// renders on top of the first's and gets hidden by the
+    /// frame-renderer's older-civ-wins centroid de-collide rule.
+    #[test]
+    fn successor_centroid_avoids_sibling_capital() {
+        let grid = HexGrid::new(4, 4);
+        let parent_centroid = 5u32; // axial (1, 1)
+        let parent_axial = grid.axial_of(CellId(parent_centroid));
+        let neighbours: Vec<u32> = grid.neighbours(parent_axial).iter().map(|c| c.0).collect();
+        let mut claimed: BTreeSet<u32> = BTreeSet::new();
+        claimed.insert(parent_centroid);
+        for &nb in &neighbours {
+            claimed.insert(nb);
+        }
+        // Sibling already occupies rule-1's first pick — the canonical
+        // first-neighbour. Helper must skip it.
+        let sibling_capital = neighbours[0];
+        let mut forbidden: BTreeSet<u32> = BTreeSet::new();
+        forbidden.insert(sibling_capital);
+        let chosen = pick_successor_centroid(
+            parent_centroid,
+            &claimed,
+            parent_centroid,
+            &grid,
+            &forbidden,
+        );
+        assert_ne!(chosen, parent_centroid);
+        assert_ne!(chosen, sibling_capital);
+        assert!(neighbours.contains(&chosen));
+    }
+
+    /// when every claimed cell collides with another capital, the
+    /// helper relaxes rather than punting to `fallback`. Keeps the
+    /// centroid inside the successor's actual territory at the cost
+    /// of a doubled letter on the map — the frame renderer's
+    /// older-wins rule handles the visual tie.
+    #[test]
+    fn successor_centroid_relaxes_when_all_forbidden() {
+        let grid = HexGrid::new(8, 8);
+        let parent_centroid = 0u32;
+        let mut claimed: BTreeSet<u32> = BTreeSet::new();
+        claimed.insert(30u32);
+        claimed.insert(35u32);
+        let mut forbidden: BTreeSet<u32> = BTreeSet::new();
+        forbidden.insert(30u32);
+        forbidden.insert(35u32);
+        let chosen =
+            pick_successor_centroid(parent_centroid, &claimed, 7, &grid, &forbidden);
+        assert!(
+            chosen == 30 || chosen == 35,
+            "expected relaxed pick inside claimed; got {chosen}"
+        );
     }
 }
