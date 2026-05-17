@@ -1041,14 +1041,14 @@ impl<W: Write> ViewportEmitter<W> {
         // glyphs surface for nomads + disputes in both. The
         // line-1 disambiguation matters because the digit reads
         // *very* differently between the two modes.
-        // Glyph hint depends on density vs digit mode. In density
-        // mode the per-cell symbol is a block-shade ladder
-        // (` ░ ▒ ▓ █`) sized to pop / cap; the legend surfaces that
-        // ladder so the reader knows █ = saturated. In digit mode
-        // (legacy) the colored variant uses `1-9=fill%`.
+        // In density mode the per-cell symbol stays as the terrain
+        // glyph (so land/coast/peak/plain remains readable) but
+        // brightness encodes pop fill — bold = dense, normal =
+        // mid, dim = sparse. In digit mode (legacy) the colored
+        // variant uses `1-9=fill%`.
         let mut lines: Vec<String> = if self.cfg.use_color {
             let density_line = if self.cfg.density_mode {
-                "░▒▓█=fill% · 0=nomad · #=war"
+                "dim/bold=fill% · 0=nomad · #=war"
             } else {
                 "1-9=fill% · 0=nomad · #=war"
             };
@@ -1148,21 +1148,26 @@ impl<W: Write> ViewportEmitter<W> {
             // Tier + tool count surface era + breadth-of-tech-tree
             // in one row alongside the cap/pop swatch.
             let identity = if self.cfg.use_color {
-                // In density mode the territory renders as a
-                // block-shade ladder (` ░ ▒ ▓ █`); show the ladder
-                // glyph row so the reader can match swatch ↔ density.
+                // In density mode territory cells render as the
+                // terrain glyph in the civ's colour, with brightness
+                // scaled by population (bold ≥ 60%, normal ≥ 30%,
+                // dim < 30%). The legend row shows the ladder with
+                // the civ's actual ANSI attributes applied so the
+                // reader can match swatch ↔ density at a glance.
                 // Digit mode keeps the legacy `0-9` swatch.
-                let pop_glyphs = if self.cfg.density_mode {
-                    "░▒▓█"
+                let pop_swatch = if self.cfg.density_mode {
+                    let code = crate::frame::civ_color_code(*civ_id);
+                    format!(
+                        "\x1b[2;38;5;{code}m▒\x1b[0m\x1b[38;5;{code}m▒\x1b[0m\x1b[1;38;5;{code}m▒\x1b[0m",
+                    )
                 } else {
-                    "0-9"
+                    format!("{open}0-9{close}")
                 };
                 format!(
-                    "{open}{cap}{close}=cap · {open}{pop}{close}=pop · t{tier} · {tool_count} tools",
+                    "{open}{cap}{close}=cap · {pop_swatch}=pop · t{tier} · {tool_count} tools",
                     open = open,
                     close = close,
                     cap = centroid_symbol(*civ_id),
-                    pop = pop_glyphs,
                 )
             } else {
                 format!(
