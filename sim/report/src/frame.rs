@@ -329,8 +329,19 @@ pub fn render_world_frame_styled(
                 };
                 (symbol, Some(civ_id))
             } else if nomad_set.contains(&cell) {
-                // Nomadic species presence (no civ claim).
-                ('0', None)
+                // Nomadic species presence (no civ claim). In
+                // colored mode render the underlying terrain glyph
+                // (the colour-emission branch tints it bright white
+                // so nomads pop against terrain while still showing
+                // *where* they're roaming). In mono / markdown mode
+                // there's no colour to carry identity, so keep the
+                // legacy `0` glyph as the nomad marker.
+                let sym = if use_color {
+                    crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                } else {
+                    '0'
+                };
+                (sym, None)
             } else {
                 (crate::render::terrain_symbol(pm, r, q, terrain_peak), None)
             };
@@ -343,13 +354,14 @@ pub fn render_world_frame_styled(
                         civ_color_code(civ_id),
                         symbol
                     );
-                } else if symbol == '0' && nomad_set.contains(&cell) {
+                } else if nomad_set.contains(&cell) && active_centroid.is_none() {
                     // Nomadic species presence has no civ identity,
                     // so it doesn't get a civ palette colour, but it
                     // also shouldn't fade into the muted terrain
-                    // palette. Render in bold bright white (256-col
-                    // index 15) so a nomad marker reads as "people
-                    // here, no flag" against any background.
+                    // palette. Render the terrain glyph in bold
+                    // bright white (256-col index 15) so a nomad
+                    // marker reads as "people here, no flag" while
+                    // still showing what landscape they're on.
                     let _ = write!(line, "\x1b[1;38;5;15m{symbol}\x1b[0m");
                 } else if let Some(tcolor) = terrain_color_code(symbol) {
                     // Terrain glyphs get their own

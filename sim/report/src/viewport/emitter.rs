@@ -1078,10 +1078,14 @@ impl<W: Write> ViewportEmitter<W> {
         // mid, dim = sparse. In digit mode (legacy) the colored
         // variant uses `1-9=fill%`.
         let mut lines: Vec<String> = if self.cfg.use_color {
+            // Nomads share the terrain-glyph shape with unclaimed
+            // terrain; they're distinguished only by colour (bold
+            // white vs the muted terrain palette), so the legend
+            // notes "white=nomad" rather than a glyph mapping.
             let density_line = if self.cfg.density_mode {
-                "dim/bold=fill% · 0=nomad · #=war"
+                "dim/bold=fill% · white=nomad · #=war"
             } else {
-                "1-9=fill% · 0=nomad · #=war"
+                "1-9=fill% · white=nomad · #=war"
             };
             vec![
                 density_line.to_string(),
