@@ -618,6 +618,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         new_civ.effective_cognition(&species),
                         new_civ.effective_sociality(&species),
                         planet.metabolic_substrate.metabolism(),
+                        state.grid().width().saturating_mul(state.grid().height()),
                     );
                     // Successor's territory sized to its own
                     // founding population, centred on its first
@@ -1032,6 +1033,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                             new_civ.effective_cognition(&species),
                             new_civ.effective_sociality(&species),
                             planet.metabolic_substrate.metabolism(),
+                            state.grid().width().saturating_mul(state.grid().height()),
                         );
                         // Breakaway sized to its half-share of the
                         // parent's population; centred on the seized
@@ -1660,6 +1662,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     new_civ.effective_cognition(&species),
                     new_civ.effective_sociality(&species),
                     planet.metabolic_substrate.metabolism(),
+                    state.grid().width().saturating_mul(state.grid().height()),
                 );
                 new_civ.territory_centroid = emerge_cell;
                 let target = target_cell_count(&new_civ, state.grid().n_cells());

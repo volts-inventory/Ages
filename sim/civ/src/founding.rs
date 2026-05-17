@@ -144,8 +144,10 @@ impl Civ {
         cognition: Real,
         sociality: Real,
         metabolism: Real,
+        cell_count: u32,
     ) {
-        self.carrying_capacity_per_unit = carrying_capacity_per_unit(biosphere, gravity, cognition);
+        self.carrying_capacity_per_unit =
+            carrying_capacity_per_unit(biosphere, gravity, cognition, cell_count);
         self.migration_pressure_threshold = migration_pressure_threshold(sociality);
         let scaled = scale_attempt_period_for_metabolism(
             attempt_period_for_cognition(cognition),
