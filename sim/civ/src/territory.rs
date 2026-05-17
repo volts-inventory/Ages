@@ -417,13 +417,20 @@ impl Civ {
         let scaled = self.tool_expansion_rate_bonus() * Real::from_int(10);
         let scaled_floor = u64::try_from((scaled.raw().to_bits() >> 32).max(0)).unwrap_or(0);
         let budget: u64 = 1u64.saturating_add(scaled_floor);
-        // Same tech-augmented threshold as `migrate_intra_civ` —
-        // high-tech civs spill over later (denser cores, less
-        // frontier-grab pressure per tick).
-        let pressure_threshold = crate::demographics::tech_augmented_migration_threshold(
-            self.migration_pressure_threshold,
-            self.tool_capacity_multiplier(),
-        );
+        // Frontier expansion uses the *base* (non-tech-augmented)
+        // pressure threshold. The augmented threshold is right for
+        // internal migration (a high-tech civ tolerates a denser
+        // core before redistributing inward), but applying it to
+        // expansion too creates a pathology: at saturated tech the
+        // augmented threshold clamps to 0.97, and `migrate_inter_cell`
+        // (running in the same tick, draining 5% of fertile overflow
+        // toward claimed neighbours with headroom) keeps cells in
+        // logistic equilibrium just below 0.97 forever. Visible
+        // adjacent habitable land never gets claimed because no cell
+        // ever crosses the trigger. Migration and expansion are
+        // distinct responses to pressure — let them have distinct
+        // thresholds.
+        let pressure_threshold = self.migration_pressure_threshold;
         let seed_fraction = Real::percent(20);
 
         let caps: BTreeMap<u32, Pop> = self

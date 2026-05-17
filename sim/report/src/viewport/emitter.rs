@@ -1041,9 +1041,19 @@ impl<W: Write> ViewportEmitter<W> {
         // glyphs surface for nomads + disputes in both. The
         // line-1 disambiguation matters because the digit reads
         // *very* differently between the two modes.
+        // Glyph hint depends on density vs digit mode. In density
+        // mode the per-cell symbol is a block-shade ladder
+        // (` ░ ▒ ▓ █`) sized to pop / cap; the legend surfaces that
+        // ladder so the reader knows █ = saturated. In digit mode
+        // (legacy) the colored variant uses `1-9=fill%`.
         let mut lines: Vec<String> = if self.cfg.use_color {
+            let density_line = if self.cfg.density_mode {
+                "░▒▓█=fill% · 0=nomad · #=war"
+            } else {
+                "1-9=fill% · 0=nomad · #=war"
+            };
             vec![
-                "1-9=fill% · 0=nomad · #=war".to_string(),
+                density_line.to_string(),
                 "~sea · ≈deep · ▲peak · △hill".to_string(),
                 "▒land · ░coast · ·=plain".to_string(),
             ]
@@ -1138,11 +1148,21 @@ impl<W: Write> ViewportEmitter<W> {
             // Tier + tool count surface era + breadth-of-tech-tree
             // in one row alongside the cap/pop swatch.
             let identity = if self.cfg.use_color {
+                // In density mode the territory renders as a
+                // block-shade ladder (` ░ ▒ ▓ █`); show the ladder
+                // glyph row so the reader can match swatch ↔ density.
+                // Digit mode keeps the legacy `0-9` swatch.
+                let pop_glyphs = if self.cfg.density_mode {
+                    "░▒▓█"
+                } else {
+                    "0-9"
+                };
                 format!(
-                    "{open}{cap}{close}=cap · {open}0-9{close}=pop · t{tier} · {tool_count} tools",
+                    "{open}{cap}{close}=cap · {open}{pop}{close}=pop · t{tier} · {tool_count} tools",
                     open = open,
                     close = close,
                     cap = centroid_symbol(*civ_id),
+                    pop = pop_glyphs,
                 )
             } else {
                 format!(
