@@ -98,7 +98,8 @@ impl ToolKind {
             // tier-2 sensorium + apparatus
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
-            | ToolKind::ExperimentApparatus => 5,
+            | ToolKind::ExperimentApparatus
+            | ToolKind::HerbalMedicine => 5,
             // tier-3: pre-industrial. Sustained hypothesizer
             // activity plus the experimental gate below ensures the
             // apparatus is being used. Lowered 25 → 15 because the
@@ -118,7 +119,8 @@ impl ToolKind {
             | ToolKind::AmphibiousConstruction
             // tier-3 sensorium
             | ToolKind::FieldSensor
-            | ToolKind::DistanceImaging => 15,
+            | ToolKind::DistanceImaging
+            | ToolKind::AcousticEngineering => 15,
             // tier-4: industrial. Multi-generation canon. Pairs
             // with the experimental floor below. Lowered 75 → 50
             // so a long-lived civ with active apparatus work can
@@ -202,7 +204,8 @@ impl ToolKind {
             | ToolKind::UrbanConstruction
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
-            | ToolKind::ExperimentApparatus => 0,
+            | ToolKind::ExperimentApparatus
+            | ToolKind::HerbalMedicine => 0,
             // tier-3: a few apparatus-supported confirmations.
             ToolKind::ChemicalProjectile
             | ToolKind::PrecisionTimekeeping
@@ -215,7 +218,8 @@ impl ToolKind {
             | ToolKind::MotivePropulsion
             | ToolKind::AmphibiousConstruction
             | ToolKind::FieldSensor
-            | ToolKind::DistanceImaging => 3,
+            | ToolKind::DistanceImaging
+            | ToolKind::AcousticEngineering => 3,
             // tier-4: sustained experimental tradition. Lowered
             // 20 → 12 alongside the confirmed-relation drop so the
             // experimental-effort budget is proportional and the
@@ -254,10 +258,13 @@ impl ToolKind {
     /// under.
     pub fn literacy_floor(self) -> Real {
         match self {
-            ToolKind::ThermalSensor | ToolKind::RemoteAcoustic => Real::percent(20),
+            ToolKind::ThermalSensor
+            | ToolKind::RemoteAcoustic
+            | ToolKind::HerbalMedicine => Real::percent(20),
             ToolKind::FieldSensor
             | ToolKind::DistanceImaging
-            | ToolKind::AmphibiousConstruction => Real::percent(35),
+            | ToolKind::AmphibiousConstruction
+            | ToolKind::AcousticEngineering => Real::percent(35),
             // Tier-4 magnetic_sensor and tier-5 (transcendence-tier)
             // tools share a 0.55 floor on per-civ literacy. Tier-5
             // is gated separately by a species-cumulative maturity

@@ -293,6 +293,19 @@ impl ToolKind {
             // quantitative-periodic law and so can engineer
             // measurement apparatus" gate than a thermal-only one.
             ToolKind::ExperimentApparatus => &[(14, ChannelKind::Tactile)],
+            // HerbalMedicine: confirmed `surface_water` (template 5)
+            // on the Tactile channel — universal access on any
+            // ocean / lake-bearing world. Plant pharmacology
+            // bootstraps from watching what grows where water
+            // pools, even pre-formal-science.
+            ToolKind::HerbalMedicine => &[(5, ChannelKind::Tactile)],
+            // AcousticEngineering: confirmed `surface_water` (5)
+            // tagged AcousticAir — same template as RemoteAcoustic's
+            // prereq, so a civ that has built RemoteAcoustic
+            // already satisfies this gate trivially. Keeps the
+            // build path linear after the masonry/sensor pair are
+            // both in.
+            ToolKind::AcousticEngineering => &[(5, ChannelKind::AcousticAir)],
         }
     }
 }

@@ -990,6 +990,38 @@ impl ToolKind {
                 ManipulationKind::ChemicalSecretion,
                 ManipulationKind::ElectricDischarge,
             ],
+            // HerbalMedicine: harvesting + processing plant matter.
+            // Broad gate — any species that can grasp, ingest, or
+            // chemically process plant tissue can develop an herbal
+            // pharmacopoeia. ChemicalSecretion species brew via
+            // their own secretions (digestive / metabolic). Burrowers
+            // collect roots / fungi. Inclusive at tier-2 by design.
+            ToolKind::HerbalMedicine => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::Burrow,
+                ManipulationKind::FluidJet,
+            ],
+            // AcousticEngineering: shaping acoustic chambers /
+            // resonators. Needs precise built-form manipulation.
+            // ToolExtension is the canonical match (chisels + plumb
+            // lines on stone); LimbGrasp / Tentacle / Trunk all
+            // qualify. WebConstruct species can weave resonant
+            // membrane structures. Burrowers carve sound chambers.
+            ToolKind::AcousticEngineering => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+            ],
         }
     }
 }

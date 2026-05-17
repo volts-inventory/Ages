@@ -467,6 +467,31 @@ pub enum ToolKind {
     /// (tier-2+ precision instruments, tier-5 narrative trio),
     /// not on whether it does science at all.
     ExperimentApparatus,
+
+    /// `HerbalMedicine` — plant-derived pharmacology. The no-fire
+    /// branch of the medicine track: cataloguing edible/poisonous
+    /// plant chemistry and brewing infusions for wound care and
+    /// fever management. Builds on `BasicHealing` + `FluidGathering`
+    /// (extracts need water as solvent). Relation prereq is
+    /// `surface_water` (id 5) on a Tactile channel — universally
+    /// reachable, no oxidiser required. Effect: small additive
+    /// mortality_reduction across all brackets plus a modest
+    /// food_crisis_bonus (plant catalogue doubles as famine fallback
+    /// food). Tier-2. Alternate path to mid-game capacity for
+    /// substrates where the ChemicalSynthesis branch is blocked.
+    HerbalMedicine,
+
+    /// `AcousticEngineering` — purposeful sound shaping for
+    /// architecture and signalling. Builds on `RemoteAcoustic` +
+    /// `PermanentMasonry` (the masonry tradition gives the
+    /// chambers; the acoustic instrumentation gives the math). On
+    /// Earth this is whispering galleries, amphitheatres, bell
+    /// towers; in the sim it's a generic "acoustic infrastructure"
+    /// tool that lifts literacy (oral curriculum carries further)
+    /// and cohesion (synchronised civic signalling). Tier-3.
+    /// Provides a non-fire route into tier-3 alongside
+    /// MechanicalAdvantage.
+    AcousticEngineering,
 }
 
 /// **Retired :** previously the wall-clock unlock gate.

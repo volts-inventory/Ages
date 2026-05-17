@@ -230,6 +230,18 @@ impl ToolKind {
             // fire) which already requires the civ's hypothesizer
             // to have done some real fitting work.
             ToolKind::ExperimentApparatus => &[],
+            // HerbalMedicine: refines BasicHealing with extracts;
+            // FluidGathering provides the water needed for tinctures
+            // / decoctions. Both tier-1, strict tier monotonicity
+            // satisfied.
+            ToolKind::HerbalMedicine => &[ToolKind::BasicHealing, ToolKind::FluidGathering],
+            // AcousticEngineering: the acoustic instrumentation
+            // (RemoteAcoustic) supplies the math; the masonry
+            // tradition (PermanentMasonry) supplies the resonant
+            // chambers. Both tier-2.
+            ToolKind::AcousticEngineering => {
+                &[ToolKind::RemoteAcoustic, ToolKind::PermanentMasonry]
+            }
         }
     }
 }

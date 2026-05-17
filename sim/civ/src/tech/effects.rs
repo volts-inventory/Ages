@@ -118,6 +118,9 @@ impl ToolKind {
             ToolKind::BulkStorage => Real::percent(12),
             ToolKind::BulkCultivation => Real::percent(8),
             ToolKind::AnimalSymbiosis => Real::percent(5),
+            // HerbalMedicine: famine fallback (edible-plant
+            // catalogue doubles as starvation-tier food).
+            ToolKind::HerbalMedicine => Real::percent(4),
             _ => Real::ZERO,
         }
     }
@@ -337,6 +340,18 @@ impl ToolKind {
                 Real::percent(10),
                 Real::percent(15),
             ],
+            // HerbalMedicine: meaningful but smaller than
+            // BasicHealing — herbal pharmacopoeia helps but
+            // doesn't substitute for the broader healing tradition.
+            // Tilted toward infant + fertile (childbirth, wound
+            // care) over elder (geriatric care needs more than
+            // herbs).
+            ToolKind::HerbalMedicine => [
+                Real::percent(8),
+                Real::percent(5),
+                Real::percent(5),
+                Real::percent(2),
+            ],
             _ => zero,
         }
     }
@@ -374,6 +389,10 @@ impl ToolKind {
             // (knowledge-access at network speed).
             ToolKind::DigitalComputation => Real::percent(10),
             ToolKind::InformationNetworking => Real::percent(10),
+            // AcousticEngineering: amphitheatres / bell towers /
+            // public oratory carry oral curriculum further, so
+            // literacy lifts even before mass writing.
+            ToolKind::AcousticEngineering => Real::percent(8),
             _ => Real::ZERO,
         }
     }
@@ -545,6 +564,11 @@ impl ToolKind {
             // Tier-5: InformationNetworking +0.10 (network identity
             // — the modern "imagined community" lifter).
             ToolKind::InformationNetworking => Real::percent(10),
+            // AcousticEngineering: synchronised civic signalling
+            // (bells, horns, public address) coordinates a polity
+            // larger than face-to-face range, lifting cohesion at
+            // tier-3.
+            ToolKind::AcousticEngineering => Real::percent(7),
             _ => Real::ZERO,
         }
     }

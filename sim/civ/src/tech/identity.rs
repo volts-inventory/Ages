@@ -7,7 +7,7 @@ use super::ToolKind;
 use sim_recognition::ChannelKind;
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 59] = [
+    pub const ALL: [ToolKind; 61] = [
         ToolKind::DistanceImaging,
         ToolKind::RemoteAcoustic,
         ToolKind::FieldSensor,
@@ -74,6 +74,11 @@ impl ToolKind {
         ToolKind::OrganicSynthesis,
         // tier-2 (capability): controlled-conditions apparatus.
         ToolKind::ExperimentApparatus,
+        // tier-2/3 alternate-path additions: branching tools that
+        // don't chain through fire so the discovery path widens for
+        // no-oxidiser substrates and species without thermal sensors.
+        ToolKind::HerbalMedicine,
+        ToolKind::AcousticEngineering,
     ];
 
     /// Tier-5 tools — the late-game capabilities. Used by 's
@@ -155,6 +160,8 @@ impl ToolKind {
             ToolKind::OrganicSynthesis => 58,
             // id 59 — first id past the tier-5 block.
             ToolKind::ExperimentApparatus => 59,
+            ToolKind::HerbalMedicine => 60,
+            ToolKind::AcousticEngineering => 61,
         }
     }
 
@@ -225,6 +232,8 @@ impl ToolKind {
             ToolKind::OrganicSynthesis => "organic_synthesis",
             //
             ToolKind::ExperimentApparatus => "experiment_apparatus",
+            ToolKind::HerbalMedicine => "herbal_medicine",
+            ToolKind::AcousticEngineering => "acoustic_engineering",
         }
     }
 
@@ -305,6 +314,8 @@ impl ToolKind {
             // RemoteAcoustic. Buildable mid-civ once observation
             // pressure has accumulated.
             ToolKind::ExperimentApparatus => 2,
+            ToolKind::HerbalMedicine => 2,
+            ToolKind::AcousticEngineering => 3,
         }
     }
 
@@ -411,6 +422,11 @@ impl ToolKind {
             // `manipulation_prereqs` (broad — every kind) does the
             // body-plan gating in `is_buildable`.
             ToolKind::ExperimentApparatus => &[],
+            // HerbalMedicine + AcousticEngineering grant no new
+            // sensory channels — their effect lives on the
+            // demographic / cultural side, not perception.
+            ToolKind::HerbalMedicine => &[],
+            ToolKind::AcousticEngineering => &[],
         }
     }
 
@@ -504,6 +520,10 @@ impl ToolKind {
             // samples flow into the existing measurement track), not
             // on perception.
             ToolKind::ExperimentApparatus => &[],
+            // HerbalMedicine / AcousticEngineering: demographic +
+            // cultural effects, not perception.
+            ToolKind::HerbalMedicine => &[],
+            ToolKind::AcousticEngineering => &[],
         }
     }
 }
