@@ -99,9 +99,13 @@ impl ToolKind {
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
             | ToolKind::ExperimentApparatus => 5,
-            // tier-3: pre-industrial. ~250-500 ticks of sustained
-            // hypothesizer activity, plus the experimental gate
-            // below ensures the apparatus is being used.
+            // tier-3: pre-industrial. Sustained hypothesizer
+            // activity plus the experimental gate below ensures the
+            // apparatus is being used. Lowered 25 → 15 because the
+            // viewport-observed plateau showed civs stuck at tier-2
+            // for centuries — even active hypothesizers were
+            // reaching 25 confirmed only after several civ
+            // generations on slow substrates.
             ToolKind::ChemicalProjectile
             | ToolKind::PrecisionTimekeeping
             | ToolKind::MechanicalAdvantage
@@ -114,9 +118,12 @@ impl ToolKind {
             | ToolKind::AmphibiousConstruction
             // tier-3 sensorium
             | ToolKind::FieldSensor
-            | ToolKind::DistanceImaging => 25,
+            | ToolKind::DistanceImaging => 15,
             // tier-4: industrial. Multi-generation canon. Pairs
-            // with a 20-experimental floor below.
+            // with the experimental floor below. Lowered 75 → 50
+            // so a long-lived civ with active apparatus work can
+            // reach the industrial age within ~1-2 species
+            // lifetimes instead of needing 3-5.
             ToolKind::Mechanisation
             | ToolKind::LongRangeCommunication
             | ToolKind::ChemicalSynthesis
@@ -128,7 +135,7 @@ impl ToolKind {
             | ToolKind::MassLiteracy
             | ToolKind::AerialTransport
             // tier-4 sensorium
-            | ToolKind::MagneticSensor => 75,
+            | ToolKind::MagneticSensor => 50,
             // tier-5: information-age + transcendence. Combined
             // with the 80-experimental floor and the 3000 species-
             // maturity floor, demands a long-lived civ standing on
@@ -208,8 +215,11 @@ impl ToolKind {
             | ToolKind::MotivePropulsion
             | ToolKind::AmphibiousConstruction
             | ToolKind::FieldSensor
-            | ToolKind::DistanceImaging => 5,
-            // tier-4: sustained experimental tradition.
+            | ToolKind::DistanceImaging => 3,
+            // tier-4: sustained experimental tradition. Lowered
+            // 20 → 12 alongside the confirmed-relation drop so the
+            // experimental-effort budget is proportional and the
+            // tier-3 → tier-4 ladder stays climbable.
             ToolKind::Mechanisation
             | ToolKind::LongRangeCommunication
             | ToolKind::ChemicalSynthesis
@@ -220,7 +230,7 @@ impl ToolKind {
             | ToolKind::AnalyticalEngines
             | ToolKind::MassLiteracy
             | ToolKind::AerialTransport
-            | ToolKind::MagneticSensor => 20,
+            | ToolKind::MagneticSensor => 12,
             // tier-5: information-age + transcendence — the
             // civ has built a mature experimental epistemology.
             ToolKind::DigitalComputation

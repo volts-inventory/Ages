@@ -277,8 +277,22 @@ impl ToolKind {
             // ocean methane / ammonia substrate) doesn't hit this
             // unless / until it confirms a substrate-equivalent
             // (template id 1 fires for any thermal-signature
-            // template under the per-substrate ignition mapping).
-            ToolKind::ExperimentApparatus => &[(1, ChannelKind::InfraredThermal)],
+            // ExperimentApparatus: the universal "controlled
+            // experiment" gateway. The prior `(1, InfraredThermal)`
+            // gate was bug-shaped — template 1 is `fire`, whose
+            // signature requires `Above(Oxidiser, 0)`, and so it
+            // never triggers on a non-oxidising world (CO₂, methane,
+            // ammonia, etc.). A civ on Lumen-h's 95% CO₂ atmosphere
+            // could never confirm fire and was permanently locked
+            // out of tier-3+ — the "stuck at 22 tools" plateau the
+            // viewport surfaces. Swapped to `tidal_extremum`
+            // (template 14, perceivable by Tactile which every
+            // species has access to via baseline modalities) so the
+            // gateway is reachable on every habitable world. Tidal
+            // periodicity is also a more honest "you've fit a
+            // quantitative-periodic law and so can engineer
+            // measurement apparatus" gate than a thermal-only one.
+            ToolKind::ExperimentApparatus => &[(14, ChannelKind::Tactile)],
         }
     }
 }
