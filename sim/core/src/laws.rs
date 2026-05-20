@@ -123,28 +123,13 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         planet.day_length_hours,
     );
 
-    // Atmospheric wind. Earth-like defaults for now; per-planet
-    // tuning (e.g. friction × atmospheric thickness, advect_k ×
-    // atmospheric mass) is a follow-up once `Atmosphere` carries
-    // numeric scale-height + density rather than just a tag.
-    // Short-circuit on `Atmosphere::None` worlds — no
-    // medium means no wind dynamics.
-    let mut wind = sim_physics::Wind::earth_like();
-    wind.has_atmosphere = !matches!(planet.atmosphere, Atmosphere::None);
-    // Atmospheric density coupling. Wind & heat advection
-    // transport mass; thinner atmospheres carry less heat per
-    // unit velocity. Scale `advect_k` linearly with the planet's
-    // density relative to Earth's (122 cg/m³ → factor 1.0). Clamp
-    // at 5× to keep CFL safe under thick Venus-like atmospheres.
-    // Without this every planet's wind transported heat at
-    // Earth-like efficiency, masking the climatological difference
-    // between Mars-Thin and Venus-Reducing entirely.
-    let density_x100 = planet.atmosphere.density_x100();
-    if density_x100 > 0 {
-        let density_factor =
-            (Real::from_int(density_x100) / Real::from_int(122)).min(Real::from_int(5));
-        wind.advect_k = wind.advect_k * density_factor;
-    }
+    // Atmospheric wind. Per-planet tuning lives in
+    // `wind_for_atmosphere`: density scaling on all three
+    // coefficients (advect_k ∝ ρ, wind_k ∝ 1/ρ, friction ∝ ρ) and
+    // the scale-height plumb-through for the energy-conserving
+    // advection pass. Short-circuits on `Atmosphere::None` worlds
+    // via the `has_atmosphere` flag.
+    let wind = wind_for_atmosphere(planet.atmosphere);
 
     // Hydrologic cycle. Substrate-aware Clausius-Clapeyron
     // so a methane / ammonia / silicate world cycles its solvent
@@ -242,5 +227,145 @@ pub(crate) fn ignition_threshold_for(atmosphere: Atmosphere) -> Real {
         Atmosphere::Reducing => Real::from_int(900),
         Atmosphere::Thin => Real::from_int(800),
         Atmosphere::None => Real::from_int(1_000_000),
+    }
+}
+
+/// Build the per-planet `Wind` law, applying complete atmospheric-
+/// density coupling on all three of its coefficients.
+///
+/// Previously only `advect_k` scaled with density, which left a half-
+/// coupled asymmetry: a Mars-thin atmosphere generated Earth-strength
+/// winds that just happened to advect very little heat. Physically the
+/// pressure-gradient force per unit mass goes as `∇P / ρ` and ideal-
+/// gas `P = ρ R T`, so the *acceleration* per Kelvin of gradient
+/// scales as `1/ρ`. Drag (surface friction) is proportional to mass
+/// per unit volume so scales linearly with `ρ`.
+///
+/// Three coefficients get tuned together:
+///   * `advect_k` ∝ ρ          — thinner air carries less heat per
+///     unit velocity. Capped at 5× to keep the CFL bound on the
+///     upwind transport for Venus-like thick atmospheres.
+///   * `wind_k` ∝ 1/ρ          — same gradient → bigger acceleration
+///     in a thinner atmosphere (per-unit-mass force).
+///   * `friction_per_tick` ∝ ρ — thinner air → less drag → wind
+///     sustains longer. Clamped at 10 % of Earth-baseline so a Mars-
+///     thin world still loses momentum eventually (vacuum guarded
+///     separately via `has_atmosphere`).
+///
+/// Vacuum planets (`Atmosphere::None`) get `has_atmosphere = false`
+/// so the integrator short-circuits; no scaling is applied because
+/// the coefficients are unused.
+pub(crate) fn wind_for_atmosphere(atmosphere: Atmosphere) -> sim_physics::Wind {
+    let mut wind = sim_physics::Wind::earth_like();
+    wind.has_atmosphere = !matches!(atmosphere, Atmosphere::None);
+    // Thread the per-atmosphere scale height through so the
+    // energy-conserving advection pass uses the right column-mass
+    // ratios for this planet's air (Earth-like 8.4 km, Mars 11 km,
+    // Venus 15 km, Titan 21 km, vacuum 1 m sentinel).
+    wind.scale_height_m = atmosphere.scale_height_m();
+    let density_x100 = atmosphere.density_x100();
+    if density_x100 > 0 {
+        let raw_density_factor = Real::from_int(density_x100) / Real::from_int(122);
+        let advect_factor = raw_density_factor.min(Real::from_int(5));
+        wind.advect_k = wind.advect_k * advect_factor;
+        // Inverse density for the pressure-gradient acceleration:
+        // dividing the Earth-baseline coefficient by `ρ/ρ_earth` is
+        // equivalent to multiplying by `ρ_earth/ρ`. Clamp at 100×
+        // so a Mars-thin atmosphere gets appreciably stronger
+        // pressure-gradient force per K without overflowing fixed-
+        // point on extreme ratios.
+        let inverse_density_factor =
+            (Real::from_int(122) / Real::from_int(density_x100)).min(Real::from_int(100));
+        wind.wind_k = wind.wind_k * inverse_density_factor;
+        // Linear density scaling for friction, with a floor at 10 %
+        // of Earth-baseline so the thinnest non-vacuum atmospheres
+        // still damp eventually.
+        let friction_factor = raw_density_factor.max(Real::from_ratio(1, 10));
+        wind.friction_per_tick = wind.friction_per_tick * friction_factor;
+    }
+    wind
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wind_density_scales_all_three_coefficients() {
+        // Earth-baseline reference. Atmosphere::Oxidising has
+        // `density_x100 = 122`, so the raw density factor is exactly
+        // 1.0 — every coefficient should equal its Earth-like
+        // baseline.
+        let baseline = sim_physics::Wind::earth_like();
+        let earth = wind_for_atmosphere(Atmosphere::Oxidising);
+        assert_eq!(earth.advect_k, baseline.advect_k);
+        assert_eq!(earth.wind_k, baseline.wind_k);
+        assert_eq!(earth.friction_per_tick, baseline.friction_per_tick);
+        assert!(earth.has_atmosphere);
+
+        // Mars-thin: density_x100 = 2 (about 1/60 Earth). All three
+        // coefficients should shift the right direction:
+        //   advect_k goes down (less heat per unit velocity),
+        //   wind_k goes up (more accel per K),
+        //   friction_per_tick goes down (less drag, longer-lived
+        //   winds).
+        let mars = wind_for_atmosphere(Atmosphere::Thin);
+        assert!(
+            mars.advect_k < baseline.advect_k,
+            "thin atmosphere should advect less heat per unit velocity: \
+             mars.advect_k={:?} baseline.advect_k={:?}",
+            mars.advect_k,
+            baseline.advect_k
+        );
+        assert!(
+            mars.wind_k > baseline.wind_k,
+            "thin atmosphere should accelerate more per K of gradient: \
+             mars.wind_k={:?} baseline.wind_k={:?}",
+            mars.wind_k,
+            baseline.wind_k
+        );
+        assert!(
+            mars.friction_per_tick < baseline.friction_per_tick,
+            "thin atmosphere should sustain wind longer: \
+             mars.friction={:?} baseline.friction={:?}",
+            mars.friction_per_tick,
+            baseline.friction_per_tick
+        );
+        // Friction floor: 10 % of baseline = 0.30 × 0.10 = 0.03.
+        // Mars raw factor (2/122 ≈ 0.0164) hits the floor.
+        let floor = baseline.friction_per_tick * Real::from_ratio(1, 10);
+        assert_eq!(
+            mars.friction_per_tick, floor,
+            "Mars-thin friction should clamp to the 10 % floor"
+        );
+
+        // Venus-reducing: density_x100 = 6700 (~55× Earth). The
+        // advect_k cap at 5× must kick in; wind_k should drop sharply
+        // (1/55); friction climbs (~55×).
+        let venus = wind_for_atmosphere(Atmosphere::Reducing);
+        let advect_cap = baseline.advect_k * Real::from_int(5);
+        assert_eq!(
+            venus.advect_k, advect_cap,
+            "Venus-reducing should hit the 5× advect_k CFL cap"
+        );
+        assert!(
+            venus.wind_k < baseline.wind_k,
+            "Venus-thick atmosphere should accelerate less per K: \
+             venus.wind_k={:?} baseline.wind_k={:?}",
+            venus.wind_k,
+            baseline.wind_k
+        );
+        assert!(
+            venus.friction_per_tick > baseline.friction_per_tick,
+            "Venus-thick atmosphere should drag more per tick: \
+             venus.friction={:?} baseline.friction={:?}",
+            venus.friction_per_tick,
+            baseline.friction_per_tick
+        );
+
+        // Vacuum: has_atmosphere flag flips off; baseline coefficients
+        // are kept (they're unused but harmless).
+        let vacuum = wind_for_atmosphere(Atmosphere::None);
+        assert!(!vacuum.has_atmosphere);
     }
 }
