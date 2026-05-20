@@ -161,10 +161,11 @@ impl ToolKind {
             | ToolKind::EnergyStorage
             | ToolKind::CryogenicEngineering
             | ToolKind::OrganicSynthesis
-            // tier-5 transcendence trio
+            // tier-5 transcendence trio + alt-path
             | ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
-            | ToolKind::MetamaterialLattice => 200,
+            | ToolKind::MetamaterialLattice
+            | ToolKind::EcosystemEngineering => 200,
         }
     }
 
@@ -267,7 +268,8 @@ impl ToolKind {
             | ToolKind::OrganicSynthesis
             | ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
-            | ToolKind::MetamaterialLattice => 80,
+            | ToolKind::MetamaterialLattice
+            | ToolKind::EcosystemEngineering => 80,
         }
     }
 
@@ -304,7 +306,8 @@ impl ToolKind {
             ToolKind::MagneticSensor
             | ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
-            | ToolKind::MetamaterialLattice => Real::percent(55),
+            | ToolKind::MetamaterialLattice
+            | ToolKind::EcosystemEngineering => Real::percent(55),
             // tier-1: pre-literate technologies. Floor of 0.0
             // — these unlock from observation pressure alone, with
             // no formal-literacy gate. A foraging band that has
@@ -416,7 +419,7 @@ impl ToolKind {
             ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
             | ToolKind::MetamaterialLattice => 3_000,
-            // tier-5 information-age
+            // tier-5 information-age + alt-path
             ToolKind::DigitalComputation
             | ToolKind::InformationNetworking
             | ToolKind::GeneticManipulation
@@ -426,7 +429,8 @@ impl ToolKind {
             | ToolKind::AutonomousSystems
             | ToolKind::EnergyStorage
             | ToolKind::CryogenicEngineering
-            | ToolKind::OrganicSynthesis => 3_000,
+            | ToolKind::OrganicSynthesis
+            | ToolKind::EcosystemEngineering => 3_000,
             // tier-≤ 4: per-civ gates carry the work.
             _ => 0,
         }

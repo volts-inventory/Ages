@@ -303,6 +303,14 @@ impl ToolKind {
             ToolKind::GeneCultureCoevolution => {
                 &[ToolKind::AnimalHusbandry, ToolKind::AbstractMathematics]
             }
+            // EcosystemEngineering: GeneCultureCoevolution
+            // (tier-4, the deliberate-selection apparatus) +
+            // HydraulicWorks (tier-3, planetary-scale water
+            // engineering). Tier-5 — both prereqs strictly lower.
+            // The bio-engineering peer to the transcendence trio.
+            ToolKind::EcosystemEngineering => {
+                &[ToolKind::GeneCultureCoevolution, ToolKind::HydraulicWorks]
+            }
         }
     }
 }

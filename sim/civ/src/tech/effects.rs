@@ -133,12 +133,12 @@ impl ToolKind {
             // capacity lift through better record-keeping +
             // administration.
             ToolKind::CodexTradition => Real::percent(108),
-            // GeneCultureCoevolution: formal selection theory
-            // applied to crops + herds. Big tier-4 capacity lift,
-            // comparable to industrial chemistry (3×) since
-            // controlled breeding underwrites the Green Revolution
-            // density jump in real history.
             ToolKind::GeneCultureCoevolution => Real::from_int(3),
+            // EcosystemEngineering: planetary-scale capacity
+            // engineering. Top of the alt-path. Comparable to
+            // MetamaterialLattice (1.25) but flavour-distinct —
+            // bio-engineering rather than substrate engineering.
+            ToolKind::EcosystemEngineering => Real::from_int(2),
             _ => Real::ONE,
         }
     }
@@ -178,6 +178,9 @@ impl ToolKind {
             // crop + herd resilience — the headline late-game
             // food-security tool.
             ToolKind::GeneCultureCoevolution => Real::percent(15),
+            // EcosystemEngineering: planetary food security
+            // through closed nutrient cycles.
+            ToolKind::EcosystemEngineering => Real::percent(20),
             _ => Real::ZERO,
         }
     }
@@ -244,6 +247,9 @@ impl ToolKind {
             ToolKind::PermanentMasonry => Real::percent(5),
             ToolKind::FluidControl => Real::percent(5),
             ToolKind::UrbanConstruction => Real::percent(5),
+            // EcosystemEngineering: closed nutrient cycles +
+            // engineered biome buffer extreme seasons.
+            ToolKind::EcosystemEngineering => Real::percent(15),
             _ => Real::ZERO,
         }
     }
@@ -284,6 +290,11 @@ impl ToolKind {
             // detection).
             ToolKind::MetamaterialLattice => Real::percent(10),
             ToolKind::BioelectricResonator => Real::percent(5),
+            // EcosystemEngineering: closed biogeochemical cycles
+            // dampen environmental catastrophe propagation —
+            // engineered biota absorb spills, reroute floods,
+            // metabolise toxins.
+            ToolKind::EcosystemEngineering => Real::percent(15),
             _ => Real::ZERO,
         }
     }

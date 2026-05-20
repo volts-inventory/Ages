@@ -341,6 +341,10 @@ impl ToolKind {
             // — same formal-mathematics gate as AbstractMathematics
             // (its tool prereq).
             ToolKind::GeneCultureCoevolution => &[(14, ChannelKind::Tactile)],
+            // EcosystemEngineering: confirmed surface_water (5)
+            // — planetary water-cycle mastery is the prerequisite
+            // for closing the larger biogeochemical cycles.
+            ToolKind::EcosystemEngineering => &[(5, ChannelKind::Tactile)],
         }
     }
 }

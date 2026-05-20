@@ -1131,6 +1131,20 @@ impl ToolKind {
                 ManipulationKind::ChemicalSecretion,
                 ManipulationKind::MouthBeak,
             ],
+            // EcosystemEngineering: planetary-scale biosphere
+            // management. Broad species participation possible —
+            // ChemicalSecretion species directly emit bio-active
+            // compounds, FluidJet for ocean engineering,
+            // Burrow for soil / subsurface, LimbGrasp + Tentacle
+            // for surface construction.
+            ToolKind::EcosystemEngineering => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::FluidJet,
+                ManipulationKind::Burrow,
+            ],
         }
     }
 }

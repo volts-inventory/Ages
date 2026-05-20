@@ -573,6 +573,18 @@ pub enum ToolKind {
     /// to deliberate population-level engineering. A no-fire,
     /// no-chemistry route into tier-4 productivity.
     GeneCultureCoevolution,
+
+    /// `EcosystemEngineering` — planetary-scale biosphere
+    /// management. Closing the carbon / nitrogen / water cycles
+    /// deliberately; terraforming the host planet to species
+    /// preference. Tier-5. Builds on `GeneCultureCoevolution` +
+    /// `HydraulicWorks`. The bio-engineering peer to the
+    /// transcendence trio — a no-fire, no-fusion route to
+    /// late-game capacity (catastrophe-immune food security on a
+    /// planet the civ has shaped to fit it). Counterweight to
+    /// `MetamaterialLattice` + `FieldPropulsionEngine` for
+    /// species without combustion / charge / hard-tech paths.
+    EcosystemEngineering,
 }
 
 /// **Retired :** previously the wall-clock unlock gate.

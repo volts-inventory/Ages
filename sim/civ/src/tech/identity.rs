@@ -7,7 +7,7 @@ use super::ToolKind;
 use sim_recognition::ChannelKind;
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 70] = [
+    pub const ALL: [ToolKind; 71] = [
         ToolKind::DistanceImaging,
         ToolKind::RemoteAcoustic,
         ToolKind::FieldSensor,
@@ -89,6 +89,7 @@ impl ToolKind {
         ToolKind::WindPower,
         ToolKind::CodexTradition,
         ToolKind::GeneCultureCoevolution,
+        ToolKind::EcosystemEngineering,
     ];
 
     /// Tier-5 tools — the late-game capabilities. Used by 's
@@ -181,6 +182,7 @@ impl ToolKind {
             ToolKind::WindPower => 68,
             ToolKind::CodexTradition => 69,
             ToolKind::GeneCultureCoevolution => 70,
+            ToolKind::EcosystemEngineering => 71,
         }
     }
 
@@ -262,6 +264,7 @@ impl ToolKind {
             ToolKind::WindPower => "wind_power",
             ToolKind::CodexTradition => "codex_tradition",
             ToolKind::GeneCultureCoevolution => "gene_culture_coevolution",
+            ToolKind::EcosystemEngineering => "ecosystem_engineering",
         }
     }
 
@@ -356,6 +359,7 @@ impl ToolKind {
             ToolKind::WindPower => 2,
             ToolKind::CodexTradition => 3,
             ToolKind::GeneCultureCoevolution => 4,
+            ToolKind::EcosystemEngineering => 5,
         }
     }
 
@@ -476,7 +480,8 @@ impl ToolKind {
             | ToolKind::DistributedNetworks
             | ToolKind::WindPower
             | ToolKind::CodexTradition
-            | ToolKind::GeneCultureCoevolution => &[],
+            | ToolKind::GeneCultureCoevolution
+            | ToolKind::EcosystemEngineering => &[],
         }
     }
 
@@ -583,7 +588,8 @@ impl ToolKind {
             | ToolKind::DistributedNetworks
             | ToolKind::WindPower
             | ToolKind::CodexTradition
-            | ToolKind::GeneCultureCoevolution => &[],
+            | ToolKind::GeneCultureCoevolution
+            | ToolKind::EcosystemEngineering => &[],
         }
     }
 }
