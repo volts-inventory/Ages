@@ -111,7 +111,10 @@ impl Default for ViewportConfig {
             // default 24×16 grid in ~27 cols.
             compact: true,
             temperature_unit: TempUnit::Fahrenheit,
-            density_mode: false,
+            // Shaded blocks (` ░ ▒ ▓ █`) by default — reads as
+            // relative density at a glance without parsing a digit
+            // ladder. Capital letters still mark centroids.
+            density_mode: true,
         }
     }
 }

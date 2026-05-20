@@ -336,12 +336,16 @@ pub fn serendipity_roll(
 ) -> bool {
     use rand::Rng;
     use rand_chacha::rand_core::SeedableRng;
-    // Base per-tick probability: 1e-5 (one in 100 000 ticks ≈
-    // one chance per ~7 baseline-years per (civ × tool) at the
-    // reference literacy + science level). With ~50 tools and a
-    // civ life of ~1000 years, roughly 0.6 expected serendipitous
-    // unlocks per civ — rare but tangible.
-    let base_per_million: i64 = 10;
+    // Base per-tick probability: 2.5e-5 (was 1e-5). The earlier
+    // calibration produced ~0.6 expected serendipitous unlocks
+    // per civ-lifetime across 50 tools — invisible in practice
+    // even on long runs. With the 70+ tool catalogue post the
+    // alternate-path additions, the base bumps to 2.5e-5 so a
+    // mature civ sees ~1.5–3 stumbled-onto unlocks per lifetime
+    // (still rare, but the "Newton's apple" beats become a
+    // recognisable narrative feature instead of a quirk that
+    // never fires).
+    let base_per_million: i64 = 25;
     // Literacy multiplier: 0.5× at literacy 0, 1× at 0.5, 2× at 1.0.
     let lit_x100 = (civ_literacy.clamp01() * Real::from_int(150) + Real::from_int(50))
         .raw()

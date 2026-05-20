@@ -467,6 +467,124 @@ pub enum ToolKind {
     /// (tier-2+ precision instruments, tier-5 narrative trio),
     /// not on whether it does science at all.
     ExperimentApparatus,
+
+    /// `HerbalMedicine` — plant-derived pharmacology. The no-fire
+    /// branch of the medicine track: cataloguing edible/poisonous
+    /// plant chemistry and brewing infusions for wound care and
+    /// fever management. Builds on `BasicHealing` + `FluidGathering`
+    /// (extracts need water as solvent). Relation prereq is
+    /// `surface_water` (id 5) on a Tactile channel — universally
+    /// reachable, no oxidiser required. Effect: small additive
+    /// mortality_reduction across all brackets plus a modest
+    /// food_crisis_bonus (plant catalogue doubles as famine fallback
+    /// food). Tier-2. Alternate path to mid-game capacity for
+    /// substrates where the ChemicalSynthesis branch is blocked.
+    HerbalMedicine,
+
+    /// `AcousticEngineering` — purposeful sound shaping for
+    /// architecture and signalling. Builds on `RemoteAcoustic` +
+    /// `PermanentMasonry` (the masonry tradition gives the
+    /// chambers; the acoustic instrumentation gives the math). On
+    /// Earth this is whispering galleries, amphitheatres, bell
+    /// towers; in the sim it's a generic "acoustic infrastructure"
+    /// tool that lifts literacy (oral curriculum carries further)
+    /// and cohesion (synchronised civic signalling). Tier-3.
+    /// Provides a non-fire route into tier-3 alongside
+    /// MechanicalAdvantage.
+    AcousticEngineering,
+
+    /// `AnimalHusbandry` — selective breeding + domestic-herd
+    /// management beyond first-contact domestication. Refines
+    /// `AnimalSymbiosis`. Tier-2 capacity + fertility lift; one of
+    /// the main mid-game density bumps for biota-rich worlds.
+    /// Branching alt-path for species that didn't fall onto the
+    /// fire / cultivation chain — animals can be a primary food
+    /// + traction source even without fire.
+    AnimalHusbandry,
+
+    /// `PreservedFood` — drying, salting, fermenting, smoking.
+    /// Tier-2 storage path that doesn't require fire (sun-drying,
+    /// brining, lactic / acetic fermentation are all pre-fire
+    /// techniques). Builds on `FoodProcessing` + `FluidGathering`.
+    /// The non-pottery alternative to `BulkStorage` —
+    /// substantially boosts food_crisis_resistance without
+    /// requiring `LocalisedCombustion`.
+    PreservedFood,
+
+    /// `BiomimeticDesign` — nature-inspired engineering: copying
+    /// observed biological structures (gecko adhesion, beehive
+    /// hexagons, mantis-shrimp resonance) into civic constructs.
+    /// Tier-3. Builds on `AnimalSymbiosis` + `AbstractMathematics`
+    /// (close observation of biota + formal abstraction).
+    /// Capacity boost + war strength bonus (clever construction).
+    /// A no-fire path into tier-3 craft engineering alongside
+    /// `MechanicalAdvantage`.
+    BiomimeticDesign,
+
+    /// `HydraulicWorks` — aqueducts, dams, water mills, sluice
+    /// gates. Large-scale fluid engineering as civic infrastructure.
+    /// Tier-3. Builds on `FluidControl` + `PermanentMasonry`. Big
+    /// capacity multiplier (irrigation at scale) and food crisis
+    /// resistance (reservoir buffering). One of the alt-paths into
+    /// `Mechanisation`-tier productivity for non-combustion worlds.
+    HydraulicWorks,
+
+    /// `PrecisionInstruments` — calibrated rulers, lenses, scales,
+    /// chronometers beyond `PrecisionTimekeeping`'s calendar
+    /// astronomy. Tier-4. Builds on `AbstractMathematics` +
+    /// `ArtisanalSpecialisation`. Lifts the per-civ discovery
+    /// rate (cleaner measurements = faster law-fitting) and a
+    /// small experimental-relation bonus through tighter clamps.
+    /// The "scientific revolution" tool that lets a civ punch
+    /// above its tier when the substrate doesn't support
+    /// industrial chemistry.
+    PrecisionInstruments,
+
+    /// `DistributedNetworks` — interconnected market towns + early
+    /// postal / signalling networks. Tier-4. Builds on
+    /// `TradeNetworks` + `LongRangeCommunication`. Heavy cohesion
+    /// lift across distributed territory + literacy boost (news /
+    /// notice transmission). A polity-binding tool that doesn't
+    /// require fire-derived materials, so available on every
+    /// world.
+    DistributedNetworks,
+
+    /// `WindPower` — sail-power and wind-mills. Tier-2.
+    /// Pre-combustion mechanical energy. Builds on
+    /// `WatercraftConstruction` (the rigging + sail tradition) +
+    /// `FluidGathering` (the engineering intuition for moving
+    /// fluids — air is just a low-density fluid). Capacity +
+    /// expansion-rate lift; a major mid-game energy source for
+    /// no-fire worlds.
+    WindPower,
+
+    /// `CodexTradition` — formal preservation of knowledge in
+    /// bound-volume codices (or non-paper equivalents — scrolls,
+    /// inscribed tablets, woven knot-records). Tier-3. Builds on
+    /// `CulturalEncoding` + `ArtisanalSpecialisation`. Lifts
+    /// transmission fidelity, literacy, and the per-tick discovery
+    /// rate. The non-combustion analogue to print-tradition lifts.
+    CodexTradition,
+
+    /// `GeneCultureCoevolution` — formal selection theory applied
+    /// to herd / crop breeding. Tier-4. Builds on `AnimalHusbandry`
+    /// + `AbstractMathematics`. Big capacity + food-crisis lift —
+    /// the tool that takes selective breeding from craft tradition
+    /// to deliberate population-level engineering. A no-fire,
+    /// no-chemistry route into tier-4 productivity.
+    GeneCultureCoevolution,
+
+    /// `EcosystemEngineering` — planetary-scale biosphere
+    /// management. Closing the carbon / nitrogen / water cycles
+    /// deliberately; terraforming the host planet to species
+    /// preference. Tier-5. Builds on `GeneCultureCoevolution` +
+    /// `HydraulicWorks`. The bio-engineering peer to the
+    /// transcendence trio — a no-fire, no-fusion route to
+    /// late-game capacity (catastrophe-immune food security on a
+    /// planet the civ has shaped to fit it). Counterweight to
+    /// `MetamaterialLattice` + `FieldPropulsionEngine` for
+    /// species without combustion / charge / hard-tech paths.
+    EcosystemEngineering,
 }
 
 /// **Retired :** previously the wall-clock unlock gate.

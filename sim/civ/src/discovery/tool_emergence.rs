@@ -86,7 +86,7 @@ const DYNAMIC_TOOL_RESOURCE_THRESHOLD: Real = Real::from_int(1);
 
 /// Cadence of the dynamic-tool emergence scan, in ticks.
 /// 600 ticks ≈ 50 sim-years, matching 's template emergence.
-pub const TOOL_EMERGENCE_CHECK_PERIOD_TICKS: u64 = 600;
+pub const TOOL_EMERGENCE_CHECK_PERIOD_TICKS: u64 = 240;
 
 /// Minimum cluster size: the civ must have confirmed at least
 /// this many relations on a single channel before it can propose
@@ -94,6 +94,19 @@ pub const TOOL_EMERGENCE_CHECK_PERIOD_TICKS: u64 = 600;
 /// lower = more, shallower tools. 5 is calibrated to fire 1-3
 /// times per civ on a typical seed-42 / 5000-tick run.
 pub const EMERGENT_TOOL_CLUSTER_SIZE: usize = 5;
+
+/// Refinement step: a channel that has *already* minted a dynamic
+/// tool can mint a stronger refined tool when its cluster has
+/// grown by at least this many templates beyond the prior
+/// proposal's cluster size. Without this, every channel was a
+/// one-shot — a civ that built a deep canon on one channel got
+/// the same single tool as a civ with the bare minimum 5 templates,
+/// and the tech tree felt prematurely tapped-out. With it, a civ
+/// that takes its Temperature canon from 5 → 10 → 15 → 20
+/// templates gets a sequence of progressively stronger thermal
+/// tools (effects scale with cluster_size up to
+/// `EMERGENT_TOOL_MAX_SCALE_CLUSTER`).
+pub const EMERGENT_TOOL_REFINEMENT_STEP: usize = 5;
 
 /// Maximum cluster size we credit toward effect magnitudes —
 /// past this, more relations don't make the tool stronger. Caps
@@ -291,13 +304,27 @@ pub fn propose_dynamic_tools(civ: &Civ, species: &Species, tick: u64) -> Vec<Eme
         }
     }
 
-    // Channels the species has already crystallised into a
-    // dynamic tool. Skip those.
-    let already_focused: std::collections::BTreeSet<ChannelKind> = species
-        .dynamic_tool_registry
-        .values()
-        .map(|t| t.channel_focus)
-        .collect();
+    // Per-channel max cluster size among prior species-wide
+    // dynamic tools. Channels see a *refined* proposal when the
+    // current cluster has grown by ≥ `EMERGENT_TOOL_REFINEMENT_STEP`
+    // beyond the largest existing proposal; channels with no prior
+    // proposal accept any cluster ≥ EMERGENT_TOOL_CLUSTER_SIZE.
+    // Replaces the prior one-shot `already_focused` set which
+    // capped each channel at a single tool regardless of how deep
+    // the canon grew.
+    let mut max_existing_cluster_per_channel: std::collections::BTreeMap<ChannelKind, usize> =
+        std::collections::BTreeMap::new();
+    for t in species.dynamic_tool_registry.values() {
+        let existing = t.relation_prereqs.len();
+        max_existing_cluster_per_channel
+            .entry(t.channel_focus)
+            .and_modify(|m| {
+                if existing > *m {
+                    *m = existing;
+                }
+            })
+            .or_insert(existing);
+    }
 
     let mut proposals = Vec::new();
     let mut next_id = species.next_dynamic_tool_id;
@@ -306,8 +333,15 @@ pub fn propose_dynamic_tools(civ: &Civ, species: &Species, tick: u64) -> Vec<Eme
             continue;
         }
         let kind = channel_to_kind(channel);
-        if already_focused.contains(&kind) {
-            continue;
+        // Refinement gate: if a prior tool exists for this
+        // channel, the new cluster must have grown by at least
+        // `EMERGENT_TOOL_REFINEMENT_STEP` templates beyond the
+        // largest prior cluster. First proposal on a channel skips
+        // this check (no `max_existing` entry).
+        if let Some(&prior_max) = max_existing_cluster_per_channel.get(&kind) {
+            if template_ids.len() < prior_max + EMERGENT_TOOL_REFINEMENT_STEP {
+                continue;
+            }
         }
         template_ids.sort_unstable();
         template_ids.dedup();

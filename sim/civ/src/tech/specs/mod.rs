@@ -98,10 +98,18 @@ impl ToolKind {
             // tier-2 sensorium + apparatus
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
-            | ToolKind::ExperimentApparatus => 5,
-            // tier-3: pre-industrial. ~250-500 ticks of sustained
-            // hypothesizer activity, plus the experimental gate
-            // below ensures the apparatus is being used.
+            | ToolKind::ExperimentApparatus
+            | ToolKind::HerbalMedicine
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood
+            | ToolKind::WindPower => 5,
+            // tier-3: pre-industrial. Sustained hypothesizer
+            // activity plus the experimental gate below ensures the
+            // apparatus is being used. Lowered 25 → 15 because the
+            // viewport-observed plateau showed civs stuck at tier-2
+            // for centuries — even active hypothesizers were
+            // reaching 25 confirmed only after several civ
+            // generations on slow substrates.
             ToolKind::ChemicalProjectile
             | ToolKind::PrecisionTimekeeping
             | ToolKind::MechanicalAdvantage
@@ -114,9 +122,15 @@ impl ToolKind {
             | ToolKind::AmphibiousConstruction
             // tier-3 sensorium
             | ToolKind::FieldSensor
-            | ToolKind::DistanceImaging => 25,
+            | ToolKind::DistanceImaging
+            | ToolKind::AcousticEngineering
+            | ToolKind::HydraulicWorks
+            | ToolKind::CodexTradition => 15,
             // tier-4: industrial. Multi-generation canon. Pairs
-            // with a 20-experimental floor below.
+            // with the experimental floor below. Lowered 75 → 50
+            // so a long-lived civ with active apparatus work can
+            // reach the industrial age within ~1-2 species
+            // lifetimes instead of needing 3-5.
             ToolKind::Mechanisation
             | ToolKind::LongRangeCommunication
             | ToolKind::ChemicalSynthesis
@@ -128,7 +142,11 @@ impl ToolKind {
             | ToolKind::MassLiteracy
             | ToolKind::AerialTransport
             // tier-4 sensorium
-            | ToolKind::MagneticSensor => 75,
+            | ToolKind::MagneticSensor
+            | ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks
+            | ToolKind::BiomimeticDesign
+            | ToolKind::GeneCultureCoevolution => 50,
             // tier-5: information-age + transcendence. Combined
             // with the 80-experimental floor and the 3000 species-
             // maturity floor, demands a long-lived civ standing on
@@ -143,10 +161,11 @@ impl ToolKind {
             | ToolKind::EnergyStorage
             | ToolKind::CryogenicEngineering
             | ToolKind::OrganicSynthesis
-            // tier-5 transcendence trio
+            // tier-5 transcendence trio + alt-path
             | ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
-            | ToolKind::MetamaterialLattice => 200,
+            | ToolKind::MetamaterialLattice
+            | ToolKind::EcosystemEngineering => 200,
         }
     }
 
@@ -195,7 +214,11 @@ impl ToolKind {
             | ToolKind::UrbanConstruction
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
-            | ToolKind::ExperimentApparatus => 0,
+            | ToolKind::ExperimentApparatus
+            | ToolKind::HerbalMedicine
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood
+            | ToolKind::WindPower => 0,
             // tier-3: a few apparatus-supported confirmations.
             ToolKind::ChemicalProjectile
             | ToolKind::PrecisionTimekeeping
@@ -208,8 +231,14 @@ impl ToolKind {
             | ToolKind::MotivePropulsion
             | ToolKind::AmphibiousConstruction
             | ToolKind::FieldSensor
-            | ToolKind::DistanceImaging => 5,
-            // tier-4: sustained experimental tradition.
+            | ToolKind::DistanceImaging
+            | ToolKind::AcousticEngineering
+            | ToolKind::HydraulicWorks
+            | ToolKind::CodexTradition => 3,
+            // tier-4: sustained experimental tradition. Lowered
+            // 20 → 12 alongside the confirmed-relation drop so the
+            // experimental-effort budget is proportional and the
+            // tier-3 → tier-4 ladder stays climbable.
             ToolKind::Mechanisation
             | ToolKind::LongRangeCommunication
             | ToolKind::ChemicalSynthesis
@@ -220,7 +249,11 @@ impl ToolKind {
             | ToolKind::AnalyticalEngines
             | ToolKind::MassLiteracy
             | ToolKind::AerialTransport
-            | ToolKind::MagneticSensor => 20,
+            | ToolKind::MagneticSensor
+            | ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks
+            | ToolKind::BiomimeticDesign
+            | ToolKind::GeneCultureCoevolution => 12,
             // tier-5: information-age + transcendence — the
             // civ has built a mature experimental epistemology.
             ToolKind::DigitalComputation
@@ -235,7 +268,8 @@ impl ToolKind {
             | ToolKind::OrganicSynthesis
             | ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
-            | ToolKind::MetamaterialLattice => 80,
+            | ToolKind::MetamaterialLattice
+            | ToolKind::EcosystemEngineering => 80,
         }
     }
 
@@ -244,10 +278,26 @@ impl ToolKind {
     /// under.
     pub fn literacy_floor(self) -> Real {
         match self {
-            ToolKind::ThermalSensor | ToolKind::RemoteAcoustic => Real::percent(20),
+            ToolKind::ThermalSensor
+            | ToolKind::RemoteAcoustic
+            | ToolKind::HerbalMedicine
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood
+            | ToolKind::WindPower => Real::percent(20),
             ToolKind::FieldSensor
             | ToolKind::DistanceImaging
-            | ToolKind::AmphibiousConstruction => Real::percent(35),
+            | ToolKind::AmphibiousConstruction
+            | ToolKind::AcousticEngineering
+            | ToolKind::HydraulicWorks
+            | ToolKind::CodexTradition => Real::percent(35),
+            // Tier-4 alt-path: PrecisionInstruments,
+            // DistributedNetworks, BiomimeticDesign,
+            // GeneCultureCoevolution — same 0.50 floor as the rest
+            // of tier-4.
+            ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks
+            | ToolKind::BiomimeticDesign
+            | ToolKind::GeneCultureCoevolution => Real::percent(50),
             // Tier-4 magnetic_sensor and tier-5 (transcendence-tier)
             // tools share a 0.55 floor on per-civ literacy. Tier-5
             // is gated separately by a species-cumulative maturity
@@ -256,7 +306,8 @@ impl ToolKind {
             ToolKind::MagneticSensor
             | ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
-            | ToolKind::MetamaterialLattice => Real::percent(55),
+            | ToolKind::MetamaterialLattice
+            | ToolKind::EcosystemEngineering => Real::percent(55),
             // tier-1: pre-literate technologies. Floor of 0.0
             // — these unlock from observation pressure alone, with
             // no formal-literacy gate. A foraging band that has
@@ -368,7 +419,7 @@ impl ToolKind {
             ToolKind::BioelectricResonator
             | ToolKind::FieldPropulsionEngine
             | ToolKind::MetamaterialLattice => 3_000,
-            // tier-5 information-age
+            // tier-5 information-age + alt-path
             ToolKind::DigitalComputation
             | ToolKind::InformationNetworking
             | ToolKind::GeneticManipulation
@@ -378,7 +429,8 @@ impl ToolKind {
             | ToolKind::AutonomousSystems
             | ToolKind::EnergyStorage
             | ToolKind::CryogenicEngineering
-            | ToolKind::OrganicSynthesis => 3_000,
+            | ToolKind::OrganicSynthesis
+            | ToolKind::EcosystemEngineering => 3_000,
             // tier-≤ 4: per-civ gates carry the work.
             _ => 0,
         }

@@ -126,6 +126,10 @@ impl Civ {
             // build a `Civ` without threading planet context (legacy
             // unit tests).
             carrying_capacity_per_unit: Real::from_int(50_000),
+            // Default Terrestrial — `configure_substrate` overrides
+            // at founding from the species' real habitat. Legacy
+            // tests without that init path see land-only behaviour.
+            species_habitat: sim_species::Habitat::Terrestrial,
             migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,

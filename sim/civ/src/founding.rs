@@ -16,7 +16,6 @@ use crate::{
 use sim_arith::Real;
 use sim_population::Cohort;
 use sim_species::ModalityKind;
-use sim_world::BiosphereClass;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Civ {
@@ -81,6 +80,7 @@ impl Civ {
             // (50,000/fuel-unit). `configure_substrate` overwrites
             // with a biosphere-derived value during full founding.
             carrying_capacity_per_unit: Real::from_int(50_000),
+            species_habitat: sim_species::Habitat::Terrestrial,
             migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
@@ -139,13 +139,14 @@ impl Civ {
     /// to re-call as substrate changes.
     pub fn configure_substrate(
         &mut self,
-        biosphere: BiosphereClass,
-        gravity: Real,
+        habitat: sim_species::Habitat,
         cognition: Real,
         sociality: Real,
         metabolism: Real,
+        cell_count: u32,
     ) {
-        self.carrying_capacity_per_unit = carrying_capacity_per_unit(biosphere, gravity, cognition);
+        self.species_habitat = habitat;
+        self.carrying_capacity_per_unit = carrying_capacity_per_unit(cognition, cell_count);
         self.migration_pressure_threshold = migration_pressure_threshold(sociality);
         let scaled = scale_attempt_period_for_metabolism(
             attempt_period_for_cognition(cognition),

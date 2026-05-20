@@ -138,6 +138,14 @@ pub struct Civ {
     /// equivalent) for legacy callers that construct without
     /// substrate context.
     pub carrying_capacity_per_unit: Real,
+    /// Species habitat domain (Aquatic / Terrestrial / Amphibious /
+    /// Airborne), cached at founding via `configure_substrate`.
+    /// Read by `cell_capacity` so aquatic species see water cells
+    /// as their native habitability (~1.0+) and terrestrial species
+    /// see them as marginal (~0.05). Default is Terrestrial for
+    /// legacy callers / test fixtures that don't go through
+    /// `configure_substrate`.
+    pub species_habitat: sim_species::Habitat,
     /// Substrate-derived migration pressure threshold. Replaces
     /// the flat 0.85 in `apply_migration`. Cached at founding via
     /// `configure_substrate`; default 0.85 for legacy callers.

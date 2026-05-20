@@ -75,51 +75,64 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Po
         + Pop::from_int(15) * cognition_penalty
 }
 
+/// Reference grid resolution (cells per planet) that
+/// `carrying_capacity_per_unit` is calibrated against. The default
+/// run grid is 36×30 = 1080 cells; at that resolution the scale
+/// returns the historical ~50,000 / unit baseline. Smaller dev
+/// grids (12×8 = 96) get a proportionally larger per-cell cap so a
+/// single cell represents a larger slice of the planet; larger
+/// custom grids get a proportionally smaller per-cell cap. Net
+/// effect: total *planet-wide* carrying capacity stays invariant
+/// to grid resolution — a 96-cell run hosts the same humanity as a
+/// 1080-cell run of the same planet, just at coarser spatial
+/// resolution.
+pub const REFERENCE_PLANET_CELL_COUNT: u32 = 1080;
+
 /// Substrate-derived carrying-capacity scale (individuals per
-/// unit fuel-density). Lush biospheres + high-cognition species push
-/// the scale up; sparse / low-cognition push it down. High-gravity
-/// worlds cost more per individual; low-gravity worlds save energy.
+/// unit fuel-density). High-cognition species push the scale up;
+/// low-cognition push it down. `cell_count` rescales per-cell so
+/// total planet capacity is grid-resolution-invariant: per_unit ∝
+/// REFERENCE / cell_count.
 ///
-/// Earth-equivalent baseline (Lush, g≈9.81, cog≈1) is ~50,000/unit.
+/// Earth-equivalent baseline (max-cog) at the reference grid
+/// resolution is ~50,000/unit. Biosphere is *not* multiplied here
+/// — it's already captured by the per-cell `Substance::Fuel`
+/// ceiling (`bio_fuel` in `world/init.rs`: Sparse 0.20, Lush 1.0,
+/// HyperBio 3.0). Gravity is *not* multiplied either — native
+/// species are adapted to their home gravity, so penalising them
+/// against a 1g Earth anchor is Earth-centrism. The downstream
+/// per-cell `cell_capacity` multiplication by `fuel` still gives
+/// biosphere its effect (and `tech_multiplier × tool_multiplier`
+/// gives tech its effect) without the prior double-count.
+///
 /// The 20× lift from the prior 2,500 puts paleolithic civs at ~50k
 /// people per cell (city-state density) so the tech-tier multiplier
 /// stack (see `tools::tool_capacity_multiplier` / `tech::effects`)
 /// can carry agricultural civs to ~M/cell, industrial civs to ~10M/
 /// cell, and modern/future-age civs to ~hundreds of M/cell without
 /// needing any further global retune. The ratio thresholds (food
-/// security `demand / capacity`, migration pressure `pop /
-/// cell_capacity`) are scale-invariant — both still trigger at the
-/// same fractions of cap regardless of the absolute number.
+/// security, migration pressure) are scale-invariant — both still
+/// trigger at the same fractions of cap regardless of the absolute
+/// number.
 ///
 /// Total demographic span baseline → fully-teched is ~8,000× (see
 /// `tech::effects::capacity_multiplier`), reproducing the real
 /// paleolithic → modern density growth of ~1000–5000× plus headroom
 /// for speculative future-age tools.
 #[must_use]
-pub fn carrying_capacity_per_unit(
-    biosphere: BiosphereClass,
-    gravity: Real,
-    cognition: Real,
-) -> Real {
-    let biosphere_factor = match biosphere {
-        BiosphereClass::None => Real::from_ratio(7, 10),
-        BiosphereClass::Sparse => Real::percent(95),
-        BiosphereClass::Lush => Real::ONE,
-        BiosphereClass::HyperBiodiverse => Real::percent(115),
-    };
-    let earth_g = Real::percent(981);
-    let g_diff = if gravity > earth_g {
-        gravity - earth_g
-    } else {
-        earth_g - gravity
-    };
-    let g_factor = (Real::ONE - Real::percent(5) * g_diff / earth_g).max(Real::from_ratio(5, 10));
+pub fn carrying_capacity_per_unit(cognition: Real, cell_count: u32) -> Real {
     let cog = cognition.clamp01();
-    // Cognition factor narrows further (0.95–1.0) so low-cognition
-    // species don't compound a capacity hit on top of the existing
-    // attempt-period and stress-factor cognition penalties.
-    let cognition_factor = Real::percent(95) + Real::percent(5) * cog;
-    Real::from_int(50_000) * biosphere_factor * g_factor * cognition_factor
+    // Widened from the prior 0.95-1.0 no-op band to 0.85-1.15 so
+    // cognition is a real signal — low-cognition species pay a
+    // small capacity tax, high-cognition species get a small bonus.
+    // Still narrow enough that low-cog species aren't doomed; the
+    // hypothesizer-cadence and stress-factor penalties carry most
+    // of the cognition signal elsewhere.
+    let cognition_factor = Real::percent(85) + Real::percent(30) * cog;
+    let effective_cells = cell_count.max(1);
+    let resolution_factor = Real::from_int(i64::from(REFERENCE_PLANET_CELL_COUNT))
+        / Real::from_int(i64::from(effective_cells));
+    Real::from_int(50_000) * cognition_factor * resolution_factor
 }
 
 /// Substrate-derived migration pressure threshold. Solitary
@@ -139,27 +152,32 @@ pub fn migration_pressure_threshold(sociality: Real) -> Real {
 /// Tech-augmented migration threshold. Tech surplus (urban
 /// planning, irrigation, sanitation) should make a civ tolerate
 /// denser cores before pushing migrants outward — frontier
-/// expansion is a *resource-poor* response. Multiplier is
-/// `min(1.5, sqrt(tool_capacity_multiplier))` so:
-///   - vanilla civ (tech = 1.0): 1.0× → threshold unchanged
-///   - 4× capacity stack: sqrt = 2.0 → capped at 1.5×
-///   - higher tech: still capped at 1.5×
-/// Output is then clamped to ≤ 0.97 so the threshold can't push
-/// above the saturation cliff (a 0.99 threshold would freeze
-/// migration entirely). Net: a high-tech civ tolerates 55-97%
-/// fill before spillover instead of the base 55-75%.
+/// expansion is a *resource-poor* response.
+///
+/// Calibration: multiplier is `min(1.10, sqrt(tool_capacity_multiplier))`
+/// (was 1.50). The prior aggressive multiplier pinned the threshold
+/// to the 0.97 ceiling for any civ with ~1.3× tools — and once at
+/// 0.97, surplus headroom collapsed to 3% × cap, drain rate fell
+/// ~16× off the natural ~0.05 × overflow target, and migration
+/// went glacial. The 1.10 cap keeps the design intent (denser
+/// cores for high-tech) without starving the drain channel.
+///
+/// Output is clamped to ≤ 0.92 (was 0.97) so even tech-saturated
+/// civs preserve 8 % cap of working overflow each tick.
+/// Net: a high-tech civ tolerates 55-92 % fill before spillover
+/// instead of the base 55-75 %.
 #[must_use]
 pub fn tech_augmented_migration_threshold(base: Real, tool_capacity_multiplier: Real) -> Real {
     let safe_mult = tool_capacity_multiplier.max(Real::percent(1));
     let raw_factor = sim_arith::transcendental::sqrt(safe_mult);
-    let max_factor = Real::from_ratio(15, 10);
+    let max_factor = Real::from_ratio(110, 100);
     let factor = if raw_factor > max_factor {
         max_factor
     } else {
         raw_factor
     };
     let augmented = base * factor;
-    let ceiling = Real::percent(97);
+    let ceiling = Real::percent(92);
     if augmented > ceiling {
         ceiling
     } else {
@@ -287,23 +305,40 @@ mod tests {
     /// alone.
     #[test]
     fn carrying_capacity_envelope_is_calibrated() {
-        let earth_g = Real::percent(981);
-        let median_cog = Real::from_ratio(5, 10);
-        let lush = carrying_capacity_per_unit(BiosphereClass::Lush, earth_g, Real::ONE);
-        let sparse = carrying_capacity_per_unit(BiosphereClass::Sparse, earth_g, median_cog);
-        let hyper = carrying_capacity_per_unit(BiosphereClass::HyperBiodiverse, earth_g, Real::ONE);
-        // Earth-equivalent (Lush + Earth-g + max-cog) recovers ~50,000.
-        assert!(lush >= Real::from_int(45_000) && lush <= Real::from_int(55_000));
-        // Sparse + median-cog stays within 10% of Earth-equivalent
-        // so marginal habitability holds.
-        assert!(sparse >= Real::from_int(45_000));
-        // Hyper bonus is real but bounded — no surprise 2× scaling.
-        assert!(hyper >= Real::from_int(50_000) && hyper <= Real::from_int(65_000));
+        let ref_cells = REFERENCE_PLANET_CELL_COUNT;
+        let max_cog = carrying_capacity_per_unit(Real::ONE, ref_cells);
+        let median_cog =
+            carrying_capacity_per_unit(Real::from_ratio(5, 10), ref_cells);
+        let no_cog = carrying_capacity_per_unit(Real::ZERO, ref_cells);
+        // Max-cog at reference grid recovers the ~50,000 anchor
+        // (cognition_factor = 1.15 → 50,000 × 1.15 = 57,500).
+        assert!(max_cog >= Real::from_int(55_000) && max_cog <= Real::from_int(60_000));
+        // Median-cog sits exactly between (cognition_factor = 1.0).
+        assert!(median_cog >= Real::from_int(49_000) && median_cog <= Real::from_int(51_000));
+        // Zero-cog is the floor (cognition_factor = 0.85). Still
+        // viable — a low-cog species can found cities, just denser
+        // tools/tech are needed to match a high-cog peer.
+        assert!(no_cog >= Real::from_int(42_000) && no_cog <= Real::from_int(43_000));
+    }
+
+    #[test]
+    fn carrying_capacity_scales_inverse_with_cell_count() {
+        // Halving the grid resolution should double per-cell cap so
+        // total planet-wide capacity stays invariant: a coarse grid
+        // models the same planet with each cell standing for more
+        // physical area.
+        let ref_cells = REFERENCE_PLANET_CELL_COUNT;
+        let half_cells = ref_cells / 2;
+        let base = carrying_capacity_per_unit(Real::ONE, ref_cells);
+        let coarse = carrying_capacity_per_unit(Real::ONE, half_cells);
+        let ratio = coarse / base;
+        assert!(ratio > Real::from_ratio(195, 100));
+        assert!(ratio < Real::from_ratio(205, 100));
     }
 
     /// tech_augmented_migration_threshold scales the base threshold
-    /// by `min(1.5, sqrt(capacity_mult))` and clamps the output to
-    /// `0.97`. Vanilla civs (capacity_mult = 1.0) pass through.
+    /// by `min(1.10, sqrt(capacity_mult))` and clamps the output to
+    /// `0.92`. Vanilla civs (capacity_mult = 1.0) pass through.
     #[test]
     fn tech_augmented_migration_threshold_envelopes() {
         let base = Real::percent(70);
@@ -312,44 +347,38 @@ mod tests {
         let drift0 = if t0 > base { t0 - base } else { base - t0 };
         assert!(drift0 < Real::from_ratio(1, 1000));
 
-        // 4× capacity → sqrt = 2.0, capped at 1.5 → 0.70 * 1.5 = 1.05
-        // → clamped to 0.97 ceiling.
+        // 4× capacity → sqrt = 2.0, capped at 1.10 → 0.70 * 1.10
+        // = 0.77 (well under the 0.92 ceiling).
         let t4 = tech_augmented_migration_threshold(base, Real::from_int(4));
-        let ceiling = Real::percent(97);
-        let drift_ceil = if t4 > ceiling {
-            t4 - ceiling
+        let expected4 = Real::from_ratio(77, 100);
+        let drift4 = if t4 > expected4 {
+            t4 - expected4
         } else {
-            ceiling - t4
+            expected4 - t4
+        };
+        assert!(
+            drift4 < Real::percent(1),
+            "4× capacity → 0.70 × 1.10 = 0.77; got {t4:?}"
+        );
+
+        // High base with high tech → clamp to 0.92 ceiling. Base
+        // 0.85 × 1.10 = 0.935 → clamped to 0.92.
+        let high_base = Real::percent(85);
+        let t_high = tech_augmented_migration_threshold(high_base, Real::from_int(4));
+        let ceiling = Real::percent(92);
+        let drift_ceil = if t_high > ceiling {
+            t_high - ceiling
+        } else {
+            ceiling - t_high
         };
         assert!(
             drift_ceil < Real::percent(1),
-            "4× capacity should clamp to 0.97; got {t4:?}"
+            "0.85 × 1.10 = 0.935 clamps to 0.92; got {t_high:?}"
         );
 
-        // 2.25× capacity → sqrt = 1.5 (boundary) → 0.70 * 1.5 = 1.05
-        // → still clamped.
-        let t225 = tech_augmented_migration_threshold(base, Real::percent(225));
-        let drift_ceil2 = if t225 > ceiling {
-            t225 - ceiling
-        } else {
-            ceiling - t225
-        };
-        assert!(drift_ceil2 < Real::percent(1));
-
-        // Lower base with same 4× tech → factor 1.5 → 0.55 * 1.5 =
-        // 0.825 (under the 0.97 ceiling).
-        let low_base = Real::percent(55);
-        let t_low = tech_augmented_migration_threshold(low_base, Real::from_int(4));
-        let expected = Real::from_ratio(825, 1000);
-        let drift = if t_low > expected {
-            t_low - expected
-        } else {
-            expected - t_low
-        };
-        assert!(
-            drift < Real::percent(1),
-            "0.55 × 1.5 = 0.825; got {t_low:?}"
-        );
+        // Sub-1× tools → factor < 1, threshold drops below base.
+        let low = tech_augmented_migration_threshold(base, Real::percent(50));
+        assert!(low < base, "tools < 1× should pull threshold below base");
     }
 
     /// Calibration regression test for the founding floor.

@@ -230,6 +230,87 @@ impl ToolKind {
             // fire) which already requires the civ's hypothesizer
             // to have done some real fitting work.
             ToolKind::ExperimentApparatus => &[],
+            // HerbalMedicine: refines BasicHealing with extracts;
+            // FluidGathering provides the water needed for tinctures
+            // / decoctions. Both tier-1, strict tier monotonicity
+            // satisfied.
+            ToolKind::HerbalMedicine => &[ToolKind::BasicHealing, ToolKind::FluidGathering],
+            // AcousticEngineering: the acoustic instrumentation
+            // (RemoteAcoustic) supplies the math; the masonry
+            // tradition (PermanentMasonry) supplies the resonant
+            // chambers. Both tier-2.
+            ToolKind::AcousticEngineering => {
+                &[ToolKind::RemoteAcoustic, ToolKind::PermanentMasonry]
+            }
+            // AnimalHusbandry: built on the hunting tradition
+            // (tier-1) via gradual prey-side domestication.
+            // AnimalSymbiosis (also tier-2) would violate strict
+            // tier-monotonicity, so the prereq is on the upstream
+            // hunting capability instead. The two tools become
+            // parallel tier-2 paths rather than serial.
+            ToolKind::AnimalHusbandry => &[ToolKind::OrganizedHunting],
+            // PreservedFood: builds on FoodProcessing (the
+            // cooking-or-drying-or-grinding tradition) plus
+            // FluidGathering (brine + ferment liquors).
+            ToolKind::PreservedFood => &[ToolKind::FoodProcessing, ToolKind::FluidGathering],
+            // BiomimeticDesign: AnimalSymbiosis (tier-2) gives the
+            // close contact with biota; AbstractMathematics
+            // (tier-3) gives the formal abstraction for
+            // transferring observed structures into engineering.
+            // Promoted to tier-4 to satisfy strict tier-
+            // monotonicity (AbstractMathematics is tier-3).
+            ToolKind::BiomimeticDesign => {
+                &[ToolKind::AnimalSymbiosis, ToolKind::AbstractMathematics]
+            }
+            // HydraulicWorks: FluidControl (irrigation tradition)
+            // + PermanentMasonry (the durable masonry needed for
+            // aqueducts / dams). Tier-3.
+            ToolKind::HydraulicWorks => &[ToolKind::FluidControl, ToolKind::PermanentMasonry],
+            // PrecisionInstruments: AbstractMathematics gives the
+            // theory; ArtisanalSpecialisation gives the
+            // craft-tradition for calibrated build. Tier-4.
+            ToolKind::PrecisionInstruments => {
+                &[ToolKind::AbstractMathematics, ToolKind::ArtisanalSpecialisation]
+            }
+            // DistributedNetworks: TradeNetworks (tier-2,
+            // economic pre-network) + WrittenJurisprudence
+            // (tier-3, the codification that lets standardised
+            // contracts / notices flow at distance). Tier-4.
+            ToolKind::DistributedNetworks => {
+                &[ToolKind::TradeNetworks, ToolKind::WrittenJurisprudence]
+            }
+            // WindPower: BasicTextiles (sail-cloth + windmill sail
+            // material) + FluidGathering (fluid-flow intuition).
+            // Both tier-1 to satisfy strict tier-monotonicity
+            // (WatercraftConstruction would be a same-tier
+            // dependency since both are tier-2). Tier-2.
+            ToolKind::WindPower => {
+                &[ToolKind::BasicTextiles, ToolKind::FluidGathering]
+            }
+            // CodexTradition: CulturalEncoding (the writing
+            // system) + PermanentMasonry (the durable inscription
+            // substrate — stone tablets, baked clay, carved bone).
+            // Both tier-2 so the dependent tier-3 satisfies strict
+            // monotonicity. The earlier ArtisanalSpecialisation
+            // prereq was same-tier and tripped the DAG invariant.
+            ToolKind::CodexTradition => {
+                &[ToolKind::CulturalEncoding, ToolKind::PermanentMasonry]
+            }
+            // GeneCultureCoevolution: AnimalHusbandry (tier-2,
+            // the selective-breeding tradition) +
+            // AbstractMathematics (tier-3, the formal selection
+            // theory needed to predict heritability). Tier-4.
+            ToolKind::GeneCultureCoevolution => {
+                &[ToolKind::AnimalHusbandry, ToolKind::AbstractMathematics]
+            }
+            // EcosystemEngineering: GeneCultureCoevolution
+            // (tier-4, the deliberate-selection apparatus) +
+            // HydraulicWorks (tier-3, planetary-scale water
+            // engineering). Tier-5 — both prereqs strictly lower.
+            // The bio-engineering peer to the transcendence trio.
+            ToolKind::EcosystemEngineering => {
+                &[ToolKind::GeneCultureCoevolution, ToolKind::HydraulicWorks]
+            }
         }
     }
 }

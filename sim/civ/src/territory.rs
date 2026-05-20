@@ -275,12 +275,18 @@ impl Civ {
             .map(|cell| (cell, self.cell_capacity(state, cell, tick, planet)))
             .collect();
 
-        // Two-phase: pass 1 computes per-source decisions
-        // (target neighbours + per-neighbour fertile-to-move),
-        // pass 2 applies them via `migrate_family_to` so each
-        // moved adult drags their proportional dependents (infants
-        // + juveniles) but elders stay rooted. Determinism is
-        // preserved by `BTreeMap` iteration order.
+        // Two-phase: pass 1 computes per-source decisions (target
+        // neighbours + per-neighbour total-to-move), pass 2 applies
+        // them via `migrate_balanced_to` so the move preserves the
+        // source cell's age structure. The earlier family-only model
+        // hollowed out saturated interior cells over centuries:
+        // fertile + dependents bled outward, elders aged in place
+        // without replacement, the cell dropped below the prune
+        // floor, and previously-contiguous territory developed gaps.
+        // Balanced migration drains every bracket proportionally so
+        // source cells stay demographically viable. All units below
+        // are in *total people* (no fertile-vs-total unit mismatch).
+        // Determinism is preserved by `BTreeMap` iteration order.
         let mut moves: Vec<(u32, u32, Pop)> = Vec::new();
         for (&cell, cohort) in &self.region_cohorts {
             let cap = caps.get(&cell).copied().unwrap_or(Pop::ZERO);
@@ -291,15 +297,7 @@ impl Civ {
             if cohort.total() <= pressure_count {
                 continue;
             }
-            // Only fertile + dependents migrate (option 2.b);
-            // elders stay. Cap "movable adults" at the source's
-            // fertile bracket so we never try to send more adults
-            // than the source has.
             let overflow = cohort.total() - pressure_count;
-            let movable_fertile = overflow.min(cohort.fertile);
-            if movable_fertile <= Pop::ZERO {
-                continue;
-            }
             // Compute per-neighbour headroom over claimed
             // neighbours. Headroom is per-cell capacity minus the
             // neighbour's *total* current pop (all brackets count
@@ -325,27 +323,27 @@ impl Civ {
             if headroom_total <= Pop::ZERO || nbr_headrooms.is_empty() {
                 continue;
             }
-            // Total fertile move: 5% of fertile-overflow, capped at
-            // total headroom. Note: the cap is in *people* (total),
-            // so a fertile-only move still respects whole-cohort
-            // capacity since dependents come along on top.
-            let want = movable_fertile * migration_rate;
-            let total_move_f = if want > headroom_total {
+            // Total move: `migration_rate` × overflow, capped at the
+            // sum of neighbour headroom. Units throughout are total
+            // people, matching the headroom cap.
+            let want = overflow * migration_rate;
+            let total_move = if want > headroom_total {
                 headroom_total
             } else {
                 want
             };
             // Distribute proportionally to neighbour headroom.
             for (nbr, h) in nbr_headrooms {
-                let share = total_move_f * (h / headroom_total);
+                let share = total_move * (h / headroom_total);
                 if share > Pop::ZERO {
                     moves.push((cell, nbr, share));
                 }
             }
         }
-        // Pass 2: apply via family-aware migration. We need to
-        // borrow two cohorts at once, so resolve via remove + insert.
-        for (src_cell, dst_cell, fertile_amount) in moves {
+        // Pass 2: apply via balanced migration so source cells
+        // preserve their age structure. We need to borrow two
+        // cohorts at once, so resolve via remove + insert.
+        for (src_cell, dst_cell, total_amount) in moves {
             if src_cell == dst_cell {
                 continue;
             }
@@ -358,7 +356,7 @@ impl Civ {
                 self.region_cohorts.insert(src_cell, src);
                 continue;
             };
-            src.migrate_family_to(&mut dst, fertile_amount);
+            src.migrate_balanced_to(&mut dst, total_amount);
             self.region_cohorts.insert(src_cell, src);
             self.region_cohorts.insert(dst_cell, dst);
         }
@@ -417,13 +415,20 @@ impl Civ {
         let scaled = self.tool_expansion_rate_bonus() * Real::from_int(10);
         let scaled_floor = u64::try_from((scaled.raw().to_bits() >> 32).max(0)).unwrap_or(0);
         let budget: u64 = 1u64.saturating_add(scaled_floor);
-        // Same tech-augmented threshold as `migrate_intra_civ` —
-        // high-tech civs spill over later (denser cores, less
-        // frontier-grab pressure per tick).
-        let pressure_threshold = crate::demographics::tech_augmented_migration_threshold(
-            self.migration_pressure_threshold,
-            self.tool_capacity_multiplier(),
-        );
+        // Frontier expansion uses the *base* (non-tech-augmented)
+        // pressure threshold. The augmented threshold is right for
+        // internal migration (a high-tech civ tolerates a denser
+        // core before redistributing inward), but applying it to
+        // expansion too creates a pathology: at saturated tech the
+        // augmented threshold clamps to 0.97, and `migrate_inter_cell`
+        // (running in the same tick, draining 5% of fertile overflow
+        // toward claimed neighbours with headroom) keeps cells in
+        // logistic equilibrium just below 0.97 forever. Visible
+        // adjacent habitable land never gets claimed because no cell
+        // ever crosses the trigger. Migration and expansion are
+        // distinct responses to pressure — let them have distinct
+        // thresholds.
+        let pressure_threshold = self.migration_pressure_threshold;
         let seed_fraction = Real::percent(20);
 
         let caps: BTreeMap<u32, Pop> = self
@@ -484,8 +489,25 @@ impl Civ {
             // cells; elders stay) as the founding seed — enough
             // that the new frontier cell isn't instantly pruned,
             // but small enough that the source cell remains dense.
+            //
+            // Seed floor: if the overflow×20% would leave a sub-
+            // prune-threshold seed (and the source has at least one
+            // fertile adult to spare), bump the seed to a small
+            // viable founding band. Without this, tiny-overflow
+            // claims on low-cap frontier cells stake the territory
+            // for one tick and then get pruned the next, leaving
+            // "phantom" cell flickers on heterogeneous terrain.
+            // The 1-fertile-person floor (with dragged dependents,
+            // ~1.5 total) is comfortably above the 0.1 prune
+            // threshold.
             let overflow = count - pressure_count;
-            let seed_fertile = (overflow * seed_fraction).min(fertile_count);
+            let raw_seed = (overflow * seed_fraction).min(fertile_count);
+            let seed_floor = Pop::from_int(1).min(fertile_count);
+            let seed_fertile = if raw_seed >= seed_floor {
+                raw_seed
+            } else {
+                seed_floor
+            };
             if seed_fertile <= Pop::ZERO {
                 continue;
             }

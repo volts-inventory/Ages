@@ -252,19 +252,28 @@ pub fn render_world_frame_styled(
             let active_owners: Option<Vec<u32>> =
                 owners_here.map(|c| c.iter().copied().filter(|&id| id > 0).collect());
             let active_centroid = centroids.get(&cell).copied().filter(|&id| id > 0);
+            // Per-cell ANSI attribute prefix for civ-coloured cells.
+            // Density mode encodes pop/cap in colour intensity (bold
+            // ≥ 60%, normal ≥ 30%, dim < 30%) so the underlying
+            // terrain glyph stays readable. Centroids and non-density
+            // modes always render bold so the capital letter / digit
+            // pops above the terrain.
+            let mut civ_attr: &str = "1;";
             let (symbol, color_civ) = if let Some(civ_id) = active_centroid {
                 (centroid_symbol(civ_id), Some(civ_id))
             } else if active_owners.as_ref().is_some_and(|c| c.len() > 1) {
                 ('#', None)
             } else if let Some(claims) = active_owners.as_ref().filter(|c| !c.is_empty()) {
                 let civ_id = claims[0];
-                // Density mode replaces the digit with a Unicode
-                // block glyph (` ░ ▒ ▓ █`) sized to pop / cap;
-                // identity is conveyed by colour (if use_color) or
-                // by the centroid letter at the capital. Without
-                // density mode the cell-rendering branches stay on
-                // their existing per-mode logic — pop_digit on
-                // colored, claim_symbol on mono.
+                // Density mode shows the underlying terrain glyph in
+                // the civ's colour with brightness scaled by
+                // population so a reader sees both *what's there*
+                // (land/coast/peak/plain) and *how settled it is*
+                // (bold vs normal vs dim). Centroid letters still
+                // mark capitals. Without density mode the
+                // cell-rendering branches stay on their existing
+                // per-mode logic — pop_digit on colored, claim_symbol
+                // on mono.
                 let symbol = if density_mode {
                     let claim = civ_by_id.get(&civ_id);
                     let pop = claim
@@ -276,11 +285,15 @@ pub fn render_world_frame_styled(
                         .map(pop_q32_to_f64)
                         .filter(|c| *c > 0.0)
                         .unwrap_or(frame_max_pop);
-                    if cap > 0.0 {
-                        density_symbol((pop / cap).clamp(0.0, 1.0))
+                    let ratio = if cap > 0.0 { (pop / cap).clamp(0.0, 1.0) } else { 0.0 };
+                    civ_attr = if ratio >= 0.60 {
+                        "1;"
+                    } else if ratio >= 0.30 {
+                        ""
                     } else {
-                        crate::render::terrain_symbol(pm, r, q, terrain_peak)
-                    }
+                        "2;"
+                    };
+                    crate::render::terrain_symbol(pm, r, q, terrain_peak)
                 } else if use_color {
                     // Colored mode: civ identity is conveyed by
                     // colour, so the digit is freed up to encode
@@ -316,8 +329,19 @@ pub fn render_world_frame_styled(
                 };
                 (symbol, Some(civ_id))
             } else if nomad_set.contains(&cell) {
-                // Nomadic species presence (no civ claim).
-                ('0', None)
+                // Nomadic species presence (no civ claim). In
+                // colored mode render the underlying terrain glyph
+                // (the colour-emission branch tints it bright white
+                // so nomads pop against terrain while still showing
+                // *where* they're roaming). In mono / markdown mode
+                // there's no colour to carry identity, so keep the
+                // legacy `0` glyph as the nomad marker.
+                let sym = if use_color {
+                    crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                } else {
+                    '0'
+                };
+                (sym, None)
             } else {
                 (crate::render::terrain_symbol(pm, r, q, terrain_peak), None)
             };
@@ -325,10 +349,20 @@ pub fn render_world_frame_styled(
                 if let Some(civ_id) = color_civ {
                     let _ = write!(
                         line,
-                        "\x1b[1;38;5;{}m{}\x1b[0m",
+                        "\x1b[{}38;5;{}m{}\x1b[0m",
+                        civ_attr,
                         civ_color_code(civ_id),
                         symbol
                     );
+                } else if nomad_set.contains(&cell) && active_centroid.is_none() {
+                    // Nomadic species presence has no civ identity,
+                    // so it doesn't get a civ palette colour, but it
+                    // also shouldn't fade into the muted terrain
+                    // palette. Render the terrain glyph in bold
+                    // bright white (256-col index 15) so a nomad
+                    // marker reads as "people here, no flag" while
+                    // still showing what landscape they're on.
+                    let _ = write!(line, "\x1b[1;38;5;15m{symbol}\x1b[0m");
                 } else if let Some(tcolor) = terrain_color_code(symbol) {
                     // Terrain glyphs get their own
                     // 256-color codes when `use_color` is on,
@@ -748,25 +782,30 @@ mod tests {
     }
 
     #[test]
-    fn density_mode_replaces_digits_with_block_glyphs() {
+    fn density_mode_keeps_terrain_glyph_and_varies_civ_color_intensity() {
         // In density mode the per-cell digit ladder (1-9) is
-        // replaced by Unicode block glyphs (░ ▒ ▓ █) sized by
-        // pop / cap. Centroid letters still mark capitals.
+        // replaced by the underlying terrain glyph painted in the
+        // civ's colour with brightness scaled by pop / cap (bold ≥
+        // 60%, normal ≥ 30%, dim < 30%). The reader sees both
+        // *what's there* (terrain) and *how settled it is*
+        // (intensity). Centroid letters still mark capitals.
         let cap = 1_000.0_f64;
         let scale = (1u64 << 32) as f64;
         let mut pops = BTreeMap::new();
-        pops.insert(0u32, (cap * scale) as i128); // centroid
-        pops.insert(1u32, (cap * scale) as i128); // 100% → █
-        pops.insert(2u32, (0.4 * cap * scale) as i128); // 40% → ▒
+        pops.insert(0u32, (cap * scale) as i128); // centroid 100%
+        pops.insert(1u32, (cap * scale) as i128); // 100% → bold civ colour
+        pops.insert(2u32, (0.4 * cap * scale) as i128); // 40% → normal civ colour
+        pops.insert(3u32, (0.1 * cap * scale) as i128); // 10% → dim civ colour
         let mut caps = BTreeMap::new();
         caps.insert(0u32, (cap * scale) as i128);
         caps.insert(1u32, (cap * scale) as i128);
         caps.insert(2u32, (cap * scale) as i128);
+        caps.insert(3u32, (cap * scale) as i128);
         let frame = WorldFrame {
             tick: 100,
             civs: vec![CivClaim {
                 civ_id: 1,
-                claimed_cells: BTreeSet::from([0, 1, 2]),
+                claimed_cells: BTreeSet::from([0, 1, 2, 3]),
                 centroid: 0,
                 cell_populations_q32: pops,
                 cell_capacities_q32: caps,
@@ -780,12 +819,34 @@ mod tests {
             "",
             FrameStyle {
                 density: true,
+                use_color: true,
                 ..Default::default()
             },
         );
+        let civ_color = civ_color_code(1);
         assert!(s.contains('A'), "centroid letter still present");
-        assert!(s.contains('\u{2588}'), "100% cell renders as █");
-        assert!(s.contains('\u{2592}'), "40% cell renders as ▒");
+        // Test grid has elev=0, depth=0, no planet metadata; the
+        // terrain symbol for these cells is `≡` (gas band).
+        let terrain = '\u{2261}';
+        // 100% cell → bold civ colour on terrain glyph
+        assert!(
+            s.contains(&format!("\x1b[1;38;5;{civ_color}m{terrain}")),
+            "100% cell renders as bold civ-colour terrain glyph"
+        );
+        // 40% cell → normal civ colour on terrain glyph
+        assert!(
+            s.contains(&format!("\x1b[38;5;{civ_color}m{terrain}")),
+            "40% cell renders as normal civ-colour terrain glyph"
+        );
+        // 10% cell → dim civ colour on terrain glyph
+        assert!(
+            s.contains(&format!("\x1b[2;38;5;{civ_color}m{terrain}")),
+            "10% cell renders as dim civ-colour terrain glyph"
+        );
+        // No block-shade glyphs should appear from the per-cell
+        // rendering path now that density is conveyed by intensity.
+        assert!(!s.contains('\u{2588}'), "no █ from claimed cells");
+        assert!(!s.contains('\u{2593}'), "no ▓ from claimed cells");
         // No pop-digits should leak through in density mode.
         assert!(!s.contains(" 9 "), "density mode shouldn't emit `9` digits");
         assert!(!s.contains(" 5 "), "density mode shouldn't emit `5` digits");

@@ -277,8 +277,74 @@ impl ToolKind {
             // ocean methane / ammonia substrate) doesn't hit this
             // unless / until it confirms a substrate-equivalent
             // (template id 1 fires for any thermal-signature
-            // template under the per-substrate ignition mapping).
-            ToolKind::ExperimentApparatus => &[(1, ChannelKind::InfraredThermal)],
+            // ExperimentApparatus: the universal "controlled
+            // experiment" gateway. The prior `(1, InfraredThermal)`
+            // gate was bug-shaped — template 1 is `fire`, whose
+            // signature requires `Above(Oxidiser, 0)`, and so it
+            // never triggers on a non-oxidising world (CO₂, methane,
+            // ammonia, etc.). A civ on Lumen-h's 95% CO₂ atmosphere
+            // could never confirm fire and was permanently locked
+            // out of tier-3+ — the "stuck at 22 tools" plateau the
+            // viewport surfaces. Swapped to `tidal_extremum`
+            // (template 14, perceivable by Tactile which every
+            // species has access to via baseline modalities) so the
+            // gateway is reachable on every habitable world. Tidal
+            // periodicity is also a more honest "you've fit a
+            // quantitative-periodic law and so can engineer
+            // measurement apparatus" gate than a thermal-only one.
+            ToolKind::ExperimentApparatus => &[(14, ChannelKind::Tactile)],
+            // HerbalMedicine: confirmed `surface_water` (template 5)
+            // on the Tactile channel — universal access on any
+            // ocean / lake-bearing world. Plant pharmacology
+            // bootstraps from watching what grows where water
+            // pools, even pre-formal-science.
+            ToolKind::HerbalMedicine => &[(5, ChannelKind::Tactile)],
+            // AcousticEngineering: confirmed `surface_water` (5)
+            // tagged AcousticAir — same template as RemoteAcoustic's
+            // prereq, so a civ that has built RemoteAcoustic
+            // already satisfies this gate trivially. Keeps the
+            // build path linear after the masonry/sensor pair are
+            // both in.
+            ToolKind::AcousticEngineering => &[(5, ChannelKind::AcousticAir)],
+            // AnimalHusbandry: confirmed `surface_water` (5) on
+            // Tactile — same universal water-presence gate. (A
+            // species observing herd-watering behaviour fits a law
+            // about animals + water.)
+            ToolKind::AnimalHusbandry => &[(5, ChannelKind::Tactile)],
+            // PreservedFood: confirmed `surface_water` (5). Brine,
+            // ferment liquor, sun-drying all anchor on the same
+            // universal water-cycle observations.
+            ToolKind::PreservedFood => &[(5, ChannelKind::Tactile)],
+            // BiomimeticDesign: confirmed `tidal_extremum` (14) —
+            // the periodic phenomena that anchor formal-mathematics
+            // abstraction. Same gate as AbstractMathematics' lineage.
+            ToolKind::BiomimeticDesign => &[(14, ChannelKind::Tactile)],
+            // HydraulicWorks: confirmed `surface_water` (5).
+            // Engineering with water requires having fit *some*
+            // law about how water moves.
+            ToolKind::HydraulicWorks => &[(5, ChannelKind::Tactile)],
+            // PrecisionInstruments: confirmed `tidal_extremum` (14).
+            // The tradition of periodic-phenomenon measurement.
+            ToolKind::PrecisionInstruments => &[(14, ChannelKind::Tactile)],
+            // DistributedNetworks: confirmed `surface_water` (5)
+            // as a stand-in for "long-distance phenomena
+            // propagation". No specific physics gate beyond what
+            // its tier-2/3 prereqs already enforce.
+            ToolKind::DistributedNetworks => &[(5, ChannelKind::Tactile)],
+            // WindPower: confirmed surface_water (5) — wind /
+            // water-flow analogy. Universal water-presence gate.
+            ToolKind::WindPower => &[(5, ChannelKind::Tactile)],
+            // CodexTradition: confirmed tidal_extremum (14) — the
+            // periodic-phenomena marker for formal record-keeping.
+            ToolKind::CodexTradition => &[(14, ChannelKind::Tactile)],
+            // GeneCultureCoevolution: confirmed tidal_extremum (14)
+            // — same formal-mathematics gate as AbstractMathematics
+            // (its tool prereq).
+            ToolKind::GeneCultureCoevolution => &[(14, ChannelKind::Tactile)],
+            // EcosystemEngineering: confirmed surface_water (5)
+            // — planetary water-cycle mastery is the prerequisite
+            // for closing the larger biogeochemical cycles.
+            ToolKind::EcosystemEngineering => &[(5, ChannelKind::Tactile)],
         }
     }
 }

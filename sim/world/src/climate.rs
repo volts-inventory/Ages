@@ -119,18 +119,34 @@ pub fn seasonal_temperature_offset(
 /// faster outside their narrow comfort range than alpine species.
 #[must_use]
 pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
-    let deviation = if temperature_k > planet.mean_temperature {
-        temperature_k - planet.mean_temperature
-    } else {
-        planet.mean_temperature - temperature_k
-    };
-    let half_grad = planet.temperature_gradient / Real::from_int(2);
-    let full_grad = planet.temperature_gradient;
-    if deviation <= half_grad {
-        Real::ONE
-    } else if deviation <= full_grad {
-        Real::percent(92)
-    } else {
-        Real::percent(80)
+    // Comfort band: the substrate's biochemistry-supporting
+    // temperature range. Cells inside this range run at full
+    // capacity; cells outside decay smoothly toward a 0.30 floor.
+    // The substrate's temperature range varies enormously across
+    // chemistries — Aqueous 250-400 K, Ammoniacal 195-240 K,
+    // Hydrocarbon 90-180 K, Silicate 800-1500 K — so a species's
+    // "extreme cold" is its biochemistry's hot end on another
+    // world. Replaces the prior 3-bucket (1.00/0.92/0.80) cliff,
+    // which floored at 0.80 and so never visibly differentiated
+    // equatorial vs polar cells on planets with narrow gradients.
+    let (low_k_i, high_k_i) = planet.metabolic_substrate.temperature_range();
+    let low_k = Real::from_int(low_k_i);
+    let high_k = Real::from_int(high_k_i);
+    if temperature_k >= low_k && temperature_k <= high_k {
+        return Real::ONE;
     }
+    // Outside the substrate band: decay linearly over the same
+    // band-width again before hitting the floor. So a substrate
+    // with a 150 K band tolerates ~150 K of overshoot before
+    // capacity drops to the 0.30 floor.
+    let band = (high_k - low_k).max(Real::from_int(10));
+    let overshoot = if temperature_k < low_k {
+        low_k - temperature_k
+    } else {
+        temperature_k - high_k
+    };
+    let floor = Real::from_ratio(3, 10);
+    let span = Real::ONE - floor;
+    let normalised = (overshoot / band).clamp01();
+    Real::ONE - span * normalised
 }

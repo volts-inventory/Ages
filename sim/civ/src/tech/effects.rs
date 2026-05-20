@@ -97,6 +97,48 @@ impl ToolKind {
             // is the capacity headline (programmable bulk materials
             // — pre-tested for arbitrary load specs).
             ToolKind::MetamaterialLattice => Real::percent(125),
+            // Alternate-path additions ─────────────────────────
+            // AnimalHusbandry: selective breeding 2-3× over wild
+            // domestication — significant tier-2 density bump for
+            // biota-rich worlds. Below AnimalSymbiosis's 2.5× since
+            // it stacks on top of that (the prereq).
+            ToolKind::AnimalHusbandry => Real::percent(140),
+            // PreservedFood: small capacity lift (better surplus
+            // → bigger population that survives lean seasons), but
+            // the headline effect is on food_crisis_resistance.
+            ToolKind::PreservedFood => Real::percent(110),
+            // BiomimeticDesign: clever construction — modest
+            // capacity bump from copying biological efficiency.
+            ToolKind::BiomimeticDesign => Real::percent(110),
+            // HydraulicWorks: irrigation + reservoir buffering at
+            // scale — significant tier-3 boost. Sits between
+            // FluidControl (1.20) and Mechanisation (10.0).
+            ToolKind::HydraulicWorks => Real::percent(150),
+            // PrecisionInstruments: indirect — through the
+            // discovery rate it unlocks (faster law-fitting →
+            // faster downstream tools). Direct capacity impact
+            // small.
+            ToolKind::PrecisionInstruments => Real::percent(105),
+            // DistributedNetworks: economic coordination at scale.
+            // Modest capacity lift; main effect on cohesion +
+            // literacy.
+            ToolKind::DistributedNetworks => Real::percent(115),
+            // WindPower: pre-combustion mechanical energy — sails
+            // + windmills mill grain, lift water, drive pumps.
+            // Modest tier-2 capacity bump, mostly through saved
+            // labour.
+            ToolKind::WindPower => Real::percent(115),
+            // CodexTradition: indirect — the lifted literacy +
+            // transmission do most of the work. Small direct
+            // capacity lift through better record-keeping +
+            // administration.
+            ToolKind::CodexTradition => Real::percent(108),
+            ToolKind::GeneCultureCoevolution => Real::from_int(3),
+            // EcosystemEngineering: planetary-scale capacity
+            // engineering. Top of the alt-path. Comparable to
+            // MetamaterialLattice (1.25) but flavour-distinct —
+            // bio-engineering rather than substrate engineering.
+            ToolKind::EcosystemEngineering => Real::from_int(2),
             _ => Real::ONE,
         }
     }
@@ -118,6 +160,27 @@ impl ToolKind {
             ToolKind::BulkStorage => Real::percent(12),
             ToolKind::BulkCultivation => Real::percent(8),
             ToolKind::AnimalSymbiosis => Real::percent(5),
+            // HerbalMedicine: famine fallback (edible-plant
+            // catalogue doubles as starvation-tier food).
+            ToolKind::HerbalMedicine => Real::percent(4),
+            // AnimalHusbandry: insurance via standing herd. Below
+            // BulkStorage's 12 but real.
+            ToolKind::AnimalHusbandry => Real::percent(8),
+            // PreservedFood: headline effect. Drying / brining /
+            // fermentation buffer lean seasons — matches BulkStorage
+            // calibration since the function is identical, just the
+            // chemistry differs (no kiln required).
+            ToolKind::PreservedFood => Real::percent(10),
+            // HydraulicWorks: reservoir buffering smooths drought
+            // years.
+            ToolKind::HydraulicWorks => Real::percent(8),
+            // GeneCultureCoevolution: selective-breeding-driven
+            // crop + herd resilience — the headline late-game
+            // food-security tool.
+            ToolKind::GeneCultureCoevolution => Real::percent(15),
+            // EcosystemEngineering: planetary food security
+            // through closed nutrient cycles.
+            ToolKind::EcosystemEngineering => Real::percent(20),
             _ => Real::ZERO,
         }
     }
@@ -160,6 +223,9 @@ impl ToolKind {
             // observation as a tactical advantage (rangefinding,
             // forward intelligence).
             ToolKind::DistanceImaging => Real::percent(5),
+            // BiomimeticDesign: clever weapon + armour
+            // construction (claws, spines, lamellar from biology).
+            ToolKind::BiomimeticDesign => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -181,6 +247,9 @@ impl ToolKind {
             ToolKind::PermanentMasonry => Real::percent(5),
             ToolKind::FluidControl => Real::percent(5),
             ToolKind::UrbanConstruction => Real::percent(5),
+            // EcosystemEngineering: closed nutrient cycles +
+            // engineered biome buffer extreme seasons.
+            ToolKind::EcosystemEngineering => Real::percent(15),
             _ => Real::ZERO,
         }
     }
@@ -221,6 +290,11 @@ impl ToolKind {
             // detection).
             ToolKind::MetamaterialLattice => Real::percent(10),
             ToolKind::BioelectricResonator => Real::percent(5),
+            // EcosystemEngineering: closed biogeochemical cycles
+            // dampen environmental catastrophe propagation —
+            // engineered biota absorb spills, reroute floods,
+            // metabolise toxins.
+            ToolKind::EcosystemEngineering => Real::percent(15),
             _ => Real::ZERO,
         }
     }
@@ -337,6 +411,18 @@ impl ToolKind {
                 Real::percent(10),
                 Real::percent(15),
             ],
+            // HerbalMedicine: meaningful but smaller than
+            // BasicHealing — herbal pharmacopoeia helps but
+            // doesn't substitute for the broader healing tradition.
+            // Tilted toward infant + fertile (childbirth, wound
+            // care) over elder (geriatric care needs more than
+            // herbs).
+            ToolKind::HerbalMedicine => [
+                Real::percent(8),
+                Real::percent(5),
+                Real::percent(5),
+                Real::percent(2),
+            ],
             _ => zero,
         }
     }
@@ -374,6 +460,21 @@ impl ToolKind {
             // (knowledge-access at network speed).
             ToolKind::DigitalComputation => Real::percent(10),
             ToolKind::InformationNetworking => Real::percent(10),
+            // AcousticEngineering: amphitheatres / bell towers /
+            // public oratory carry oral curriculum further, so
+            // literacy lifts even before mass writing.
+            ToolKind::AcousticEngineering => Real::percent(8),
+            // DistributedNetworks: news + notice propagation lifts
+            // literacy across a polity.
+            ToolKind::DistributedNetworks => Real::percent(10),
+            // PrecisionInstruments: clean measurement reinforces
+            // formal-quantitative literacy (every craftsperson
+            // now reads a calibrated scale).
+            ToolKind::PrecisionInstruments => Real::percent(5),
+            // CodexTradition: bound-volume codices make recorded
+            // knowledge durable and portable. Headline tier-3
+            // literacy boost.
+            ToolKind::CodexTradition => Real::percent(12),
             _ => Real::ZERO,
         }
     }
@@ -421,6 +522,10 @@ impl ToolKind {
             // amphibian platforms also speed expansion across
             // mixed terrain.
             ToolKind::AmphibiousConstruction => Real::percent(5),
+            // WindPower: sail-driven exploration. Same scale as
+            // WatercraftConstruction since they share the rigging
+            // technology.
+            ToolKind::WindPower => Real::percent(10),
             _ => Real::ZERO,
         }
     }
@@ -464,6 +569,15 @@ impl ToolKind {
             // acoustic signalling is the pre-EM telegraphy
             // (drum / horn networks).
             ToolKind::RemoteAcoustic => Real::percent(5),
+            // DistributedNetworks: relay-station news lifts
+            // transmission fidelity across the polity.
+            ToolKind::DistributedNetworks => Real::percent(8),
+            // CodexTradition: bound volumes are the durable
+            // long-distance transmission medium. Sits between
+            // CulturalEncoding (+10) and LongRangeCommunication
+            // (+15) — codices are the pre-radio extreme of
+            // recorded transmission.
+            ToolKind::CodexTradition => Real::percent(12),
             _ => Real::ZERO,
         }
     }
@@ -515,6 +629,16 @@ impl ToolKind {
             ToolKind::ThermalSensor => Real::percent(5),
             ToolKind::FieldSensor => Real::percent(5),
             ToolKind::MagneticSensor => Real::percent(5),
+            // PrecisionInstruments: headline tier-4 discovery
+            // booster — clean measurement is the scientific-
+            // revolution lever. Stacks alongside AnalyticalEngines'
+            // computational lift so a civ that builds both gets
+            // ~+0.30 aggregate.
+            ToolKind::PrecisionInstruments => Real::percent(15),
+            // CodexTradition: cross-generation knowledge
+            // accumulation accelerates law-fitting (each generation
+            // reads its predecessors' results).
+            ToolKind::CodexTradition => Real::percent(8),
             _ => Real::ZERO,
         }
     }
@@ -545,6 +669,19 @@ impl ToolKind {
             // Tier-5: InformationNetworking +0.10 (network identity
             // — the modern "imagined community" lifter).
             ToolKind::InformationNetworking => Real::percent(10),
+            // AcousticEngineering: synchronised civic signalling
+            // (bells, horns, public address) coordinates a polity
+            // larger than face-to-face range, lifting cohesion at
+            // tier-3.
+            ToolKind::AcousticEngineering => Real::percent(7),
+            // DistributedNetworks: the polity-binding tool — late
+            // tier-4 cohesion lift that doesn't depend on the
+            // industrial chemistry chain.
+            ToolKind::DistributedNetworks => Real::percent(12),
+            // HydraulicWorks: shared infrastructure as identity
+            // (the irrigation canal everyone tends, the aqueduct
+            // every district drinks from).
+            ToolKind::HydraulicWorks => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -618,6 +755,15 @@ impl ToolKind {
             // NICUs); GeneticManipulation (fertility treatment).
             ToolKind::AdvancedMedicine => Real::percent(10),
             ToolKind::GeneticManipulation => Real::percent(5),
+            // AnimalHusbandry: dietary protein from herd milk +
+            // meat improves fertile-bracket conception rates.
+            ToolKind::AnimalHusbandry => Real::percent(4),
+            // PreservedFood: consistent year-round nutrition
+            // (no hungry-spring gap depressing fertility).
+            ToolKind::PreservedFood => Real::percent(3),
+            // HerbalMedicine: small obstetric improvements
+            // (post-partum hygiene, fever tea).
+            ToolKind::HerbalMedicine => Real::percent(3),
             _ => Real::ZERO,
         }
     }

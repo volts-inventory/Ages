@@ -192,6 +192,48 @@ impl Cohort {
         move_f + move_i + move_j
     }
 
+    /// Migrate a proportional slice of every age bracket to `dst`,
+    /// preserving the source cohort's age structure. Unlike
+    /// `migrate_family_to` — which models a family unit relocating
+    /// (fertile + their dependents move, elders stay rooted) — this
+    /// is the right primitive for the slow, sustained intra-civ
+    /// rebalancing flow between adjacent claimed cells: drain only
+    /// the productive brackets and source cells demographically
+    /// collapse (elders age out without fertile to replace them, the
+    /// cell falls below the prune floor, and saturated cores
+    /// gradually hollow into pruned holes inside contiguous
+    /// territory).
+    ///
+    /// `total_to_move` is the target headcount across all brackets;
+    /// every bracket is scaled by `total_to_move / self.total()` so
+    /// the move respects the current age mix. Returns the actual
+    /// total that moved.
+    pub fn migrate_balanced_to(&mut self, dst: &mut Cohort, total_to_move: Pop) -> Pop {
+        let total = self.total();
+        if total <= Pop::ZERO || total_to_move <= Pop::ZERO {
+            return Pop::ZERO;
+        }
+        let move_total = if total_to_move > total {
+            total
+        } else {
+            total_to_move
+        };
+        let frac = move_total / total;
+        let move_i = self.infant * frac;
+        let move_j = self.juvenile * frac;
+        let move_f = self.fertile * frac;
+        let move_e = self.elder * frac;
+        self.infant = (self.infant - move_i).max(Pop::ZERO);
+        self.juvenile = (self.juvenile - move_j).max(Pop::ZERO);
+        self.fertile = (self.fertile - move_f).max(Pop::ZERO);
+        self.elder = (self.elder - move_e).max(Pop::ZERO);
+        dst.infant = dst.infant + move_i;
+        dst.juvenile = dst.juvenile + move_j;
+        dst.fertile = dst.fertile + move_f;
+        dst.elder = dst.elder + move_e;
+        move_i + move_j + move_f + move_e
+    }
+
     /// Add another cohort's brackets into self in-place. Civ
     /// membership is preserved on `self`. Used by refugee
     /// merging — when a civ sheds a cell, the shed cohort's pop
@@ -649,6 +691,51 @@ mod tests {
                 Real::percent(90),
             ],
         }
+    }
+
+    #[test]
+    fn migrate_balanced_preserves_age_structure() {
+        // Source cohort with skewed age mix; balanced migration
+        // should pull every bracket at the same fractional rate so
+        // the source's age ratios stay constant before/after.
+        // Q32.32 multiplication introduces tiny rounding so we
+        // compare with a ~1e-6 tolerance per bracket.
+        let mut src = Cohort::empty();
+        src.infant = Pop::from_int(10);
+        src.juvenile = Pop::from_int(20);
+        src.fertile = Pop::from_int(50);
+        src.elder = Pop::from_int(20);
+        let mut dst = Cohort::empty();
+        let moved = src.migrate_balanced_to(&mut dst, Pop::from_int(20));
+        let tol = Pop::from_ratio(1, 1_000_000);
+        let close = |a: Pop, b: Pop| {
+            let d = if a > b { a - b } else { b - a };
+            d <= tol
+        };
+        assert!(close(moved, Pop::from_int(20)));
+        assert!(close(src.infant, Pop::from_int(8)));
+        assert!(close(src.juvenile, Pop::from_int(16)));
+        assert!(close(src.fertile, Pop::from_int(40)));
+        assert!(close(src.elder, Pop::from_int(16)));
+        assert!(close(dst.infant, Pop::from_int(2)));
+        assert!(close(dst.juvenile, Pop::from_int(4)));
+        assert!(close(dst.fertile, Pop::from_int(10)));
+        assert!(close(dst.elder, Pop::from_int(4)));
+    }
+
+    #[test]
+    fn migrate_balanced_caps_at_source_total() {
+        // Asking for more than the source holds drains the source
+        // entirely without overshoot.
+        let mut src = Cohort::empty();
+        src.infant = Pop::from_int(5);
+        src.fertile = Pop::from_int(15);
+        let mut dst = Cohort::empty();
+        let moved = src.migrate_balanced_to(&mut dst, Pop::from_int(100));
+        assert_eq!(moved, Pop::from_int(20));
+        assert_eq!(src.total(), Pop::ZERO);
+        assert_eq!(dst.infant, Pop::from_int(5));
+        assert_eq!(dst.fertile, Pop::from_int(15));
     }
 
     #[test]

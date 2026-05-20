@@ -990,6 +990,161 @@ impl ToolKind {
                 ManipulationKind::ChemicalSecretion,
                 ManipulationKind::ElectricDischarge,
             ],
+            // HerbalMedicine: harvesting + processing plant matter.
+            // Broad gate — any species that can grasp, ingest, or
+            // chemically process plant tissue can develop an herbal
+            // pharmacopoeia. ChemicalSecretion species brew via
+            // their own secretions (digestive / metabolic). Burrowers
+            // collect roots / fungi. Inclusive at tier-2 by design.
+            ToolKind::HerbalMedicine => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::Burrow,
+                ManipulationKind::FluidJet,
+            ],
+            // AcousticEngineering: shaping acoustic chambers /
+            // resonators. Needs precise built-form manipulation.
+            // ToolExtension is the canonical match (chisels + plumb
+            // lines on stone); LimbGrasp / Tentacle / Trunk all
+            // qualify. WebConstruct species can weave resonant
+            // membrane structures. Burrowers carve sound chambers.
+            ToolKind::AcousticEngineering => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Burrow,
+            ],
+            // AnimalHusbandry: gentle herding, handling, breeding
+            // selection. Broad gate at tier-2 — any species that
+            // can interact with other animals can build a herd
+            // economy. ChemicalSecretion species use pheromones to
+            // direct herds.
+            ToolKind::AnimalHusbandry => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::TonguePrehensile,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // PreservedFood: cut, brine, dry, ferment. Broad
+            // gate. ChemicalSecretion species literally secrete
+            // pickling acids / fermentative biota.
+            ToolKind::PreservedFood => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::MouthBeak,
+                ManipulationKind::Mandible,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::FluidJet,
+                ManipulationKind::Burrow,
+            ],
+            // BiomimeticDesign: detailed structural replication of
+            // biological forms. ToolExtension + LimbGrasp /
+            // Tentacle / Trunk handle the build; WebConstruct
+            // species are *naturally* biomimetic engineers.
+            ToolKind::BiomimeticDesign => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Mandible,
+            ],
+            // HydraulicWorks: stone-cutting + aqueduct lining.
+            // ToolExtension + the large-grasp body plans. Burrowers
+            // dig channels.
+            ToolKind::HydraulicWorks => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::Burrow,
+                ManipulationKind::FluidJet,
+            ],
+            // PrecisionInstruments: very fine manipulation. Narrow
+            // gate. LimbGrasp / Tentacle / ToolExtension are the
+            // calibrated-manipulation modes; WebConstruct can weave
+            // calibrated structures. ChemicalSecretion can produce
+            // narrow-gauge reagent dispensers.
+            ToolKind::PrecisionInstruments => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // DistributedNetworks: relay-station construction +
+            // signal-handler training. ToolExtension + broad
+            // grasping modes — same gate as TradeNetworks.
+            ToolKind::DistributedNetworks => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::ElectricDischarge,
+            ],
+            // WindPower: sail rigging / mill construction. Broad
+            // mid-tier gate. WebConstruct species rig
+            // membrane-and-cord wind-catchers natively.
+            ToolKind::WindPower => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Mandible,
+            ],
+            // CodexTradition: bookbinding / codex fabrication —
+            // requires precise built-form construction. Same
+            // narrow gate as PrecisionInstruments.
+            ToolKind::CodexTradition => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // GeneCultureCoevolution: directed breeding + formal
+            // recordkeeping. Same gate as AnimalHusbandry but
+            // tighter since formal selection theory needs the
+            // record-keeping apparatus.
+            ToolKind::GeneCultureCoevolution => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::MouthBeak,
+            ],
+            // EcosystemEngineering: planetary-scale biosphere
+            // management. Broad species participation possible —
+            // ChemicalSecretion species directly emit bio-active
+            // compounds, FluidJet for ocean engineering,
+            // Burrow for soil / subsurface, LimbGrasp + Tentacle
+            // for surface construction.
+            ToolKind::EcosystemEngineering => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::FluidJet,
+                ManipulationKind::Burrow,
+            ],
         }
     }
 }
