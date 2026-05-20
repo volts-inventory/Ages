@@ -67,8 +67,8 @@ pub struct GravityFlow {
     /// pre-coupling behaviour exactly.
     ///
     /// Pair-flux preserves mass conservation: the same `flux` is
-    /// applied with opposite signs to donor and acceptor, so Σ
-    /// water_depth is conserved bit-exactly.
+    /// applied with opposite signs to donor and acceptor, so the
+    /// total `water_depth` is conserved bit-exactly.
     pub momentum_k: Real,
 }
 
@@ -249,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)] // `wet` (seed cell) vs `west`/`east` neighbours.
     fn gravity_flow_couples_to_wind_velocity() {
         // Flat terrain + a uniform water column + a uniform eastward
         // wind. Without wind coupling water would stay put forever.
