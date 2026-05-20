@@ -123,6 +123,22 @@ impl ToolKind {
             // Modest capacity lift; main effect on cohesion +
             // literacy.
             ToolKind::DistributedNetworks => Real::percent(115),
+            // WindPower: pre-combustion mechanical energy — sails
+            // + windmills mill grain, lift water, drive pumps.
+            // Modest tier-2 capacity bump, mostly through saved
+            // labour.
+            ToolKind::WindPower => Real::percent(115),
+            // CodexTradition: indirect — the lifted literacy +
+            // transmission do most of the work. Small direct
+            // capacity lift through better record-keeping +
+            // administration.
+            ToolKind::CodexTradition => Real::percent(108),
+            // GeneCultureCoevolution: formal selection theory
+            // applied to crops + herds. Big tier-4 capacity lift,
+            // comparable to industrial chemistry (3×) since
+            // controlled breeding underwrites the Green Revolution
+            // density jump in real history.
+            ToolKind::GeneCultureCoevolution => Real::from_int(3),
             _ => Real::ONE,
         }
     }
@@ -158,6 +174,10 @@ impl ToolKind {
             // HydraulicWorks: reservoir buffering smooths drought
             // years.
             ToolKind::HydraulicWorks => Real::percent(8),
+            // GeneCultureCoevolution: selective-breeding-driven
+            // crop + herd resilience — the headline late-game
+            // food-security tool.
+            ToolKind::GeneCultureCoevolution => Real::percent(15),
             _ => Real::ZERO,
         }
     }
@@ -440,6 +460,10 @@ impl ToolKind {
             // formal-quantitative literacy (every craftsperson
             // now reads a calibrated scale).
             ToolKind::PrecisionInstruments => Real::percent(5),
+            // CodexTradition: bound-volume codices make recorded
+            // knowledge durable and portable. Headline tier-3
+            // literacy boost.
+            ToolKind::CodexTradition => Real::percent(12),
             _ => Real::ZERO,
         }
     }
@@ -487,6 +511,10 @@ impl ToolKind {
             // amphibian platforms also speed expansion across
             // mixed terrain.
             ToolKind::AmphibiousConstruction => Real::percent(5),
+            // WindPower: sail-driven exploration. Same scale as
+            // WatercraftConstruction since they share the rigging
+            // technology.
+            ToolKind::WindPower => Real::percent(10),
             _ => Real::ZERO,
         }
     }
@@ -533,6 +561,12 @@ impl ToolKind {
             // DistributedNetworks: relay-station news lifts
             // transmission fidelity across the polity.
             ToolKind::DistributedNetworks => Real::percent(8),
+            // CodexTradition: bound volumes are the durable
+            // long-distance transmission medium. Sits between
+            // CulturalEncoding (+10) and LongRangeCommunication
+            // (+15) — codices are the pre-radio extreme of
+            // recorded transmission.
+            ToolKind::CodexTradition => Real::percent(12),
             _ => Real::ZERO,
         }
     }
@@ -590,6 +624,10 @@ impl ToolKind {
             // computational lift so a civ that builds both gets
             // ~+0.30 aggregate.
             ToolKind::PrecisionInstruments => Real::percent(15),
+            // CodexTradition: cross-generation knowledge
+            // accumulation accelerates law-fitting (each generation
+            // reads its predecessors' results).
+            ToolKind::CodexTradition => Real::percent(8),
             _ => Real::ZERO,
         }
     }

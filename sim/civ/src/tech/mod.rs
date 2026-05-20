@@ -548,6 +548,31 @@ pub enum ToolKind {
     /// require fire-derived materials, so available on every
     /// world.
     DistributedNetworks,
+
+    /// `WindPower` — sail-power and wind-mills. Tier-2.
+    /// Pre-combustion mechanical energy. Builds on
+    /// `WatercraftConstruction` (the rigging + sail tradition) +
+    /// `FluidGathering` (the engineering intuition for moving
+    /// fluids — air is just a low-density fluid). Capacity +
+    /// expansion-rate lift; a major mid-game energy source for
+    /// no-fire worlds.
+    WindPower,
+
+    /// `CodexTradition` — formal preservation of knowledge in
+    /// bound-volume codices (or non-paper equivalents — scrolls,
+    /// inscribed tablets, woven knot-records). Tier-3. Builds on
+    /// `CulturalEncoding` + `ArtisanalSpecialisation`. Lifts
+    /// transmission fidelity, literacy, and the per-tick discovery
+    /// rate. The non-combustion analogue to print-tradition lifts.
+    CodexTradition,
+
+    /// `GeneCultureCoevolution` — formal selection theory applied
+    /// to herd / crop breeding. Tier-4. Builds on `AnimalHusbandry`
+    /// + `AbstractMathematics`. Big capacity + food-crisis lift —
+    /// the tool that takes selective breeding from craft tradition
+    /// to deliberate population-level engineering. A no-fire,
+    /// no-chemistry route into tier-4 productivity.
+    GeneCultureCoevolution,
 }
 
 /// **Retired :** previously the wall-clock unlock gate.

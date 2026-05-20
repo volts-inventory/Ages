@@ -86,7 +86,7 @@ const DYNAMIC_TOOL_RESOURCE_THRESHOLD: Real = Real::from_int(1);
 
 /// Cadence of the dynamic-tool emergence scan, in ticks.
 /// 600 ticks ≈ 50 sim-years, matching 's template emergence.
-pub const TOOL_EMERGENCE_CHECK_PERIOD_TICKS: u64 = 600;
+pub const TOOL_EMERGENCE_CHECK_PERIOD_TICKS: u64 = 240;
 
 /// Minimum cluster size: the civ must have confirmed at least
 /// this many relations on a single channel before it can propose

@@ -7,7 +7,7 @@ use super::ToolKind;
 use sim_recognition::ChannelKind;
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 67] = [
+    pub const ALL: [ToolKind; 70] = [
         ToolKind::DistanceImaging,
         ToolKind::RemoteAcoustic,
         ToolKind::FieldSensor,
@@ -86,6 +86,9 @@ impl ToolKind {
         ToolKind::HydraulicWorks,
         ToolKind::PrecisionInstruments,
         ToolKind::DistributedNetworks,
+        ToolKind::WindPower,
+        ToolKind::CodexTradition,
+        ToolKind::GeneCultureCoevolution,
     ];
 
     /// Tier-5 tools — the late-game capabilities. Used by 's
@@ -175,6 +178,9 @@ impl ToolKind {
             ToolKind::HydraulicWorks => 65,
             ToolKind::PrecisionInstruments => 66,
             ToolKind::DistributedNetworks => 67,
+            ToolKind::WindPower => 68,
+            ToolKind::CodexTradition => 69,
+            ToolKind::GeneCultureCoevolution => 70,
         }
     }
 
@@ -253,6 +259,9 @@ impl ToolKind {
             ToolKind::HydraulicWorks => "hydraulic_works",
             ToolKind::PrecisionInstruments => "precision_instruments",
             ToolKind::DistributedNetworks => "distributed_networks",
+            ToolKind::WindPower => "wind_power",
+            ToolKind::CodexTradition => "codex_tradition",
+            ToolKind::GeneCultureCoevolution => "gene_culture_coevolution",
         }
     }
 
@@ -344,6 +353,9 @@ impl ToolKind {
             ToolKind::HydraulicWorks => 3,
             ToolKind::PrecisionInstruments => 4,
             ToolKind::DistributedNetworks => 4,
+            ToolKind::WindPower => 2,
+            ToolKind::CodexTradition => 3,
+            ToolKind::GeneCultureCoevolution => 4,
         }
     }
 
@@ -461,7 +473,10 @@ impl ToolKind {
             | ToolKind::BiomimeticDesign
             | ToolKind::HydraulicWorks
             | ToolKind::PrecisionInstruments
-            | ToolKind::DistributedNetworks => &[],
+            | ToolKind::DistributedNetworks
+            | ToolKind::WindPower
+            | ToolKind::CodexTradition
+            | ToolKind::GeneCultureCoevolution => &[],
         }
     }
 
@@ -565,7 +580,10 @@ impl ToolKind {
             | ToolKind::BiomimeticDesign
             | ToolKind::HydraulicWorks
             | ToolKind::PrecisionInstruments
-            | ToolKind::DistributedNetworks => &[],
+            | ToolKind::DistributedNetworks
+            | ToolKind::WindPower
+            | ToolKind::CodexTradition
+            | ToolKind::GeneCultureCoevolution => &[],
         }
     }
 }

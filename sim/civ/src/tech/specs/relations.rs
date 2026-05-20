@@ -331,6 +331,16 @@ impl ToolKind {
             // propagation". No specific physics gate beyond what
             // its tier-2/3 prereqs already enforce.
             ToolKind::DistributedNetworks => &[(5, ChannelKind::Tactile)],
+            // WindPower: confirmed surface_water (5) — wind /
+            // water-flow analogy. Universal water-presence gate.
+            ToolKind::WindPower => &[(5, ChannelKind::Tactile)],
+            // CodexTradition: confirmed tidal_extremum (14) — the
+            // periodic-phenomena marker for formal record-keeping.
+            ToolKind::CodexTradition => &[(14, ChannelKind::Tactile)],
+            // GeneCultureCoevolution: confirmed tidal_extremum (14)
+            // — same formal-mathematics gate as AbstractMathematics
+            // (its tool prereq).
+            ToolKind::GeneCultureCoevolution => &[(14, ChannelKind::Tactile)],
         }
     }
 }

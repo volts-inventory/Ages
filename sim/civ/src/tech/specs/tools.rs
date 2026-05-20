@@ -279,6 +279,30 @@ impl ToolKind {
             ToolKind::DistributedNetworks => {
                 &[ToolKind::TradeNetworks, ToolKind::WrittenJurisprudence]
             }
+            // WindPower: BasicTextiles (sail-cloth + windmill sail
+            // material) + FluidGathering (fluid-flow intuition).
+            // Both tier-1 to satisfy strict tier-monotonicity
+            // (WatercraftConstruction would be a same-tier
+            // dependency since both are tier-2). Tier-2.
+            ToolKind::WindPower => {
+                &[ToolKind::BasicTextiles, ToolKind::FluidGathering]
+            }
+            // CodexTradition: CulturalEncoding (the writing
+            // system) + PermanentMasonry (the durable inscription
+            // substrate — stone tablets, baked clay, carved bone).
+            // Both tier-2 so the dependent tier-3 satisfies strict
+            // monotonicity. The earlier ArtisanalSpecialisation
+            // prereq was same-tier and tripped the DAG invariant.
+            ToolKind::CodexTradition => {
+                &[ToolKind::CulturalEncoding, ToolKind::PermanentMasonry]
+            }
+            // GeneCultureCoevolution: AnimalHusbandry (tier-2,
+            // the selective-breeding tradition) +
+            // AbstractMathematics (tier-3, the formal selection
+            // theory needed to predict heritability). Tier-4.
+            ToolKind::GeneCultureCoevolution => {
+                &[ToolKind::AnimalHusbandry, ToolKind::AbstractMathematics]
+            }
         }
     }
 }

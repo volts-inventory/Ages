@@ -1098,6 +1098,39 @@ impl ToolKind {
                 ManipulationKind::ChemicalSecretion,
                 ManipulationKind::ElectricDischarge,
             ],
+            // WindPower: sail rigging / mill construction. Broad
+            // mid-tier gate. WebConstruct species rig
+            // membrane-and-cord wind-catchers natively.
+            ToolKind::WindPower => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::Mandible,
+            ],
+            // CodexTradition: bookbinding / codex fabrication —
+            // requires precise built-form construction. Same
+            // narrow gate as PrecisionInstruments.
+            ToolKind::CodexTradition => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::WebConstruct,
+                ManipulationKind::ChemicalSecretion,
+            ],
+            // GeneCultureCoevolution: directed breeding + formal
+            // recordkeeping. Same gate as AnimalHusbandry but
+            // tighter since formal selection theory needs the
+            // record-keeping apparatus.
+            ToolKind::GeneCultureCoevolution => &[
+                ManipulationKind::LimbGrasp,
+                ManipulationKind::Tentacle,
+                ManipulationKind::Trunk,
+                ManipulationKind::ToolExtension,
+                ManipulationKind::ChemicalSecretion,
+                ManipulationKind::MouthBeak,
+            ],
         }
     }
 }
