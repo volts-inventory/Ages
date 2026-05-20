@@ -8,79 +8,15 @@ use sim_arith::{Pop, Real};
 use sim_species::Habitat;
 
 /// Per-cell habitability scaled to this civ's species habitat.
-/// Terrestrial / Airborne see water cells as marginal (shallow sea
-/// at 0.05, deep ocean at 0.00) and land cells as native (0.10
-/// peak through 1.20 coast). Aquatic flip the relationship —
-/// water is native, land cells drop to 0.05-0.10. Amphibious see
-/// both as native. Coast stays universally habitable (transition
-/// zone, valued by every habitat for the same reason).
-fn species_habitability(glyph: char, habitat: Habitat) -> Real {
-    let water_native = matches!(habitat, Habitat::Aquatic | Habitat::Amphibious);
-    let land_native = matches!(
-        habitat,
-        Habitat::Terrestrial
-            | Habitat::Airborne
-            | Habitat::Amphibious
-            | Habitat::Subterranean
-            | Habitat::Endolithic
-    );
-    let water_bonus = Real::percent(120);
-    let water_marginal = Real::percent(5);
-    let land_marginal = Real::percent(5);
-    match glyph {
-        // ≈ deep ocean — only Aquatic / Amphibious can live here.
-        '\u{2248}' => {
-            if water_native {
-                Real::ONE
-            } else {
-                Real::ZERO
-            }
-        }
-        // ≡ gas band — uninhabitable for everyone.
-        '\u{2261}' => Real::ZERO,
-        // ~ shallow sea — native for aquatic, marginal for land.
-        '~' => {
-            if water_native {
-                water_bonus
-            } else {
-                water_marginal
-            }
-        }
-        // ░ coast — both habitats value the transition zone.
-        '\u{2591}' => water_bonus,
-        // ▒ inland — native for land, marginal for aquatic.
-        '\u{2592}' => {
-            if land_native {
-                Real::percent(90)
-            } else {
-                land_marginal * Real::from_int(2)
-            }
-        }
-        // △ hill / low mountain.
-        '\u{25B3}' => {
-            if land_native {
-                Real::percent(60)
-            } else {
-                land_marginal
-            }
-        }
-        // ▲ peak.
-        '\u{25B2}' => {
-            if land_native {
-                Real::percent(10)
-            } else {
-                land_marginal
-            }
-        }
-        // · plain / featureless / wildcard.
-        _ => {
-            if land_native {
-                Real::ONE
-            } else {
-                land_marginal * Real::from_int(2)
-            }
-        }
-    }
+/// Pure delegate to `sim_species::habitat_glyph_multiplier` —
+/// the single source of truth shared with `sim_core::territory`
+/// so capacity-rewarded terrain and territory-preferred terrain
+/// agree per habitat. The previous local table contradicted
+/// territory's for Subterranean (peak 0.10 here vs 1.30 there);
+/// a peak-founded Subterranean civ would then starve. The shared
+/// function ensures the two stay aligned.
+pub(crate) fn species_habitability(glyph: char, habitat: Habitat) -> Real {
+    sim_species::habitat_glyph_multiplier(habitat, glyph)
 }
 
 impl Civ {
