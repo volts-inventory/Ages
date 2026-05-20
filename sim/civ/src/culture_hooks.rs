@@ -60,6 +60,27 @@ pub fn suppress_confidence_for(form: Form, cosmology: &Cosmology) -> Real {
     raw.clamp01()
 }
 
+/// Religion-aware confidence suppressor. Wires the fast-divergent
+/// religion layer into the same epistemic gate cosmology controls,
+/// so a polity's theology / ritual / sacred-time orientation
+/// constrains what laws it accepts — not just how hard it fights.
+/// Sums religion's dogmatism over cosmology's so a highly
+/// committed civ suppresses heretical forms more strongly.
+pub fn suppress_confidence_for_with_religion(
+    form: Form,
+    cosmology: &Cosmology,
+    religion: &crate::religion::Religion,
+) -> Real {
+    let dist = crate::cosmology::combined_form_distance(form, cosmology, religion);
+    // Combined dogmatism: cosmology's clamped magnitude plus a
+    // religion-magnitude contribution at half weight (religion
+    // shifts faster, so the long-run suppression weight is lower).
+    let two = Real::from_int(2);
+    let combined_dog = (cosmology.dogmatism() + religion.dogmatism() / two).clamp01();
+    let raw = Real::ONE - combined_dog * dist;
+    raw.clamp01()
+}
+
 /// Backwards-compatible signature (no cosmology in scope).
 pub fn suppress_confidence(_relation_id: u32, raw_confidence: Real) -> Real {
     raw_confidence

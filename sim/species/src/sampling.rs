@@ -417,6 +417,13 @@ pub(crate) fn derive_initial_cosmology(
             reformist = reformist + Real::percent(2);
         }
         Habitat::Airborne => reformist = reformist + Real::percent(5),
+        // Subterranean: extremely communitarian (constant
+        // close-quarters proximity), low reformism (stable
+        // niche, slow change).
+        Habitat::Subterranean => communitarian = communitarian + Real::percent(20),
+        // Endolithic: even slower change; substrate-anchored
+        // life is the canonical conservative-niche bias.
+        Habitat::Endolithic => communitarian = communitarian + Real::percent(10),
     }
     // Modality-count bias. Rich sensorium → analytical.
     if modalities.len() >= 4 {
@@ -859,9 +866,16 @@ pub fn derive_population_biology(
     let elder_drive = sociality * cognition;
     let eldership_fraction =
         (elder_drive * Real::percent(30) * (Real::ONE - r_axis)).min(Real::percent(30));
-    // Clamp so fertile_fraction >= 0.30. If the sum encroaches,
-    // shave maturity_fraction first (the most variable term).
-    let fertile_min = Real::percent(30);
+    // Clamp the fertile_fraction floor *per-strategy*: K-strategists
+    // (`r_axis = 0`) keep the historical 0.30 floor — a meaningful
+    // reproductive window across their whole life history. Hyper-r-
+    // strategists (`r_axis = 1`) drop to a 0.10 floor — a mayfly /
+    // semelparous-insect equivalent has hours of fertile life as a
+    // fraction of total life, not 30 % of it. Linear interpolation
+    // between. The prior hardcoded 0.30 floor was a vertebrate
+    // assumption that erased true r-strategists; this preserves
+    // numerical safety while allowing biologically valid extremes.
+    let fertile_min = Real::percent(30) - r_axis * Real::percent(20);
     let total_non_fertile = infant_fraction + maturity_fraction + eldership_fraction;
     let allowed_non_fertile = Real::ONE - fertile_min;
     let (maturity_fraction, eldership_fraction) = if total_non_fertile > allowed_non_fertile {

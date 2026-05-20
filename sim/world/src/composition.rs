@@ -18,6 +18,15 @@ pub struct Moon {
     /// Orbital period in macro-steps (≈ days). Earth's moon =
     /// 28; smaller / closer moons orbit faster.
     pub orbital_period_macros: u32,
+    /// Orbital inclination relative to the planet's equator,
+    /// in tenths of a degree. Earth's moon ≈ 51 (5.1°), Pluto's
+    /// Charon ≈ 0, highly inclined moons up to 300 (30°). Drives
+    /// the sub-lunar-latitude offset for tidal bulge in `Tides`,
+    /// so inclined moons produce different tidal forcing at
+    /// different latitudes (the r-direction modulation the
+    /// earlier 1D model omitted). Defaults to 0 for legacy
+    /// worldgen paths that don't populate it.
+    pub inclination_deg_x10: i32,
 }
 
 /// Continuous atmospheric composition. Mass fractions for

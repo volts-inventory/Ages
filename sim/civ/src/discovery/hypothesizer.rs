@@ -168,13 +168,32 @@ impl Hypothesizer {
     /// possible space and the fit module decides which pairings
     /// carry information.
     pub fn candidates_for(perceivable_template_ids: &[u32]) -> Vec<CandidateRelation> {
-        let mut out = Vec::with_capacity(perceivable_template_ids.len() * Channel::ALL.len());
+        Self::candidates_for_with_channels(perceivable_template_ids, &Channel::ALL)
+    }
+
+    /// Sensor-aware candidate generation. `channel_set` lists only
+    /// the channels reachable by the species' sensory modalities
+    /// (see `discovery::channels::perceivable_channels`). Without
+    /// this, every civ enumerated the same 9-channel × N-template
+    /// cross-product regardless of whether it had the senses to
+    /// observe through those channels — a magnetic-sense species
+    /// and a visual-light species drew identical observational
+    /// manifolds. With this, species sensoriums actually shape
+    /// what science gets done. Callers without species context
+    /// can call the legacy `candidates_for` and get the full
+    /// channel set.
+    pub fn candidates_for_with_channels(
+        perceivable_template_ids: &[u32],
+        channel_set: &[Channel],
+    ) -> Vec<CandidateRelation> {
+        let mut out =
+            Vec::with_capacity(perceivable_template_ids.len() * channel_set.len());
         for tid in perceivable_template_ids {
-            for ch in Channel::ALL {
+            for ch in channel_set {
                 out.push(CandidateRelation {
-                    relation_id: relation_id_for(*tid, ch),
+                    relation_id: relation_id_for(*tid, *ch),
                     template_id: *tid,
-                    channel: ch,
+                    channel: *ch,
                 });
             }
         }

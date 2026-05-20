@@ -180,6 +180,16 @@ pub const CELL_FLIP_FLOOR: i64 = CONFLICT_DEFEAT_FLOOR / 2;
 ///
 /// Returns `None` when there's no overlap to fight over.
 pub fn resolve(a: &mut Civ, b: &mut Civ, tick: u64) -> Option<ConflictOutcome> {
+    // Diplomatic gate: explicit alliances suppress conflict
+    // resolution entirely. An allied pair can have overlapping
+    // territory claims (shared border garrisons, joint colonies)
+    // without it triggering combat. Either side can flag the
+    // other as allied; the pair is considered allied if either
+    // does (asymmetric alliances are not allowed in this minimal
+    // model — both sides see it the same).
+    if a.allied_with.contains(&b.id) || b.allied_with.contains(&a.id) {
+        return None;
+    }
     let disputed: Vec<u32> = overlap(a, b).into_iter().collect();
     if disputed.is_empty() {
         return None;

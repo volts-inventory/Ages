@@ -130,6 +130,7 @@ impl Civ {
             // at founding from the species' real habitat. Legacy
             // tests without that init path see land-only behaviour.
             species_habitat: sim_species::Habitat::Terrestrial,
+            allied_with: std::collections::BTreeSet::new(),
             migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,

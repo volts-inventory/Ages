@@ -130,9 +130,10 @@ pub(crate) fn is_habitat_claimable_at(
     }
     let habitat_ok = match species_habitat {
         sim_species::Habitat::Aquatic => sim_world::is_water_glyph(glyph),
-        sim_species::Habitat::Terrestrial | sim_species::Habitat::Airborne => {
-            sim_world::is_land_glyph(glyph)
-        }
+        sim_species::Habitat::Terrestrial
+        | sim_species::Habitat::Airborne
+        | sim_species::Habitat::Subterranean
+        | sim_species::Habitat::Endolithic => sim_world::is_land_glyph(glyph),
         sim_species::Habitat::Amphibious => true,
     };
     if !habitat_ok {
@@ -293,6 +294,26 @@ fn score_for_habitat(glyph: char, habitat: sim_species::Habitat) -> sim_arith::R
             '~' | '\u{2248}' => Real::percent(80), // ~ shallow / ≈ deep
             '\u{25B3}' => Real::percent(60),       // △ hill
             '\u{25B2}' => Real::percent(10),       // ▲ peak
+            _ => Real::ZERO,
+        },
+        // Subterranean: inverts the surface bias — peaks +
+        // inland have the deepest excavable substrate; coast
+        // less so (water table). Water = uninhabitable.
+        Habitat::Subterranean => match glyph {
+            '\u{25B2}' => Real::percent(130),     // ▲ peak — deepest dry stone
+            '\u{25B3}' => Real::ONE,              // △ hill
+            '\u{2592}' | '\u{00B7}' => Real::ONE, // ▒ inland / · plain
+            '\u{2591}' => Real::percent(60),      // ░ coast — wet, less stable
+            _ => Real::ZERO,
+        },
+        // Endolithic: substrate-bound life. Same shape as
+        // subterranean — rock pore-space dwelling — but peaks
+        // and inland are pure-native; coast is marginal.
+        Habitat::Endolithic => match glyph {
+            '\u{25B2}' => Real::percent(120),     // ▲ peak
+            '\u{25B3}' => Real::ONE,              // △ hill
+            '\u{2592}' | '\u{00B7}' => Real::ONE, // ▒ inland / · plain
+            '\u{2591}' => Real::percent(40),      // ░ coast — marginal
             _ => Real::ZERO,
         },
     }

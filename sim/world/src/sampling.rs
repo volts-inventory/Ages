@@ -225,9 +225,21 @@ pub fn sample_planet(seed: u64) -> Planet {
                 _ => 100,
             };
             let mass = rng.gen_range(20..=120);
+            // Inclination derived deterministically from mass +
+            // period so we don't disturb the RNG sequence other
+            // worldgen paths depend on. Most planetary moons
+            // cluster in [0, 100] (0°-10°); some captured / chaotic
+            // moons go up to 300 (30°). Mass-period hash maps into
+            // [0, 120].
+            let inclination_deg_x10 = {
+                let mass_u = u64::try_from(mass).unwrap_or(0);
+                let p_u = u64::from(period);
+                i32::try_from((mass_u ^ p_u) % 121).unwrap_or(0)
+            };
             Moon {
                 mass_relative_x100: mass,
                 orbital_period_macros: period,
+                inclination_deg_x10,
             }
         })
         .collect();

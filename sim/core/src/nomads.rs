@@ -790,7 +790,14 @@ fn tech_tier_from_score(score: Real) -> u32 {
 fn habitat_base_tier(habitat: Habitat) -> u32 {
     match habitat {
         Habitat::Airborne => 1,
-        Habitat::Aquatic | Habitat::Terrestrial | Habitat::Amphibious => 0,
+        Habitat::Aquatic
+        | Habitat::Terrestrial
+        | Habitat::Amphibious
+        // Subterranean + Endolithic don't fly across wrong-biome
+        // cells; they tunnel through, which the current model
+        // treats as 0-tier surface crossing.
+        | Habitat::Subterranean
+        | Habitat::Endolithic => 0,
     }
 }
 
@@ -1059,7 +1066,10 @@ fn is_habitat_match(
         Habitat::Aquatic => is_water_glyph(glyph),
         // Airborne lives on land; flight enables crossing wrong-
         // biome cells via tech-gated transit, not native habitation.
-        Habitat::Terrestrial | Habitat::Airborne => is_land_glyph(glyph),
+        Habitat::Terrestrial
+        | Habitat::Airborne
+        | Habitat::Subterranean
+        | Habitat::Endolithic => is_land_glyph(glyph),
         Habitat::Amphibious => true,
     }
 }

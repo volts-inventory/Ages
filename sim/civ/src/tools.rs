@@ -344,7 +344,13 @@ impl Civ {
         }
         match species_habitat {
             Habitat::Aquatic => sim_world::is_water_glyph(glyph),
-            Habitat::Terrestrial | Habitat::Airborne => sim_world::is_land_glyph(glyph),
+            // Subterranean + Endolithic are land-native; the
+            // sub-surface excavation / rock-pore habitats both
+            // require land to dwell *in*.
+            Habitat::Terrestrial
+            | Habitat::Airborne
+            | Habitat::Subterranean
+            | Habitat::Endolithic => sim_world::is_land_glyph(glyph),
             Habitat::Amphibious => true,
         }
     }

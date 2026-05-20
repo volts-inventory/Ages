@@ -236,6 +236,20 @@ impl DynamicToolEffects {
 pub const DYNAMIC_TOOL_ID_START: u32 = 1000;
 
 /// Species habitat domain. See `Species::habitat`.
+///
+/// The first four (Aquatic / Terrestrial / Amphibious / Airborne)
+/// are Earth-typed surface-dwellers. The latter two cover habitats
+/// that an Earth-centric typology omits but that are physically
+/// plausible (and biologically attested on Earth):
+///
+/// - `Subterranean` — primary habitat is below-surface excavated
+///   space. Treats land as native (claims like Terrestrial) but
+///   gains constant subsurface temperature buffering. The
+///   morphological cousin is the Burrow manipulation mode.
+/// - `Endolithic` — substrate-bound life inhabiting rock pore
+///   space directly. Native for Silicate substrates where the
+///   "habitat" is the rock itself; treats peaks and inland cells
+///   as natively habitable, water cells as marginal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Habitat {
     Aquatic,
@@ -248,6 +262,8 @@ pub enum Habitat {
     /// habitat cell. Higher per-cell tech extends crossing range
     /// further than terrestrial species reach.
     Airborne,
+    Subterranean,
+    Endolithic,
 }
 
 /// Cognition substrate topology. See `Species::cognition_topology`.
@@ -255,6 +271,53 @@ pub enum Habitat {
 pub enum CognitionTopology {
     Centralized,
     Distributed,
+}
+
+/// Multi-axis cognitive profile. Collapsing cognition to a single
+/// scalar means a working-memory-strong species (cephalopod-like)
+/// and a social-cognition-strong species (canine-like) collapse
+/// into the same downstream formula. Three orthogonal axes:
+///
+/// - `working_memory`: capacity to hold + manipulate symbols
+///   in real time. Feeds hypothesizer cadence (fast attempts) +
+///   per-fit complexity tolerance.
+/// - `abstraction`: depth of formal generalization. Feeds
+///   tool-tier reachability (tier-3+ tools require formal
+///   abstraction) and Occam-penalty leniency.
+/// - `social`: theory of mind, coalition reasoning, transmission
+///   fidelity. Feeds knowledge-transmission decay and contact-
+///   driven law diffusion.
+///
+/// All three in `[0, 1]`. The legacy `Species::cognition` scalar
+/// is the unweighted average of these axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CognitionAxes {
+    pub working_memory: Real,
+    pub abstraction: Real,
+    pub social: Real,
+}
+
+impl CognitionAxes {
+    /// Build from a single scalar — replicate the value across
+    /// all three axes. Used as the migration path: existing
+    /// worldgen samples a scalar `cognition`, and the multi-axis
+    /// struct is back-filled here. Future worldgen samples
+    /// each axis independently.
+    #[must_use]
+    pub fn uniform(c: Real) -> Self {
+        Self {
+            working_memory: c,
+            abstraction: c,
+            social: c,
+        }
+    }
+
+    /// Aggregate scalar — unweighted average. Matches the
+    /// legacy `Species::cognition` field.
+    #[must_use]
+    pub fn average(&self) -> Real {
+        (self.working_memory + self.abstraction + self.social) / Real::from_int(3)
+    }
 }
 
 /// Per-species reproductive + life-history biology. Replaces the
