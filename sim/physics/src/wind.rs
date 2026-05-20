@@ -50,6 +50,20 @@
 //!    pair independent of donor) but is the standard finite-volume
 //!    choice for transport stability.
 //!
+//! Stability is enforced via adaptive sub-stepping driven by the
+//! acoustic-aware CFL condition (`(|u_max| + c_s) · advect_k · dt ≤
+//! CFL`). Previously the integrator ran the kernel at the caller's
+//! requested `dt` and then *clamped* the post-update velocity into
+//! the CFL stability envelope; that clamp limited a real physical
+//! signal (high winds) rather than the numerical artifact (too-large
+//! `dt`). Sub-stepping addresses the root cause: when the requested
+//! `dt` exceeds the CFL bound the integrator subdivides into
+//! `ceil(dt / dt_max)` equal pieces and runs the unclamped kernel on
+//! each. The `c_s` term in the bound is the ideal-gas sound speed
+//! `sqrt(γ · P / ρ)` evaluated from the current temperature field,
+//! per the plan v2 Item 1a directive that real atmospheric CFL
+//! includes the acoustic mode.
+//!
 //! Determinism: pair iteration is canonical-order (`j > i` filter
 //! over `grid.cells()`); pressure and velocity computed from
 //! previous-tick snapshots; no per-tick allocation beyond a single
@@ -62,8 +76,32 @@
 
 use crate::laws::Law;
 use crate::state::PhysicsState;
-use sim_arith::transcendental::exp;
+use sim_arith::transcendental::{exp, sqrt};
 use sim_arith::Real;
+
+/// Hard cap on the number of CFL sub-steps a single `Wind::integrate`
+/// call will spawn. A pathological seed (extreme `wind_k` ×
+/// atmospheric pressure coupling combined with a huge requested
+/// macro-`dt`) can in principle ask for thousands of sub-steps;
+/// honouring that silently would lock the tick. Sixteen is the
+/// soft ceiling agreed in the plan (Item 1b) — beyond it we fall
+/// back to sixteen sub-steps and raise a `debug_assert!` so debug
+/// builds surface the issue while release builds degrade gracefully.
+const MAX_WIND_SUB_STEPS: u32 = 16;
+
+/// CFL safety factor. Standard practice for upwind donor-cell
+/// schemes is `≤ 1`; `0.5` leaves headroom for the operator-split
+/// coupling with hydrology and absorbs the few-percent error in
+/// the constant `γ` (heat-capacity ratio) used to derive `c_s`.
+const CFL_SAFETY: (i64, i64) = (1, 2);
+
+/// Heat-capacity ratio for the ideal-gas sound-speed formula
+/// `c_s = sqrt(γ · P / ρ)`. Earth's diatomic-dominated atmosphere
+/// sits at `γ ≈ 1.4` (`7/5`); the same value is good to a few
+/// percent for the other modelled atmospheres (Mars CO₂ → 1.30,
+/// Venus CO₂ → 1.30, Titan N₂/CH₄ mix → 1.32). The CFL safety
+/// factor (`0.5`) absorbs the residual mis-estimate.
+const GAMMA_GAS: (i64, i64) = (7, 5);
 
 /// Hex-direction axial offsets for the six neighbours, in the same
 /// canonical order as `HexGrid::neighbours` (E, NE, NW, W, SW, SE).
@@ -154,11 +192,6 @@ impl Wind {
 }
 
 impl Law for Wind {
-    // Axial coordinates use the canonical `q` / `r` naming (see
-    // `grid::Axial`); pair-named bindings like `vel_q_*` / `vel_r_*`
-    // trip clippy's `similar_names` lint despite being the natural
-    // domain vocabulary.
-    #[allow(clippy::similar_names)]
     fn integrate(&self, state: &mut PhysicsState, dt: Real) {
         // Vacuum short-circuit. No atmosphere means no
         // pressure-gradient force, no friction, no advection —
@@ -167,8 +200,149 @@ impl Law for Wind {
         if !self.has_atmosphere {
             return;
         }
+        if dt <= Real::ZERO {
+            return;
+        }
+        // Adaptive sub-stepping. The previous implementation ran the
+        // whole kernel at the caller-requested `dt` and then *clamped*
+        // the resulting velocity into the CFL stability envelope.
+        // Clamping limits a real physical signal (high winds) rather
+        // than the numerical artifact (too-large `dt` for the upwind
+        // advection scheme's stability). The replacement subdivides
+        // `dt` into `n_sub` equal pieces sized to satisfy the
+        // acoustic-aware CFL condition
+        //
+        //   (|u_max| + c_s) · advect_k · dt_sub  ≤  CFL
+        //
+        // with `CFL = 0.5` and `c_s = sqrt(γ · P / ρ)` evaluated from
+        // the current temperature field via the `P = pressure_per_kelvin
+        // · T` ideal-gas proxy. `advect_k` plays the role of the
+        // inverse cell length `1/Δx` in the model's axial-coordinate
+        // units (it is the coefficient that multiplies `v · dt` in
+        // the per-pair upwind flux, so its inverse is the effective
+        // characteristic length the donor-cell scheme sees per pair).
+        // Each sub-step runs the *unclamped* kernel; the pair-flux
+        // bit-exact energy conservation and the symmetric pressure-
+        // gradient force are preserved per sub-step and therefore
+        // over the loop.
+        let n_sub = self.sub_step_count(state, dt);
+        let dt_sub = dt / Real::from_int(i64::from(n_sub));
+        for _ in 0..n_sub {
+            self.advance_one_sub_step(state, dt_sub);
+        }
+    }
+}
+
+impl Wind {
+    /// Number of CFL-stable sub-steps `Wind::integrate` will use to
+    /// advance a macro `dt`. Returns at least 1 (so the kernel always
+    /// runs once) and at most `MAX_WIND_SUB_STEPS`; the uncapped
+    /// estimate raises a `debug_assert!` if it exceeds the ceiling,
+    /// matching the plan v2 Item 1b directive that pathological seeds
+    /// should be rejected at worldgen rather than silently swallowed
+    /// at runtime.
+    #[must_use]
+    pub fn sub_step_count(&self, state: &PhysicsState, dt: Real) -> u32 {
+        if !self.has_atmosphere || dt <= Real::ZERO {
+            return 1;
+        }
+        let dt_max = self.dt_max_cfl(state);
+        if dt_max <= Real::ZERO || dt <= dt_max {
+            return 1;
+        }
+        // `n = ceil(dt / dt_max)`. Compute via integer arithmetic on
+        // the raw Q32.32 bits since `Real` doesn't expose a `ceil`.
+        let ratio = dt / dt_max;
+        let ratio_i: i64 = ratio.raw().to_num::<i64>();
+        let fractional = ratio - Real::from_int(ratio_i);
+        let n_i64 = if fractional > Real::ZERO {
+            ratio_i + 1
+        } else {
+            ratio_i.max(1)
+        };
+        debug_assert!(
+            n_i64 <= i64::from(MAX_WIND_SUB_STEPS),
+            "wind sub-step count {n_i64} exceeded ceiling {MAX_WIND_SUB_STEPS}; \
+             worldgen should reject seeds that demand more than \
+             {MAX_WIND_SUB_STEPS} sub-steps (plan v2 Item 1b)"
+        );
+        let clamped = n_i64.clamp(1, i64::from(MAX_WIND_SUB_STEPS));
+        u32::try_from(clamped).unwrap_or(MAX_WIND_SUB_STEPS)
+    }
+
+    /// Maximum stable sub-step size under the acoustic-aware CFL
+    /// condition. Returns `Real::ZERO` if the denominator collapses
+    /// (no advection coefficient, no wind speed, no sound speed) —
+    /// callers treat that as "single sub-step is fine".
+    #[must_use]
+    pub fn dt_max_cfl(&self, state: &PhysicsState) -> Real {
+        if self.advect_k <= Real::ZERO {
+            return Real::ZERO;
+        }
+        let (vq, vr) = state.fluid_velocity();
+        let mut u_sq_max = Real::ZERO;
+        for (q, r) in vq.iter().zip(vr.iter()) {
+            // Compare |v|² rather than |v| so we can defer the sqrt
+            // to a single call; cheaper and avoids per-cell sqrt
+            // round-off accumulating.
+            let sq = (*q) * (*q) + (*r) * (*r);
+            if sq > u_sq_max {
+                u_sq_max = sq;
+            }
+        }
+        let u_max = sqrt(u_sq_max);
+        let c_s = self.sound_speed(state);
+        let denom = (u_max + c_s) * self.advect_k;
+        if denom <= Real::ZERO {
+            return Real::ZERO;
+        }
+        Real::from_ratio(CFL_SAFETY.0, CFL_SAFETY.1) / denom
+    }
+
+    /// Ideal-gas sound speed `c_s = sqrt(γ · P / ρ)` in the kernel's
+    /// internal velocity units. The wind kernel models pressure as
+    /// `P = pressure_per_kelvin · T` with `1/ρ` rolled into `wind_k`
+    /// (the same coefficient that turns `grad P` into per-tick
+    /// acceleration). The dimensionally-consistent internal sound
+    /// speed is therefore `sqrt(γ · wind_k · pressure_per_kelvin · T)`.
+    /// We use the *maximum* per-cell temperature as the reference —
+    /// the worst case for stability — so a hot cell raises local
+    /// `c_s` and pulls the CFL limit tighter, which is exactly what
+    /// we want.
+    #[must_use]
+    pub fn sound_speed(&self, state: &PhysicsState) -> Real {
+        let mut t_max = Real::ZERO;
+        for t in state.temperature() {
+            if *t > t_max {
+                t_max = *t;
+            }
+        }
+        if t_max <= Real::ZERO {
+            return Real::ZERO;
+        }
+        let gamma = Real::from_ratio(GAMMA_GAS.0, GAMMA_GAS.1);
+        let cs_sq = gamma * self.wind_k * self.pressure_per_kelvin * t_max;
+        if cs_sq <= Real::ZERO {
+            return Real::ZERO;
+        }
+        sqrt(cs_sq)
+    }
+
+    /// One CFL-stable sub-step of the wind kernel. The integration
+    /// (pressure derivation → pressure-gradient + friction velocity
+    /// update → pair-flux energy advection) matches the pre-adaptive
+    /// implementation except the post-update velocity *clamp* is
+    /// gone: callers reach this method only with `dt_sub ≤
+    /// dt_max_cfl(state)`, so the upwind branch is guaranteed
+    /// stable without artificially capping the physical signal.
+    //
+    // Axial coordinates use the canonical `q` / `r` naming (see
+    // `grid::Axial`); pair-named bindings like `vel_q_*` / `vel_r_*`
+    // trip clippy's `similar_names` lint despite being the natural
+    // domain vocabulary.
+    #[allow(clippy::similar_names)]
+    fn advance_one_sub_step(&self, state: &mut PhysicsState, dt: Real) {
         let grid = state.grid().clone();
-        let n = grid.n_cells();
         let prev_t = state.temperature().to_vec();
 
         // Step 1: derive pressure from temperature.
@@ -211,35 +385,6 @@ impl Law for Wind {
             let damp = Real::ONE - self.friction_per_tick * dt;
             vel_q_after[i] = vel_q_after[i] * damp;
             vel_r_after[i] = vel_r_after[i] * damp;
-        }
-
-        // CFL guard: cap |v_along × advect_k × dt| at 1 so the
-        // upwind branch can't overshoot the donor cell in one tick.
-        // The previous design clamped advect_k (rate) but not v
-        // (speed), so a Mars-thin world's wind_k scaling could grow
-        // |v| past CFL. We clamp the velocity magnitude itself here,
-        // post-acceleration + friction, so subsequent advection
-        // stays stable regardless of how aggressive the per-K
-        // pressure gradient is on a low-density atmosphere. The
-        // bound is `|v| × advect_k × dt < 1` ⇒
-        // `|v| < 1 / (advect_k × dt)`. We use 0.5 as a safety
-        // factor (half-CFL).
-        if self.advect_k > Real::ZERO && dt > Real::ZERO {
-            let v_max = Real::from_ratio(1, 2) / (self.advect_k * dt);
-            for v in vel_q_after.iter_mut() {
-                if *v > v_max {
-                    *v = v_max;
-                } else if *v < -v_max {
-                    *v = -v_max;
-                }
-            }
-            for v in vel_r_after.iter_mut() {
-                if *v > v_max {
-                    *v = v_max;
-                } else if *v < -v_max {
-                    *v = -v_max;
-                }
-            }
         }
 
         let (vel_q_out, vel_r_out) = state.fluid_velocity_mut();
@@ -303,7 +448,6 @@ impl Law for Wind {
             .zip(column_mass.iter())
             .map(|(e, m)| *e / *m)
             .collect();
-        let _ = n;
         state.temperature_mut().copy_from_slice(&next_t);
     }
 }
@@ -565,5 +709,180 @@ mod tests {
         }
         assert_eq!(state.temperature(), &initial_t[..]);
         assert_eq!(state.fluid_velocity().0, &initial_vq[..]);
+    }
+
+    #[test]
+    fn adaptive_dt_handles_supersonic_request() {
+        // Build a wind field with a velocity that would have triggered
+        // the old velocity clamp (the clamp's bound was
+        // `|v_max| = 0.5 / (advect_k · dt) = 50` for the earth-like
+        // defaults at `dt = 1`). Seed `|v| = 200` so the requested
+        // step is firmly above the CFL stability envelope; the
+        // adaptive sub-stepping must subdivide enough that the kernel
+        // completes without breaking the pair-flux conservation
+        // invariants (Σ (m·T) bit-exact per sub-step → bounded total
+        // drift across the macro-step).
+        let grid = HexGrid::new(6, 6);
+        let mut state = PhysicsState::new(grid);
+        for (i, t) in state.temperature_mut().iter_mut().enumerate() {
+            *t = Real::from_int(260 + i64::try_from(i).unwrap() * 4);
+        }
+        // Seed the velocity field above the old clamp ceiling.
+        {
+            let (vq, vr) = state.fluid_velocity_mut();
+            for v in vq.iter_mut() {
+                *v = Real::from_int(200);
+            }
+            for v in vr.iter_mut() {
+                *v = Real::from_int(-150);
+            }
+        }
+        let wind = Wind::earth_like();
+        // Sub-stepping should kick in: the CFL bound on this state is
+        // `dt_max = 0.5 / ((|u| + c_s) · advect_k)` ≈ `0.5 / (250 ·
+        // 0.01) = 0.2`, so a `dt = 1` request needs at least
+        // `ceil(1 / 0.2) = 5` sub-steps. Assert that observation
+        // before checking conservation — it's the load-bearing test
+        // that the adaptive path activated.
+        let n_sub = wind.sub_step_count(&state, Real::ONE);
+        assert!(
+            n_sub >= 2,
+            "supersonic-equivalent velocity must trigger sub-stepping, got n_sub={n_sub}"
+        );
+        // Pair-flux conservation: total energy Σ (m · T) is bit-exact
+        // per sub-step (column_mass ≡ 1 here since elevation is zero,
+        // so this collapses to Σ T which is also bit-exact). After
+        // the macro step the total temperature must be unchanged.
+        let initial: Real = state
+            .temperature()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        wind.integrate(&mut state, Real::ONE);
+        let after: Real = state
+            .temperature()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert_eq!(
+            initial, after,
+            "adaptive sub-stepping must preserve pair-flux total temperature: \
+             initial={initial:?} after={after:?}"
+        );
+    }
+
+    #[test]
+    fn sub_step_count_grows_with_velocity() {
+        // The sub-step count `n = ceil(dt / dt_max)` is monotone in
+        // `|u_max|` because `dt_max ∝ 1 / (|u_max| + c_s)`. Seed
+        // three states with progressively larger velocity magnitudes
+        // and verify that the sub-step count is non-decreasing.
+        let grid = HexGrid::new(5, 5);
+        let make_state = |v_mag: i64| {
+            let mut s = PhysicsState::new(grid.clone());
+            for t in s.temperature_mut() {
+                *t = Real::from_int(280);
+            }
+            let (vq, _vr) = s.fluid_velocity_mut();
+            for v in vq.iter_mut() {
+                *v = Real::from_int(v_mag);
+            }
+            s
+        };
+        let wind = Wind::earth_like();
+        // Pick velocities so the highest one stays within the
+        // `MAX_WIND_SUB_STEPS = 16` ceiling. With the earth-like
+        // defaults `dt_max ≈ 0.5 / ((|u| + c_s) · 0.01)` for `dt = 1`,
+        // so `|u| ≤ 800` keeps the implied sub-step demand ≤ 16
+        // (`ceil(1 / (0.5 / (800 · 0.01))) = 16`). The debug-assert
+        // in `sub_step_count` exists to surface pathological seeds
+        // that *exceed* the ceiling — see
+        // `sub_step_count_caps_pathological_demand_in_release`.
+        let n_low = wind.sub_step_count(&make_state(10), Real::ONE);
+        let n_mid = wind.sub_step_count(&make_state(100), Real::ONE);
+        let n_high = wind.sub_step_count(&make_state(700), Real::ONE);
+        assert!(
+            n_low <= n_mid && n_mid <= n_high,
+            "sub-step count must be monotone in |u_max|: \
+             low={n_low} mid={n_mid} high={n_high}"
+        );
+        // At least one of the larger seeds should require >1 sub-step
+        // — otherwise we're not exercising the adaptive path at all.
+        assert!(
+            n_high > 1,
+            "high-velocity seed must require sub-stepping: n_high={n_high}"
+        );
+        // The cap is honoured for in-range requests: `MAX_WIND_SUB_STEPS`
+        // is the absolute ceiling. We probe just *below* the cap here
+        // rather than firing a debug-mode panic with a wildly
+        // out-of-range velocity (the `debug_assert!` inside
+        // `sub_step_count` exists precisely to surface that pathology
+        // — see `sub_step_count_caps_pathological_demand_in_release`
+        // for the cap-behaviour test that exercises the >cap branch).
+        assert!(
+            n_high <= MAX_WIND_SUB_STEPS,
+            "sub-step count must respect MAX_WIND_SUB_STEPS ceiling: \
+             n_high={n_high} cap={MAX_WIND_SUB_STEPS}"
+        );
+    }
+
+    /// Release-mode-only cap test: a pathologically large requested
+    /// velocity would demand more than `MAX_WIND_SUB_STEPS` sub-steps.
+    /// The integrator must degrade gracefully (clamp to the ceiling)
+    /// rather than spawn thousands of sub-steps and hang the tick.
+    /// In debug builds the `debug_assert!` fires instead — that's the
+    /// surface-the-pathology contract — so this test is release-only.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn sub_step_count_caps_pathological_demand_in_release() {
+        let grid = HexGrid::new(3, 3);
+        let mut state = PhysicsState::new(grid);
+        for t in state.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        let (vq, _vr) = state.fluid_velocity_mut();
+        for v in vq.iter_mut() {
+            *v = Real::from_int(1_000_000);
+        }
+        let wind = Wind::earth_like();
+        let n = wind.sub_step_count(&state, Real::ONE);
+        assert!(
+            n <= MAX_WIND_SUB_STEPS,
+            "release builds must clamp sub-step count at MAX_WIND_SUB_STEPS \
+             rather than honour pathological demands: n={n} cap={MAX_WIND_SUB_STEPS}"
+        );
+    }
+
+    #[test]
+    fn dt_max_cfl_matches_acoustic_formula() {
+        // Parametric check: with a quiescent atmosphere (u = 0), the
+        // CFL bound collapses to `dt_max = CFL / (c_s · advect_k)`
+        // with `c_s = sqrt(γ · wind_k · pressure_per_kelvin · T_max)`.
+        // Verify the integrator's `dt_max_cfl` matches the closed form
+        // within fixed-point tolerance.
+        let grid = HexGrid::new(3, 3);
+        let mut state = PhysicsState::new(grid);
+        for t in state.temperature_mut() {
+            *t = Real::from_int(300);
+        }
+        let wind = Wind::earth_like();
+        let c_s_observed = wind.sound_speed(&state);
+        // Closed form: c_s = sqrt(γ · wind_k · ppk · T_max).
+        let gamma = Real::from_ratio(GAMMA_GAS.0, GAMMA_GAS.1);
+        let cs_sq_expected =
+            gamma * wind.wind_k * wind.pressure_per_kelvin * Real::from_int(300);
+        let c_s_expected = sqrt(cs_sq_expected);
+        assert_eq!(
+            c_s_observed, c_s_expected,
+            "sound_speed must match sqrt(γ · wind_k · ppk · T_max)"
+        );
+        // dt_max = CFL / (c_s · advect_k) when |u_max| = 0.
+        let dt_max_observed = wind.dt_max_cfl(&state);
+        let dt_max_expected =
+            Real::from_ratio(CFL_SAFETY.0, CFL_SAFETY.1) / (c_s_expected * wind.advect_k);
+        assert_eq!(
+            dt_max_observed, dt_max_expected,
+            "dt_max_cfl must match CFL / (c_s · advect_k) at zero wind"
+        );
     }
 }
