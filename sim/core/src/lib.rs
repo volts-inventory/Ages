@@ -681,7 +681,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     );
                     let _ = parent_centroid; // distant placement supersedes adjacency
                     new_civ.claim_cells(&cells);
-                    new_civ.refresh_available_forms(&species_baseline, &recognition);
+                    new_civ.refresh_available_forms_with_modalities(
+            &species_baseline,
+            &recognition,
+            &species_modality_kinds,
+        );
                     let initial_pop_q32 = new_civ.cohort.total().raw().to_bits();
                     let band = u32::try_from(new_civ.figures.len()).unwrap_or(0);
                     for f in &new_civ.figures {
@@ -1080,7 +1084,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         );
                         let _ = parent_centroid; // distant placement supersedes adjacency
                         new_civ.claim_cells(&cells);
-                        new_civ.refresh_available_forms(&species_baseline, &recognition);
+                        new_civ.refresh_available_forms_with_modalities(
+            &species_baseline,
+            &recognition,
+            &species_modality_kinds,
+        );
                         let initial_pop_q32 = new_civ.cohort.total().raw().to_bits();
                         let band = u32::try_from(new_civ.figures.len()).unwrap_or(0);
                         for f in &new_civ.figures {
@@ -1937,7 +1945,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 // `new_civ.observations`.
                 let _drained =
                     nomads::drain_observations_for_cells(&mut nomad_observations, gained);
-                new_civ.refresh_available_forms(&species_baseline, &recognition);
+                new_civ.refresh_available_forms_with_modalities(
+            &species_baseline,
+            &recognition,
+            &species_modality_kinds,
+        );
                 let initial_pop_q32 = new_civ.cohort.total().raw().to_bits();
                 let band = u32::try_from(new_civ.figures.len()).unwrap_or(0);
                 for f in &new_civ.figures {
