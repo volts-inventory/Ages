@@ -361,11 +361,19 @@ impl Civ {
     /// before. Refreshes the hypothesizer's available form vocab
     /// over the new perceivable set. Returns the newly-
     /// perceivable template ids so the caller can emit them.
+    ///
+    /// `species_modality_kinds = Some(...)` threads the species'
+    /// sensory modalities through so the per-civ discovery channel
+    /// set is preserved when the candidate list is refreshed.
+    /// `None` falls back to the legacy `Channel::ALL` cross-product
+    /// (kept for callers without species context, e.g. legacy unit
+    /// tests).
     pub fn apply_tool_unlock(
         &mut self,
         tool: ToolKind,
         species_baseline: &BTreeSet<u32>,
         recognition_lib: &RecognitionLibrary,
+        species_modality_kinds: Option<&[sim_species::ModalityKind]>,
     ) -> Vec<u32> {
         if !self.unlocked_tools.insert(tool) {
             return Vec::new();
@@ -405,7 +413,14 @@ impl Civ {
                 newly.push(t.id);
             }
         }
-        self.refresh_available_forms(species_baseline, recognition_lib);
+        match species_modality_kinds {
+            Some(kinds) => self.refresh_available_forms_with_modalities(
+                species_baseline,
+                recognition_lib,
+                kinds,
+            ),
+            None => self.refresh_available_forms(species_baseline, recognition_lib),
+        }
         newly
     }
 }

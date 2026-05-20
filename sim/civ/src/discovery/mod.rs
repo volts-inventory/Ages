@@ -19,7 +19,10 @@ mod types;
 pub mod emergence;
 pub mod tool_emergence;
 
-pub use channels::{measurement_relation_id, relation_id_for, Channel, MeasurementChannel};
+pub use channels::{
+    channels_for_modality, measurement_relation_id, perceivable_channels,
+    perceivable_channels_from_kinds, relation_id_for, Channel, MeasurementChannel,
+};
 pub use events::HypothesisEvent;
 pub use hypothesizer::Hypothesizer;
 pub use types::{

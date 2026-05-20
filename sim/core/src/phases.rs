@@ -663,6 +663,7 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
     species_channels: &BTreeSet<ChannelKind>,
     species_manipulations: &BTreeSet<ManipulationKind>,
     species_baseline: &BTreeSet<u32>,
+    species_modality_kinds: &[sim_species::ModalityKind],
     has_magnetosphere: bool,
     has_em_medium: bool,
     civs: &mut [Civ],
@@ -800,7 +801,12 @@ pub(crate) fn tech_unlock_phase<E: Emitter>(
             if total_confirmed_relations < tool.species_maturity_floor() {
                 continue;
             }
-            let newly = civ.apply_tool_unlock(tool, species_baseline, recognition);
+            let newly = civ.apply_tool_unlock(
+                tool,
+                species_baseline,
+                recognition,
+                Some(species_modality_kinds),
+            );
             unlocks_to_emit.push((tool, newly, civ.id, serendipitous));
         }
     }

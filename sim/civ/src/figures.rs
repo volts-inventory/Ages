@@ -19,7 +19,7 @@
 //! so the event log stays portable; M4's bounded-language work
 //! refines this further.
 
-use crate::discovery::Hypothesizer;
+use crate::discovery::{Channel, Hypothesizer};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -194,9 +194,16 @@ impl NameGrammar {
 /// Construct the founding band for a civ : 2 or 3 figures with
 /// names drawn from `grammar`, ids assigned sequentially starting at
 /// `next_id`, monotonic `cell_assignment` (`0..band_size`), and a
-/// fresh per-figure `Hypothesizer` seeded with `intelligence` and
-/// `perceivable_template_ids`. Returns the figures plus the next
-/// available id so the caller can keep the counter monotonic.
+/// fresh per-figure `Hypothesizer` seeded with `intelligence`,
+/// `perceivable_template_ids`, and `species_channels` (the union
+/// of channels the species' modalities grant access to — see
+/// `discovery::perceivable_channels`). Returns the figures plus
+/// the next available id so the caller can keep the counter
+/// monotonic.
+///
+/// `species_channels = None` falls back to the full `Channel::ALL`
+/// cross-product (legacy behaviour for callers without species
+/// context; used by existing unit tests).
 #[allow(clippy::too_many_arguments)]
 pub fn found_band(
     grammar: &NameGrammar,
@@ -207,6 +214,7 @@ pub fn found_band(
     intelligence: Real,
     perceivable_template_ids: &[u32],
     attempt_period: u64,
+    species_channels: Option<&[Channel]>,
 ) -> (Vec<NamedFigure>, u32) {
     let mut rng = ChaCha20Rng::seed_from_u64(
         species_seed ^ (u64::from(civ_id) << 16) ^ founded_tick ^ 0xF16D_F16D_F16D_F16D,
@@ -233,10 +241,11 @@ pub fn found_band(
             born_tick: founded_tick,
             retired_tick: None,
             cell_assignment: u32::try_from(i).unwrap_or(0),
-            hypothesizer: Hypothesizer::with_attempt_period(
+            hypothesizer: Hypothesizer::with_attempt_period_and_channels(
                 intelligence,
                 perceivable_template_ids,
                 attempt_period,
+                species_channels,
             ),
             charisma,
             curiosity,
@@ -384,7 +393,7 @@ mod tests {
     #[test]
     fn founding_band_is_two_or_three_figures() {
         let g = NameGrammar::derive(&[ModalityKind::AcousticAir], 1, 42);
-        let (figs, next) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20);
+        let (figs, next) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20, None);
         assert!((2..=3).contains(&figs.len()));
         assert_eq!(next, 1 + u32::try_from(figs.len()).unwrap());
         for (i, f) in figs.iter().enumerate() {
@@ -397,8 +406,8 @@ mod tests {
     #[test]
     fn founding_band_is_deterministic() {
         let g = NameGrammar::derive(&[ModalityKind::AcousticAir], 1, 42);
-        let (a, _) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20);
-        let (b, _) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20);
+        let (a, _) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20, None);
+        let (b, _) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20, None);
         assert_eq!(a.len(), b.len());
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(x.id, y.id);
@@ -409,7 +418,7 @@ mod tests {
     #[test]
     fn founding_band_assigns_distinct_cell_indices() {
         let g = NameGrammar::derive(&[ModalityKind::AcousticAir], 1, 42);
-        let (figs, _) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20);
+        let (figs, _) = found_band(&g, 1, 42, 0, 1, Real::ONE, &[], 20, None);
         let assignments: BTreeSet<u32> = figs.iter().map(|f| f.cell_assignment).collect();
         assert_eq!(
             assignments.len(),

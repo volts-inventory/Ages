@@ -133,15 +133,48 @@ impl Civ {
             .collect()
     }
 
-    /// Recompute every figure's hypothesizer candidate set
-    /// (cross-product over `Channel::ALL`) AND available form
-    /// vocabulary ( derivation over perceivable-template tags).
-    /// Idempotent. Call at civ founding and after any sensorium-
-    /// extending tool unlock that changes the perceivable set.
+    /// Recompute every figure's hypothesizer candidate set AND
+    /// available form vocabulary ( derivation over perceivable-
+    /// template tags). Idempotent. Call at civ founding and after
+    /// any sensorium-extending tool unlock that changes the
+    /// perceivable template set.
+    ///
+    /// Legacy entry point — regenerates over `Channel::ALL`. Calls
+    /// to this *after* construction with a sensor-gated channel
+    /// set silently widen the candidate space back to the full
+    /// cross-product, undoing the sensor gating. Production civ
+    /// callers use `refresh_available_forms_with_modalities` so
+    /// the per-civ channel set is preserved across refreshes.
     pub fn refresh_available_forms(
         &mut self,
         species_baseline: &BTreeSet<u32>,
         recognition_lib: &RecognitionLibrary,
+    ) {
+        self.refresh_available_forms_inner(species_baseline, recognition_lib, None);
+    }
+
+    /// Sensor-aware variant of `refresh_available_forms`. Takes
+    /// the species' modality kinds so the per-civ channel set is
+    /// recomputed alongside the perceivable template set when a
+    /// tool unlock fires. Without this, `refresh_perceivable`
+    /// regenerates the full 10-channel cross-product on every
+    /// tool unlock, undoing the sensor gating from founding.
+    pub fn refresh_available_forms_with_modalities(
+        &mut self,
+        species_baseline: &BTreeSet<u32>,
+        recognition_lib: &RecognitionLibrary,
+        species_modality_kinds: &[sim_species::ModalityKind],
+    ) {
+        let channels =
+            crate::discovery::perceivable_channels_from_kinds(species_modality_kinds);
+        self.refresh_available_forms_inner(species_baseline, recognition_lib, Some(&channels));
+    }
+
+    fn refresh_available_forms_inner(
+        &mut self,
+        species_baseline: &BTreeSet<u32>,
+        recognition_lib: &RecognitionLibrary,
+        channels: Option<&[crate::discovery::Channel]>,
     ) {
         let perceived: BTreeSet<u32> = species_baseline
             .iter()
@@ -160,7 +193,8 @@ impl Civ {
             if fig.retired_tick.is_some() {
                 continue;
             }
-            fig.hypothesizer.refresh_perceivable(&perceived_vec);
+            fig.hypothesizer
+                .refresh_perceivable_with_channels(&perceived_vec, channels);
             fig.hypothesizer.set_available_forms(derived.clone());
         }
     }

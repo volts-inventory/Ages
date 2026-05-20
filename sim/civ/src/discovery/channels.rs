@@ -64,7 +64,8 @@ impl Channel {
 /// the candidate set grow (when sensorium-extending tools widen
 /// the perceivable templates) without renumbering existing
 /// confirmed relations. `template_id × 16 + channel_discriminant`
-/// keeps the channel namespace below 16 (currently 8 used).
+/// keeps the channel namespace below 16 (currently 10 used:
+/// 0..=9 with `MagneticField` at 9).
 pub fn relation_id_for(template_id: u32, channel: Channel) -> u32 {
     template_id * 16 + (channel as u32)
 }
@@ -132,28 +133,43 @@ pub fn channels_for_modality(modality: sim_species::ModalityKind) -> &'static [C
 }
 
 /// Union of channels reachable by *any* of the species' sensory
-/// modalities. Fossil + Fuel are always included as universally
-/// accessible — every civ can dig / observe surface biomass via
-/// tools rather than native senses. If the union otherwise
-/// would be empty (a Bioluminescent-only / Gestural-only seed),
-/// fall back to the full ALL list as a safety floor.
-#[allow(dead_code)]
+/// modalities. No universal force-include — Fuel + Fossil were
+/// previously pinned on every civ regardless of senses, which
+/// made the modality mapping moot for the always-present
+/// channels and made the (Fuel via fire glow) Visual overlap
+/// invisible. If the union is genuinely empty (e.g. a
+/// Bioluminescent-only / Gestural-only seed with no perceptual
+/// modalities at all), fall back to a minimum-viable contact
+/// set — `Temperature` + `Elevation` — the universally-touchable
+/// fields any creature with a body can read.
 #[must_use]
 pub fn perceivable_channels(
     modalities: &[sim_species::Modality],
 ) -> Vec<Channel> {
+    let kinds: Vec<sim_species::ModalityKind> = modalities.iter().map(|m| m.kind).collect();
+    perceivable_channels_from_kinds(&kinds)
+}
+
+/// `perceivable_channels` for callers that already hold a slice of
+/// `ModalityKind` (the bare enum, no per-modality parameters).
+/// Civ founding pipelines thread `species_modality_kinds` here so
+/// the per-figure `Hypothesizer` gets a sensor-gated candidate
+/// set without needing a full `Vec<Modality>`.
+#[must_use]
+pub fn perceivable_channels_from_kinds(
+    modality_kinds: &[sim_species::ModalityKind],
+) -> Vec<Channel> {
     let mut set: std::collections::BTreeSet<Channel> = std::collections::BTreeSet::new();
-    for m in modalities {
-        for ch in channels_for_modality(m.kind) {
+    for kind in modality_kinds {
+        for ch in channels_for_modality(*kind) {
             set.insert(*ch);
         }
     }
-    // Universal-access fallback: a civ can always dig (Fossil)
-    // and observe its own surface biomass (Fuel).
-    set.insert(Channel::Fossil);
-    set.insert(Channel::Fuel);
     if set.is_empty() {
-        return Channel::ALL.to_vec();
+        // Reachable now that the Fuel/Fossil force-include is
+        // gone: every species with only output-only modalities
+        // (Bioluminescent/Gestural/Postural) lands here.
+        return vec![Channel::Temperature, Channel::Elevation];
     }
     set.into_iter().collect()
 }
@@ -174,6 +190,11 @@ impl Channel {
             Channel::WaterDepth => Real::from_int(100),
             Channel::ChargeMagnitude => Real::from_int(10),
             Channel::Elevation => Real::from_int(1000),
+            // Planetary `|B|` sits in low single digits in the
+            // current magnetism model (`MagnetosphereParams`
+            // earth-like equator ~1 unit; pole-peaked enhancement);
+            // unit-scale keeps fits inside Q32.32 range.
+            Channel::MagneticField => Real::ONE,
             // Substance densities sit in low single digits;
             // unit-scale leaves them unchanged.
             Channel::Fuel
@@ -195,6 +216,12 @@ impl Channel {
             Channel::Vapour => state.substance(Substance::Vapour.idx())[cell],
             Channel::Ice => state.substance(Substance::Ice.idx())[cell],
             Channel::Fossil => state.substance(Substance::Fossil.idx())[cell],
+            // Cached per-cell `|B|` from the magnetism kernel —
+            // `magnetism::Magnetism::init_field` + `step` refresh
+            // it after every state-mutating pass. Magnetoreceptor
+            // species now read the actual planetary field strength
+            // rather than the misappropriated `ChargeMagnitude`.
+            Channel::MagneticField => state.magnetic_field_magnitude(cell),
         };
         raw / self.scale()
     }
@@ -210,6 +237,7 @@ impl Channel {
             Channel::Vapour => "vapour",
             Channel::Ice => "ice",
             Channel::Fossil => "fossil",
+            Channel::MagneticField => "magnetic_field",
         }
     }
 }

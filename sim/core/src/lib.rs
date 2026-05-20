@@ -274,7 +274,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     // Seed every active civ's hypothesizer form vocab from
     // the species-baseline perceivable templates' structural tags.
     for c in civs.iter_mut().filter(|c| c.is_active()) {
-        c.refresh_available_forms(&species_baseline, &recognition);
+        c.refresh_available_forms_with_modalities(
+            &species_baseline,
+            &recognition,
+            &species_modality_kinds,
+        );
     }
     let has_magnetosphere = planet.magnetosphere != Magnetosphere::None;
     let has_em_medium = planet.atmosphere != Atmosphere::None
@@ -327,6 +331,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             &species_channels,
             &species_manipulations,
             &species_baseline,
+            &species_modality_kinds,
             has_magnetosphere,
             has_em_medium,
             &mut civs,
