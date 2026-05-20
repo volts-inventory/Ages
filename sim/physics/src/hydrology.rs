@@ -415,23 +415,20 @@ impl Law for Hydrology {
         // with the symmetric evap + precip drives above, a
         // pathological seed could in principle accumulate vapour
         // above the I32F32 (~2e9) ceiling and overflow downstream
-        // fit code. Clamp every cell to `100 × max(water_depth)`
-        // (with a generous static fallback when the planet starts
-        // dry) so the field is bounded by construction. The mass
-        // discarded by the clamp is the only place hydrology
-        // can violate `Σ water + Σ vapour` conservation; under
-        // earth-like coefficients the clamp never fires (verified
-        // by `hydrology_cycle_reaches_steady_state`).
-        let max_water = water_depth_next
-            .iter()
-            .copied()
-            .fold(Real::ZERO, |a, b| a.max(b));
-        // Static fallback: 10_000 units per cell, well below the
-        // I32F32 ceiling and far above any plausible per-cell
-        // vapour density.
+        // fit code. Earlier the cap was `100 × max(water_depth)`
+        // over the *entire grid* — meaning a single deep ocean cell
+        // at 1000 m set every cell's cap to 100,000, including
+        // inland desert cells that had no business with that much
+        // headroom. Now per-cell: `cap[i] = max(100 × water_depth[i],
+        // static_floor)`. Cells with no water get only the static
+        // floor; cells near the ocean get the deep-water tolerance
+        // they need. The static floor stays at 10_000 so dry-cell
+        // vapour can still build up to reasonable storm-system
+        // concentrations on planets that start water-poor.
         let static_floor = Real::from_int(10_000);
-        let cap = (max_water * Real::from_int(100)).max(static_floor);
-        for v in vapour_advected.iter_mut() {
+        for (i, v) in vapour_advected.iter_mut().enumerate() {
+            let local_water = water_depth_next.get(i).copied().unwrap_or(Real::ZERO);
+            let cap = (local_water * Real::from_int(100)).max(static_floor);
             if *v > cap {
                 *v = cap;
             }
