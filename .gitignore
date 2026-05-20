@@ -4,3 +4,4 @@
 .DS_Store
 .claude-history/
 /events.ndjson
+.claude/worktrees/
