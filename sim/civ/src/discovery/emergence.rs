@@ -98,6 +98,7 @@ fn channel_to_field(channel: Channel) -> Option<Field> {
         Channel::Temperature => Some(Field::Temperature),
         Channel::WaterDepth => Some(Field::WaterDepth),
         Channel::ChargeMagnitude => Some(Field::Charge),
+        Channel::MagneticField => Some(Field::MagneticMagnitude),
         Channel::Fuel => Some(Field::Substance(sim_physics::Substance::Fuel)),
         Channel::Oxidiser => Some(Field::Substance(sim_physics::Substance::Oxidiser)),
         Channel::Vapour => Some(Field::Substance(sim_physics::Substance::Vapour)),

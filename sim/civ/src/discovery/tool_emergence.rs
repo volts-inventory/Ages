@@ -72,7 +72,8 @@ fn channel_to_substance(channel: Channel) -> Option<Substance> {
         Channel::Temperature
         | Channel::WaterDepth
         | Channel::ChargeMagnitude
-        | Channel::Elevation => None,
+        | Channel::Elevation
+        | Channel::MagneticField => None,
     }
 }
 
@@ -154,6 +155,7 @@ fn channel_to_kind(channel: Channel) -> ChannelKind {
     match channel {
         Channel::Temperature => ChannelKind::InfraredThermal,
         Channel::ChargeMagnitude => ChannelKind::ElectricField,
+        Channel::MagneticField => ChannelKind::MagneticSense,
         Channel::WaterDepth => ChannelKind::AcousticWater,
         Channel::Elevation => ChannelKind::Tactile,
         Channel::Fuel | Channel::Oxidiser | Channel::Vapour | Channel::Ice | Channel::Fossil => {
@@ -254,6 +256,14 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
         Channel::Fossil => {
             effects.capacity_multiplier = effects.capacity_multiplier + Real::percent(10) * scale;
         }
+        // MagneticField: planetary-field instrumentation —
+        // compasses, navigation aids, deep-sense detectors. Lifts
+        // expansion-rate (better navigation) and accelerates the
+        // science loop on the magnetic-field axis.
+        Channel::MagneticField => {
+            effects.expansion_rate_bonus = Real::percent(5) * scale;
+            effects.discovery_rate_bonus = Real::percent(5) * scale;
+        }
     }
     effects
 }
@@ -262,6 +272,7 @@ fn channel_label(channel: Channel) -> &'static str {
     match channel {
         Channel::Temperature => "thermal",
         Channel::ChargeMagnitude => "field",
+        Channel::MagneticField => "magnetic",
         Channel::WaterDepth => "fluid",
         Channel::Elevation => "altimetric",
         Channel::Fuel => "fuel",

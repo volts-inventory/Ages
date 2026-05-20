@@ -213,13 +213,46 @@ impl Hypothesizer {
     /// construct a hypothesizer with an explicit
     /// `attempt_period` (in ticks per candidate). High-cognition
     /// species pass shorter periods, accumulating discoveries
-    /// faster across their candidate space.
+    /// faster across their candidate space. Legacy entry point —
+    /// uses the full `Channel::ALL` candidate cross-product; civ-
+    /// aware callers thread a species-derived channel set through
+    /// `with_attempt_period_and_channels` so candidate generation
+    /// reflects what the species can actually sense.
     pub fn with_attempt_period(
         intelligence: Real,
         perceivable_template_ids: &[u32],
         attempt_period: u64,
     ) -> Self {
-        let candidates = Self::candidates_for(perceivable_template_ids);
+        Self::with_attempt_period_and_channels(
+            intelligence,
+            perceivable_template_ids,
+            attempt_period,
+            None,
+        )
+    }
+
+    /// Sensor-aware constructor. `channels = Some(species_channels)`
+    /// restricts the candidate cross-product to only the channels
+    /// the species' sensory modalities can reach (see
+    /// `discovery::channels::perceivable_channels`). Without this,
+    /// every civ enumerated the same 10-channel × N-template
+    /// cross-product regardless of whether it had the senses to
+    /// observe through those channels — a magnetic-sense species
+    /// and a visual-light species drew identical observational
+    /// manifolds. `channels = None` falls back to the full
+    /// `Channel::ALL` (the legacy path; preserved so existing
+    /// tests and callers without species context continue to
+    /// pass through unchanged).
+    pub fn with_attempt_period_and_channels(
+        intelligence: Real,
+        perceivable_template_ids: &[u32],
+        attempt_period: u64,
+        channels: Option<&[Channel]>,
+    ) -> Self {
+        let candidates = match channels {
+            Some(set) => Self::candidates_for_with_channels(perceivable_template_ids, set),
+            None => Self::candidates_for(perceivable_template_ids),
+        };
         let mut samples = BTreeMap::new();
         let mut next_attempt = BTreeMap::new();
         for c in &candidates {
@@ -384,8 +417,33 @@ impl Hypothesizer {
     /// already present; new (template, channel) pairs get fresh
     /// empty buffers; templates removed from the perceivable set
     /// (rare in M3) drop their state.
+    ///
+    /// Legacy entry point — uses the full `Channel::ALL` cross-
+    /// product. Sensor-aware callers use
+    /// `refresh_perceivable_with_channels` so a tool unlock that
+    /// extends channel access actually re-filters the candidate
+    /// set; calling this directly silently regenerates the
+    /// unfiltered candidate space and undoes the sensor gating
+    /// set up at construction.
     pub fn refresh_perceivable(&mut self, perceivable_template_ids: &[u32]) {
-        let new_candidates = Self::candidates_for(perceivable_template_ids);
+        self.refresh_perceivable_with_channels(perceivable_template_ids, None);
+    }
+
+    /// Sensor-aware variant of `refresh_perceivable`.
+    /// `channels = Some(species_channels ∪ unlocked_channels)`
+    /// restricts the regenerated candidate set the same way
+    /// `with_attempt_period_and_channels` does at construction.
+    /// `None` keeps the legacy full-channel behaviour for tests
+    /// and callers without species context.
+    pub fn refresh_perceivable_with_channels(
+        &mut self,
+        perceivable_template_ids: &[u32],
+        channels: Option<&[Channel]>,
+    ) {
+        let new_candidates = match channels {
+            Some(set) => Self::candidates_for_with_channels(perceivable_template_ids, set),
+            None => Self::candidates_for(perceivable_template_ids),
+        };
         let new_ids: BTreeSet<u32> = new_candidates.iter().map(|c| c.relation_id).collect();
         // Drop state for relations no longer in scope.
         self.samples.retain(|rid, _| new_ids.contains(rid));

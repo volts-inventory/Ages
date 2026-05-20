@@ -37,6 +37,11 @@ impl Civ {
     ) -> Self {
         let grammar = NameGrammar::derive(species_modalities, new_id, species_seed);
         let attempt_period = attempt_period_for_cognition(intelligence);
+        // Sensor-gated candidate set — see `with_species`. Empty
+        // modality lists fall back to the universal `Temperature`+
+        // `Elevation` minimum.
+        let species_channels =
+            crate::discovery::perceivable_channels_from_kinds(species_modalities);
         let (figures, next_figure_id) = found_band(
             &grammar,
             new_id,
@@ -46,6 +51,7 @@ impl Civ {
             intelligence,
             &[],
             attempt_period,
+            Some(&species_channels),
         );
         let centroid = figures.first().map_or(0, |f| f.cell_assignment);
         let initial_religion = {
