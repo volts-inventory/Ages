@@ -37,12 +37,16 @@
 mod climate;
 mod composition;
 mod habitability;
+mod hemisphere;
 mod init;
 mod planet;
 mod sampling;
 mod types;
 
 pub use climate::{seasonal_capacity_factor, seasonal_temperature_offset};
+pub use hemisphere::{
+    hemisphere_for_row, hemisphere_for_row_climate_legacy, Hemisphere,
+};
 pub use composition::{AtmosphericComposition, CrustalComposition, Moon};
 pub use habitability::{
     cell_habitability, habitability_multiplier, is_claimable_multiplier, is_land_glyph,

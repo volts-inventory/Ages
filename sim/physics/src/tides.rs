@@ -358,6 +358,80 @@ mod tests {
     }
 
     #[test]
+    fn tides_conserve_water_under_pathological_coefficients() {
+        // PR6 conservation invariant: even with `tide_k` an order
+        // of magnitude above earth-like and per-cell depths
+        // varying down to zero, the pair-flux + donor-limited
+        // structure preserves total water bit-exactly. This is the
+        // orchestrator-level `debug_assert!` made explicit at the
+        // law level so a future regression in either the pair-flux
+        // loop or the donor cap (PR1) trips here before it pollutes
+        // an integrated run.
+        let grid = HexGrid::new(8, 4);
+        let mut state = PhysicsState::new(grid);
+        for (i, w) in state.water_depth_mut().iter_mut().enumerate() {
+            // Mix of full and empty cells so donor caps actually
+            // engage during the pair pass.
+            *w = if i % 3 == 0 {
+                Real::ZERO
+            } else {
+                Real::from_int(((i as i64) * 50) % 200)
+            };
+        }
+        let initial: Real = state
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let tides = Tides {
+            // 0.8 — 800× earth-like; well into the pathological
+            // regime where a naive post-pass clamp would have
+            // silently created mass.
+            tide_k: Real::from_ratio(8, 10),
+            moons: vec![MoonTide {
+                mass_relative: Real::ONE,
+                period_macros: 28,
+                declination_r: 0,
+            }],
+        };
+        // Assert conservation at every step, not just before/after,
+        // so the failure surfaces at the exact tick where a future
+        // regression starts to drift.
+        for tick in 0..100 {
+            let pre: Real = state
+                .water_depth()
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b);
+            tides.integrate(&mut state, Real::ONE);
+            let post: Real = state
+                .water_depth()
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b);
+            assert_eq!(
+                pre, post,
+                "tide_k=0.8 leaked water at tick {tick}: \
+                 pre={pre:?} post={post:?}"
+            );
+            state.advance_macro_step();
+        }
+        let after: Real = state
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert_eq!(initial, after);
+        // Non-negativity invariant — the donor cap guarantees this.
+        for w in state.water_depth() {
+            assert!(
+                *w >= Real::ZERO,
+                "water depth must stay non-negative under pathological tide_k"
+            );
+        }
+    }
+
+    #[test]
     fn tide_declination_modulates_potential() {
         // Two cells at equal q-offset from sub-lunar (so identical
         // longitudinal forcing) but at different r-offsets from

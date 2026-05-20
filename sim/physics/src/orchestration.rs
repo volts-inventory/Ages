@@ -13,14 +13,101 @@
 //!
 //! Determinism: fixed sub-step counts, fixed coupling order, fixed
 //! dt per family. No state-dependent branching.
+//!
+//! ## Conservation invariants (debug-mode runtime asserts)
+//!
+//! Substance transport, chemistry, hydrology, and tides are all
+//! pair-flux or stoichiometric-redistribution kernels that should
+//! preserve mass bit-exactly under Q32.32 fixed-point arithmetic.
+//! A regression in any of them would silently leak mass and
+//! manifest as downstream weirdness thousands of ticks later. To
+//! catch leaks at the first tick of drift, the orchestrator snapshots
+//! the relevant conservation total before each kernel and asserts
+//! `< 1e-6` drift afterwards via `debug_assert!`. These are
+//! zero-cost in release builds and budget ~30 s of overhead on the
+//! 16k-tick canary in debug builds — a reasonable trade for fast
+//! regression detection.
+//!
+//! The invariants checked:
+//!
+//! - `Tides`: `Σ water_depth` (donor-limited pair-flux is bit-exact).
+//! - `Hydrology`: `Σ water_depth + Σ Substance::Vapour` (evap +
+//!   pair-flux advect + condense only redistribute between channels).
+//! - `Chemistry`: `Σ over all substances` (combustion 1+1→2,
+//!   biofuel regrowth 2→1+1, and phase transitions are all
+//!   stoichiometrically mass-conservative).
 
 use crate::chemistry::Chemistry;
+#[cfg(debug_assertions)]
+use crate::chemistry::Substance;
 use crate::em::Electromagnetism;
 use crate::fluid::GravityFlow;
 use crate::heat::HeatConduction;
 use crate::laws::Law;
 use crate::state::PhysicsState;
+#[cfg(debug_assertions)]
+use crate::state::N_SUBSTANCES;
 use sim_arith::Real;
+
+/// Sum of every per-cell entry across every substance channel.
+/// Used by the debug-mode conservation asserts wrapping each
+/// kernel's `integrate` call so a regression in pair-flux or
+/// chemistry stoichiometry trips on the *first* tick of drift
+/// rather than as downstream weirdness ~10k ticks later.
+///
+/// Zero-cost in release builds (the calls are inside
+/// `debug_assert!`-gated closures the optimiser strips).
+#[cfg(debug_assertions)]
+fn total_substance_mass(state: &PhysicsState) -> Real {
+    let mut total = Real::ZERO;
+    for s in 0..N_SUBSTANCES {
+        for v in state.substance(s) {
+            total = total + *v;
+        }
+    }
+    total
+}
+
+/// Total surface water column. Tides conserve this exactly under
+/// donor-limited pair-flux (PR1); the orchestrator-level assert
+/// catches future regressions in that loop.
+#[cfg(debug_assertions)]
+fn total_water_depth(state: &PhysicsState) -> Real {
+    state
+        .water_depth()
+        .iter()
+        .copied()
+        .fold(Real::ZERO, |a, b| a + b)
+}
+
+/// `Σ water_depth + Σ Substance::Vapour`. Hydrology's three-step
+/// cycle (evaporation → advection → condensation) moves mass
+/// between these two channels and never creates or destroys any,
+/// so the sum is invariant across every `Hydrology::integrate`
+/// call. Surface water that evaporates becomes vapour; vapour
+/// that advects out of one cell lands in a neighbour; vapour that
+/// precipitates becomes water_depth. A regression in any of the
+/// three steps trips this assert.
+#[cfg(debug_assertions)]
+fn total_water_plus_vapour(state: &PhysicsState) -> Real {
+    let water = total_water_depth(state);
+    let vapour = state
+        .substance(Substance::Vapour.idx())
+        .iter()
+        .copied()
+        .fold(Real::ZERO, |a, b| a + b);
+    water + vapour
+}
+
+/// Conservation drift tolerance for the debug-mode asserts.
+/// Q32.32 fixed-point pair-flux is bit-exact, so the expected
+/// drift is *zero* — `1e-6` is a generous safety margin that
+/// would still flag any structural leak well before it accumulates
+/// into a visible deviation. Real::from_ratio(1, 1_000_000).
+#[cfg(debug_assertions)]
+fn drift_tolerance() -> Real {
+    Real::from_ratio(1, 1_000_000)
+}
 
 /// Per-family sub-step counts within a macro-step plus per-family
 /// dt values. Defaults match the operator-splitting spec.
@@ -110,7 +197,23 @@ pub fn integrate_civ_step(
         // gradient. Tides reads `state.macro_step()` (advanced at
         // the bottom of this loop body).
         if let Some(t) = tides {
+            // Conservation invariant: pair-flux tides only move
+            // water between cells, never create or destroy it.
+            // Donor-limited (PR1) ensures bit-exact preservation
+            // even under pathological coefficients; the debug
+            // assert catches future regressions on the first tick
+            // of drift.
+            #[cfg(debug_assertions)]
+            let pre_water = total_water_depth(state);
             t.integrate(state, cfg.heat_dt);
+            #[cfg(debug_assertions)]
+            {
+                let post_water = total_water_depth(state);
+                debug_assert!(
+                    (post_water - pre_water).abs() < drift_tolerance(),
+                    "tides leaked water: pre={pre_water:?} post={post_water:?}"
+                );
+            }
         }
         for _fluid_step in 0..cfg.fluid_substeps_per_macro {
             fluid.integrate(state, cfg.fluid_dt);
@@ -146,7 +249,24 @@ pub fn integrate_civ_step(
         // velocity, before heat so any latent-heat refinements
         // (follow-up) see pre-conduction temperatures.
         if let Some(h) = hydrology {
+            // Conservation invariant: the hydrologic cycle moves
+            // mass between `water_depth` and `Substance::Vapour`
+            // (evaporation, condensation) and shuffles vapour
+            // between cells (pair-flux advection); it never
+            // creates or destroys total `water + vapour`. A
+            // regression in any of the three steps trips this
+            // assert.
+            #[cfg(debug_assertions)]
+            let pre_wv = total_water_plus_vapour(state);
             h.integrate(state, cfg.heat_dt);
+            #[cfg(debug_assertions)]
+            {
+                let post_wv = total_water_plus_vapour(state);
+                debug_assert!(
+                    (post_wv - pre_wv).abs() < drift_tolerance(),
+                    "hydrology leaked mass: pre={pre_wv:?} post={post_wv:?}"
+                );
+            }
         }
         for _heat_step in 0..cfg.heat_substeps_per_macro {
             heat.integrate(state, cfg.heat_dt);
@@ -177,7 +297,24 @@ pub fn integrate_civ_step(
             l.integrate(state, cfg.em_dt);
         }
         if macro_step % chem_period == 0 {
+            // Conservation invariant: combustion (1 fuel + 1
+            // oxidiser → 2 ash), biofuel regrowth (2 ash → 1
+            // fuel + 1 oxidiser), and phase transitions
+            // (water ↔ ice ↔ vapour) all preserve total
+            // substance mass bit-exactly. The summed
+            // `Σ over all substances` is invariant across
+            // every chemistry call.
+            #[cfg(debug_assertions)]
+            let pre_mass = total_substance_mass(state);
             chemistry.integrate(state, cfg.chemistry_dt);
+            #[cfg(debug_assertions)]
+            {
+                let post_mass = total_substance_mass(state);
+                debug_assert!(
+                    (post_mass - pre_mass).abs() < drift_tolerance(),
+                    "chemistry leaked mass: pre={pre_mass:?} post={post_mass:?}"
+                );
+            }
         }
         // Advance the planetary clock at the end of every
         // macro-step so next iteration's tides see the new phase.
