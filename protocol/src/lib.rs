@@ -180,6 +180,16 @@ pub enum Event {
     /// M8 — trade route closed. See `TradeRouteClosed::reason` for
     /// the trigger.
     TradeRouteClosed(TradeRouteClosed),
+    /// Mutual alliance formed between two civs. Both satisfied
+    /// the cumulative criteria (cosmology + religion proximity,
+    /// prior peaceful contact). Allied pairs have
+    /// `conflict::resolve` short-circuit, so they can share
+    /// borders without war.
+    AllianceFormed(AllianceFormed),
+    /// Alliance between two civs dissolved. Reason indicates
+    /// which dissolution rule fired (drift, war misalignment, or
+    /// trust erosion).
+    AllianceDissolved(AllianceDissolved),
     /// A relation almost crossed the inter-civ
     /// transmission gate but didn't quite — the comprehension
     /// score landed in the mythologization band so the relation's

@@ -194,6 +194,11 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         | Event::CivSurplusChanged(_)
         | Event::TradeRouteEstablished(_)
         | Event::TradeRouteClosed(_)
+        // Alliances surface in the per-civ chapter + the
+        // viewport log line; per-event reel pins would push out
+        // higher-signal beats (founding / collapse / catastrophe).
+        | Event::AllianceFormed(_)
+        | Event::AllianceDissolved(_)
         // Per-relation mythologization residue is too granular
         // to pin individually. Aggregate effect surfaces via the
         // CosmologyShifted events the cosmology drift naturally emits.

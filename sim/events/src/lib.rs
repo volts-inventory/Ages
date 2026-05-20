@@ -194,6 +194,8 @@ impl Emitter for CountingEmitter {
             Event::CivSurplusChanged(_) => "civ_surplus_changed",
             Event::TradeRouteEstablished(_) => "trade_route_established",
             Event::TradeRouteClosed(_) => "trade_route_closed",
+            Event::AllianceFormed(_) => "alliance_formed",
+            Event::AllianceDissolved(_) => "alliance_dissolved",
         };
         *self.counts.entry(key).or_insert(0) += 1;
         Ok(())
