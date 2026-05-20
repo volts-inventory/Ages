@@ -10,9 +10,10 @@
 //! constants stay here.
 
 use protocol::{
-    CatastropheFired, CivCollapsed, CivContact, CivFounded, CivTerritoryChanged, ConflictResolved,
-    Event, KnowledgeDiffused, KnowledgeTransmitted, PeaceConcluded, PeaceReason, Phase, RunHeader,
-    TickEvent, WarDeclared, SCHEMA_VERSION,
+    AllianceDissolveReason, AllianceDissolved, AllianceFormed, CatastropheFired, CivCollapsed,
+    CivContact, CivFounded, CivTerritoryChanged, ConflictResolved, Event, KnowledgeDiffused,
+    KnowledgeTransmitted, PeaceConcluded, PeaceReason, Phase, RunHeader, TickEvent, WarDeclared,
+    SCHEMA_VERSION,
 };
 use sim_arith::Real;
 use sim_civ::{catastrophe, conflict, cosmology, tech, transmission, Civ};
@@ -1183,6 +1184,20 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                                 &state,
                             ) {
                                 emitted_contacts.insert(pair);
+                                // PR4: mirror the contact in each
+                                // civ's `contact_history` set so
+                                // the alliance-formation rule
+                                // (`propose_alliance`) sees prior
+                                // contact history when scanning
+                                // pairs later.
+                                if let Some(parent_mut) =
+                                    civs.iter_mut().find(|c| c.id == parent_id)
+                                {
+                                    parent_mut.contact_history.insert(new_id);
+                                }
+                                if let Some(child_mut) = civs.iter_mut().find(|c| c.id == new_id) {
+                                    child_mut.contact_history.insert(parent_id);
+                                }
                                 emitter.emit(&Event::CivContact(CivContact {
                                     tick,
                                     civ_a: pair.0,
@@ -1225,6 +1240,22 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         continue;
                     }
                     emitted_contacts.insert(pair);
+                    // PR4: mirror the contact in each civ's
+                    // `contact_history` so `propose_alliance` can
+                    // gate on prior-contact later. Done before the
+                    // event emission so contact-history bookkeeping
+                    // is consistent even if the emit fails.
+                    if let Some(a_mut) = civs.iter_mut().find(|c| c.id == pair.0) {
+                        a_mut.contact_history.insert(pair.1);
+                    }
+                    if let Some(b_mut) = civs.iter_mut().find(|c| c.id == pair.1) {
+                        b_mut.contact_history.insert(pair.0);
+                    }
+                    // Re-borrow immutably for the peaceful-pair
+                    // check below (the prior `civ_a` / `civ_b` refs
+                    // were invalidated by the `iter_mut` calls).
+                    let civ_a = civs.iter().find(|c| c.id == pair.0).expect("active civ");
+                    let civ_b = civs.iter().find(|c| c.id == pair.1).expect("active civ");
                     emitter.emit(&Event::CivContact(CivContact {
                         tick,
                         civ_a: pair.0,
@@ -1476,6 +1507,194 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 }
                 for ev in peace_events {
                     emitter.emit(&Event::PeaceConcluded(ev))?;
+                }
+
+                // PR4: Alliance formation + dissolution pass. Runs
+                // on the same cadence as the conflict check; uses
+                // the just-updated `war_state` map so the
+                // war-misalignment dissolution rule sees the
+                // current tick's war declarations.
+                //
+                // Formation: for every in-contact, at-peace pair
+                // whose cosmology + religion distances fall under
+                // the formation gates and that has prior
+                // contact history, insert symmetric
+                // `allied_with` flags and seed trust.
+                // Dissolution: three paths (drift, war
+                // misalignment, trust eroded); whichever fires
+                // first removes the symmetric flags and emits the
+                // matching `AllianceDissolved` event.
+                let mut alliance_formed_events: Vec<AllianceFormed> = Vec::new();
+                let mut alliance_dissolved_events: Vec<AllianceDissolved> = Vec::new();
+                // Snapshot the current at-war set (normalised
+                // pairs) once so the war-misalignment check is
+                // self-consistent across the whole pass.
+                let at_war_pairs: std::collections::BTreeSet<(u32, u32)> =
+                    war_state.keys().copied().collect();
+
+                // Plan dissolutions first — read-only over civs;
+                // record the (pair, reason) tuples, then mutate.
+                let mut dissolutions: Vec<((u32, u32), AllianceDissolveReason)> = Vec::new();
+                let mut formations: Vec<(u32, u32)> = Vec::new();
+                let mut trust_updates: Vec<((u32, u32), Real)> = Vec::new();
+
+                for i in 0..active_ids.len() {
+                    for j in (i + 1)..active_ids.len() {
+                        let pair = if active_ids[i] < active_ids[j] {
+                            (active_ids[i], active_ids[j])
+                        } else {
+                            (active_ids[j], active_ids[i])
+                        };
+                        let Some(civ_a_idx) = civs.iter().position(|c| c.id == pair.0) else {
+                            continue;
+                        };
+                        let Some(civ_b_idx) = civs.iter().position(|c| c.id == pair.1) else {
+                            continue;
+                        };
+                        let civ_a = &civs[civ_a_idx];
+                        let civ_b = &civs[civ_b_idx];
+                        let mutually_allied = civ_a.allied_with.contains(&civ_b.id)
+                            && civ_b.allied_with.contains(&civ_a.id);
+
+                        if mutually_allied {
+                            // 1. Drift dissolution.
+                            if conflict::alliance_drifted_apart(civ_a, civ_b) {
+                                dissolutions
+                                    .push((pair, AllianceDissolveReason::CosmologyDrift));
+                                continue;
+                            }
+                            // 2. War-misalignment: one ally at war
+                            // with a third party the other is at
+                            // peace with.
+                            let a_wars: std::collections::BTreeSet<u32> = at_war_pairs
+                                .iter()
+                                .filter_map(|(lo, hi)| {
+                                    if *lo == civ_a.id {
+                                        Some(*hi)
+                                    } else if *hi == civ_a.id {
+                                        Some(*lo)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .filter(|other| *other != civ_b.id)
+                                .collect();
+                            let b_wars: std::collections::BTreeSet<u32> = at_war_pairs
+                                .iter()
+                                .filter_map(|(lo, hi)| {
+                                    if *lo == civ_b.id {
+                                        Some(*hi)
+                                    } else if *hi == civ_b.id {
+                                        Some(*lo)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .filter(|other| *other != civ_a.id)
+                                .collect();
+                            let misaligned = a_wars
+                                .iter()
+                                .any(|t| !b_wars.contains(t))
+                                || b_wars.iter().any(|t| !a_wars.contains(t));
+                            if misaligned {
+                                dissolutions
+                                    .push((pair, AllianceDissolveReason::WarMisalignment));
+                                continue;
+                            }
+                            // 3. Trust decay (third dissolution
+                            // path — confidence falloff).
+                            let cosmo_gap = conflict::cosmology_distance(civ_a, civ_b);
+                            let religion_gap = conflict::religion_distance(civ_a, civ_b);
+                            // Use the lower (more pessimistic)
+                            // side's trust as the pair's effective
+                            // trust — alliances dissolve when
+                            // *either* side loses faith.
+                            let trust_a = civ_a
+                                .alliance_trust
+                                .get(&civ_b.id)
+                                .copied()
+                                .unwrap_or(Real::from(conflict::ALLIANCE_TRUST_INITIAL));
+                            let trust_b = civ_b
+                                .alliance_trust
+                                .get(&civ_a.id)
+                                .copied()
+                                .unwrap_or(Real::from(conflict::ALLIANCE_TRUST_INITIAL));
+                            let prior = trust_a.min(trust_b);
+                            let post = conflict::step_alliance_trust(
+                                prior,
+                                cosmo_gap,
+                                religion_gap,
+                            );
+                            trust_updates.push((pair, post));
+                            if post < Real::from(conflict::ALLIANCE_TRUST_FLOOR) {
+                                dissolutions
+                                    .push((pair, AllianceDissolveReason::TrustEroded));
+                            }
+                        } else {
+                            // Formation candidate: must have prior
+                            // contact + low cosmology+religion gap
+                            // + not at war.
+                            let at_war_now = at_war_pairs.contains(&pair);
+                            if conflict::propose_alliance(civ_a, civ_b, at_war_now, tick) {
+                                formations.push(pair);
+                            }
+                        }
+                    }
+                }
+
+                // Apply trust updates first (records the per-pair
+                // post-decay value). Dissolutions after may clear
+                // the entry; that's fine — `BTreeMap::remove` is a
+                // no-op on missing keys.
+                let trust_initial = Real::from(conflict::ALLIANCE_TRUST_INITIAL);
+                for (pair, post) in trust_updates {
+                    if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.0) {
+                        civ.alliance_trust.insert(pair.1, post);
+                    }
+                    if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.1) {
+                        civ.alliance_trust.insert(pair.0, post);
+                    }
+                }
+                // Apply formations: symmetric `allied_with` insert
+                // + initial trust seed + event.
+                for pair in formations {
+                    if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.0) {
+                        civ.allied_with.insert(pair.1);
+                        civ.alliance_trust.insert(pair.1, trust_initial);
+                    }
+                    if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.1) {
+                        civ.allied_with.insert(pair.0);
+                        civ.alliance_trust.insert(pair.0, trust_initial);
+                    }
+                    alliance_formed_events.push(AllianceFormed {
+                        tick,
+                        civ_a: pair.0,
+                        civ_b: pair.1,
+                    });
+                }
+                // Apply dissolutions: symmetric `allied_with`
+                // remove + clear the trust scalar + event.
+                for (pair, reason) in dissolutions {
+                    if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.0) {
+                        civ.allied_with.remove(&pair.1);
+                        civ.alliance_trust.remove(&pair.1);
+                    }
+                    if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.1) {
+                        civ.allied_with.remove(&pair.0);
+                        civ.alliance_trust.remove(&pair.0);
+                    }
+                    alliance_dissolved_events.push(AllianceDissolved {
+                        tick,
+                        civ_a: pair.0,
+                        civ_b: pair.1,
+                        reason,
+                    });
+                }
+                for ev in alliance_formed_events {
+                    emitter.emit(&Event::AllianceFormed(ev))?;
+                }
+                for ev in alliance_dissolved_events {
+                    emitter.emit(&Event::AllianceDissolved(ev))?;
                 }
             }
             if tick.is_multiple_of(100) {

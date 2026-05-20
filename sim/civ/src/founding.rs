@@ -82,6 +82,8 @@ impl Civ {
             carrying_capacity_per_unit: Real::from_int(50_000),
             species_habitat: sim_species::Habitat::Terrestrial,
             allied_with: std::collections::BTreeSet::new(),
+            contact_history: std::collections::BTreeSet::new(),
+            alliance_trust: std::collections::BTreeMap::new(),
             migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,

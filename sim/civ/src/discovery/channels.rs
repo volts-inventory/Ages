@@ -16,7 +16,9 @@ pub enum Channel {
     Temperature = 0,
     WaterDepth = 1,
     /// Magnitude of cell charge (signed → unsigned for fit
-    /// monotonicity); EM field activity.
+    /// monotonicity); ElectricField perception reads charge
+    /// gradients. Distinct from `MagneticField` — birds and other
+    /// magnetoreceptors sense the dipole `B`, not the local charge.
     ChargeMagnitude = 2,
     Elevation = 3,
     Fuel = 4,
@@ -29,13 +31,22 @@ pub enum Channel {
     /// surface biomass. Stays below 16 to fit the `template_id ×
     /// 16 + channel` relation-id encoding.
     Fossil = 8,
+    /// Magnitude of the planetary magnetic field `|B|` at the cell
+    /// (`PhysicsState::magnetic_magnitude()`). The channel
+    /// MagneticSense / RadioNative species actually read —
+    /// previously they were mapped onto `ChargeMagnitude`, which
+    /// was observationally wrong (magnetoreceptors don't read
+    /// electric charge). ElectricField stays on `ChargeMagnitude`.
+    /// Sits at discriminant 9; well under the 16-cap from the
+    /// `template_id × 16 + channel` relation-id encoding.
+    MagneticField = 9,
 }
 
 impl Channel {
     /// All channels available to the discovery pipeline. Used for
     /// the cross-product candidate generation (template × channel)
     /// — see `Hypothesizer::candidates_for`.
-    pub const ALL: [Channel; 9] = [
+    pub const ALL: [Channel; 10] = [
         Channel::Temperature,
         Channel::WaterDepth,
         Channel::ChargeMagnitude,
@@ -45,6 +56,7 @@ impl Channel {
         Channel::Vapour,
         Channel::Ice,
         Channel::Fossil,
+        Channel::MagneticField,
     ];
 }
 
@@ -58,49 +70,61 @@ pub fn relation_id_for(template_id: u32, channel: Channel) -> u32 {
 }
 
 /// Which physics channels each species sensory modality grants
-/// access to. Mapping is biology-grounded: ElectricField /
-/// MagneticSense / RadioNative see ChargeMagnitude;
-/// ChemicalTaste / Pheromone smell substance gradients (Vapour /
-/// Fuel / Oxidiser); Acoustic + Seismic feel pressure / depth /
-/// elevation. Visual sees radiation (Temperature via thermal
-/// radiation, Fuel via fire glow). Tactile is the broadest
-/// baseline — direct contact with the cell. Gestural / Postural
-/// are communication channels, not perception; they grant no
-/// observation access.
+/// access to. Biology-grounded mapping:
+///
+/// - **VisualLight / VisualPolarization** → `Temperature`
+///   (thermal-IR emission visible at long wavelengths +
+///   incandescence) and `Elevation` (visible terrain). Vegetation
+///   reflectance / fire glow are not in the model; mapping `Fuel`
+///   onto vision was a stretch and is dropped.
+/// - **InfraredThermal** → `Temperature` only. The whole point of
+///   thermal IR is reading the blackbody radiance.
+/// - **ChemicalTaste / ChemicalPheromone** → `Vapour` + `Oxidiser`.
+///   Fuel is bulk biomass — combustion products read as `Oxidiser`
+///   depletion + `Vapour`, not as fuel-density-at-distance.
+/// - **AcousticAir / AcousticWater / Seismic** → `WaterDepth` +
+///   `Elevation` + `Temperature` (sound-speed gradients reveal
+///   density / bathymetry / thermal layering).
+/// - **ElectricField** → `ChargeMagnitude`. Electroreceptors read
+///   charge gradients — this is the right physics.
+/// - **MagneticSense / RadioNative** → `MagneticField`. Magneto-
+///   receptors read `|B|`, not charge; the previous mapping onto
+///   `ChargeMagnitude` was observationally wrong.
+/// - **Tactile** → `Temperature` + `Elevation`. Contact-only sense:
+///   it tells the cell's solidity / thermal state but not the bulk
+///   substance composition at distance. The earlier 5-channel
+///   broad-baseline was over-generous — paired with a universal
+///   floor it meant tactile-only species saw nearly everything.
+/// - **Bioluminescent / Gestural / Postural** → empty. Output-only
+///   or communication modalities; no perception contribution.
 ///
 /// Returned slice may be empty for non-perceptual modalities.
-/// Callers union across the species' modality list.
-// Not yet consumed by the production hypothesizer path; ships
-// now as the foundation a follow-up wires through `with_attempt_
-// period` so candidate generation reflects species sensoriums.
-#[allow(dead_code)]
+/// Callers union across the species' modality list and pair with
+/// `perceivable_channels` to derive the per-civ candidate set fed
+/// into `Hypothesizer::candidates_for_with_channels`.
 #[must_use]
 pub fn channels_for_modality(modality: sim_species::ModalityKind) -> &'static [Channel] {
     use sim_species::ModalityKind as MK;
     match modality {
         MK::VisualLight | MK::VisualPolarization => {
-            &[Channel::Temperature, Channel::Fuel, Channel::Elevation]
+            &[Channel::Temperature, Channel::Elevation]
         }
-        MK::InfraredThermal => &[Channel::Temperature, Channel::Fuel],
+        MK::InfraredThermal => &[Channel::Temperature],
         MK::ChemicalTaste | MK::ChemicalPheromone => {
-            &[Channel::Vapour, Channel::Fuel, Channel::Oxidiser]
+            &[Channel::Vapour, Channel::Oxidiser]
         }
         MK::AcousticAir | MK::AcousticWater | MK::Seismic => {
             &[Channel::WaterDepth, Channel::Elevation, Channel::Temperature]
         }
-        MK::ElectricField | MK::MagneticSense | MK::RadioNative => &[Channel::ChargeMagnitude],
-        // Tactile is the broadest fallback — direct contact with
-        // the cell grants access to most local fields. Without
-        // Tactile-as-broad-default a tactile-only species (which
-        // every species has at least implicitly) would be choked
-        // off from most channels.
-        MK::Tactile => &[
-            Channel::Temperature,
-            Channel::WaterDepth,
-            Channel::Elevation,
-            Channel::Ice,
-            Channel::Vapour,
-        ],
+        MK::ElectricField => &[Channel::ChargeMagnitude],
+        MK::MagneticSense | MK::RadioNative => &[Channel::MagneticField],
+        // Tactile is contact-only: it can tell the cell's
+        // thermal state and surface relief but not the bulk
+        // substance composition at distance. Earlier the fallback
+        // listed 5 channels and was paired with a universal floor;
+        // a tactile-only species ended up with 6/9 channels and
+        // the "restriction" barely restricted.
+        MK::Tactile => &[Channel::Temperature, Channel::Elevation],
         // Pure-output / communication modalities — no perception
         // contribution.
         MK::Bioluminescent | MK::Gestural | MK::Postural => &[],
