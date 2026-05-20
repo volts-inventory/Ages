@@ -463,7 +463,10 @@ pub struct PopulationBiology {
     /// cycle (a few children over 30 years × 12 cycles/year). r-
     /// strategists broadcast-spawn with very high per-event yield
     /// (a salmon spawn produces ~all its eggs). Mapping:
-    /// `success = 0.005 + r_axis × 0.095`, range [0.005, 0.10].
+    /// `success = 0.005 × (1 − r_axis)² + 0.10 × r_axis²`,
+    /// range [0.005, 0.10] (quadratic blend; the mid-axis sits at
+    /// ~0.026 rather than the linear midpoint of 0.052 so a r=0.5
+    /// species' lifetime offspring stays in the realistic band).
     ///
     /// Without this factor, the prior calibration overshot real
     /// human K-strategist birth rates by ~500×. The recruit-ceiling

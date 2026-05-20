@@ -845,10 +845,13 @@ pub fn derive_population_biology(
         + manip_r_lean * Real::from_ratio(1, 3)
         + habitat_r_shift;
     let r_axis = r_axis_raw.clamp01();
-    // Clutch size: 1 + r_axis * 499 (range [1, 500]). Quadratic
-    // ramp so the middle of the r/K axis stays modest (clutch ~62 at
-    // r_axis=0.5) and the high end can hit broadcast-spawner scale.
-    let clutch_size = Real::ONE + r_axis * r_axis * Real::from_int(499);
+    // Clutch size: 1 + r_axis² × 4999 (range [1, 5000]). Quadratic
+    // ramp so the middle of the r/K axis stays modest (clutch ~1250
+    // at r_axis=0.5) and the high end can hit true broadcast-spawner
+    // scale (salmon / cod / coral lay 5k+ eggs per spawn). The
+    // earlier 500-cap clipped the r-strategist tail; raised to 5000
+    // so r=1 species can hit real-organism magnitudes.
+    let clutch_size = Real::ONE + r_axis * r_axis * Real::from_int(4999);
     // Infant fraction in [0.01, 0.10]; K-strategists have slightly
     // longer infancy (more parental care, slower growth).
     let infant_fraction = Real::percent(1) + (Real::ONE - r_axis) * Real::percent(9);
@@ -928,7 +931,12 @@ pub fn derive_population_biology(
         (Real::ONE - r_axis) * Real::from_int(30) + r_axis * Real::from_int(2);
     // Reproductive success: per-event probability of actually
     // producing the full clutch. K-strategists (r=0) → 0.5%; r-
-    // strategists (r=1) → 10%. Without this, the
+    // strategists (r=1) → 10%. Quadratic blend of the two endpoints
+    // (`0.005 × (1 - r)² + 0.10 × r²`) so the mid-axis stays below
+    // the linear midpoint — a r=0.5 species sits at ~0.026 rather
+    // than the linear 0.052, which keeps mid-axis lifetime offspring
+    // out of the implausibly-high band that the linear curve
+    // produced once the 5000-clutch cap landed. Without this, the
     // `clutch × events / fertile_months` rate overshot real human
     // K-strategist births by ~500×. With it, K-mammal birth rates
     // land in the ~0.001-0.01/mo range (real human ≈ 0.0005/mo
@@ -936,7 +944,9 @@ pub fn derive_population_biology(
     // sociality-driven effective fertility). The recruit-ceiling
     // clamp at `step_with_capacity` becomes the rare safety net
     // rather than the load-bearing demographic limiter.
-    let reproductive_success = Real::from_ratio(5, 1000) + r_axis * Real::from_ratio(95, 1000);
+    let one_minus_r = Real::ONE - r_axis;
+    let reproductive_success = one_minus_r * one_minus_r * Real::from_ratio(5, 1000)
+        + r_axis * r_axis * Real::from_ratio(100, 1000);
     PopulationBiology {
         clutch_size,
         infant_fraction,

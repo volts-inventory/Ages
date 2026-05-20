@@ -1390,4 +1390,121 @@ mod tests {
             dyn_k.birth_rate
         );
     }
+
+    /// Sprint 1 Item 1: mid-axis (r=0.5) species lifetime offspring
+    /// must fall in a biologically plausible band. Traits are
+    /// constructed literally by evaluating the sampler's
+    /// `derive_population_biology` formulas at `r_axis = 0.5`:
+    ///
+    /// - `clutch_size = 1 + 0.5² × 4999 = 1250.75`
+    /// - `events_per_fertile_window = (1-0.5) × 30 + 0.5 × 2 = 16`
+    /// - `reproductive_success = 0.005 × 0.5² + 0.10 × 0.5² = 0.02625`
+    ///
+    /// Per-window lifetime offspring per fertile adult therefore
+    /// reduces to `clutch × events × success ≈ 525.3` —
+    /// independent of lifespan because `birth_rate × fertile_months`
+    /// cancels the fertile-window denominator. The target window
+    /// [50, 1,000] brackets the quadratic curve's midpoint and
+    /// guards against either endpoint formula leaking back in (a
+    /// linear `reproductive_success = 0.0525` at midpoint would
+    /// push the product to ~1,050, overshooting the upper bound).
+    #[test]
+    fn mid_strategist_birth_rate_realistic() {
+        use sim_arith::Real;
+        // r=0.5 evaluated literals from the sampler.
+        let clutch_size = Real::ONE + Real::from_int(4999) / Real::from_int(4);
+        let infant_fraction = Real::percent(1) + Real::percent(9) / Real::from_int(2);
+        let maturity_fraction = Real::percent(4) + Real::percent(31) / Real::from_int(2);
+        let eldership_fraction = Real::ZERO;
+        let infant_survival = Real::percent(5) + Real::percent(90) / Real::from_int(2);
+        let juvenile_survival = Real::percent(20) + Real::percent(79) / Real::from_int(2);
+        let events_per_fertile_window = Real::from_int(16);
+        // 0.005 × 0.25 + 0.10 × 0.25 = 0.02625 = 105 / 4000.
+        let reproductive_success = Real::from_ratio(105, 4000);
+        let mid_biology = PopulationBiology {
+            clutch_size,
+            infant_fraction,
+            maturity_fraction,
+            eldership_fraction,
+            infant_survival,
+            juvenile_survival,
+            food_multipliers: [
+                Real::percent(30),
+                Real::percent(60),
+                Real::ONE,
+                Real::percent(90),
+            ],
+            events_per_fertile_window,
+            reproductive_success,
+        };
+        let lifespan = Real::from_int(10);
+        let dyn_mid = PopulationDynamics::for_species(
+            &mid_biology,
+            lifespan,
+            Real::percent(50),
+            Real::percent(50),
+        );
+        // Lifetime offspring per fertile adult = birth_rate × fertile_months.
+        let fertile_months = mid_biology.fertile_window_months(lifespan);
+        let lifetime_offspring = dyn_mid.birth_rate * fertile_months;
+        let lower = Real::from_int(50);
+        let upper = Real::from_int(1_000);
+        assert!(
+            lifetime_offspring >= lower && lifetime_offspring <= upper,
+            "mid-strategist lifetime offspring outside [50, 1000] window: got {:?}",
+            lifetime_offspring
+        );
+    }
+
+    /// Sprint 1 Item 1: r=1 broadcast-spawner species lifetime
+    /// offspring must reach broadcast-spawner magnitudes. Traits
+    /// constructed literally from the sampler at `r_axis = 1`:
+    ///
+    /// - `clutch_size = 1 + 1² × 4999 = 5000` (raised cap)
+    /// - `events_per_fertile_window = 2` (semelparous-ish)
+    /// - `reproductive_success = 0.10`
+    /// - lifetime offspring = `5000 × 2 × 0.10 = 1000`
+    ///
+    /// Target window [500, 10,000] brackets real-organism magnitudes
+    /// (salmon ~3-5k eggs single spawn, cod ~1M eggs, sea-urchin
+    /// ~millions). 1000 is at the low end — within the cod / salmon
+    /// range, far from the cap. The 500 lower bound guards against
+    /// the cap regressing to 500 (which would put the product back
+    /// at 100, well below).
+    #[test]
+    fn r_strategist_birth_rate_in_broadcast_spawner_range() {
+        use sim_arith::Real;
+        let r_biology = PopulationBiology {
+            clutch_size: Real::from_int(5_000),
+            infant_fraction: Real::percent(1),
+            maturity_fraction: Real::percent(4),
+            eldership_fraction: Real::ZERO,
+            infant_survival: Real::percent(5),
+            juvenile_survival: Real::percent(20),
+            food_multipliers: [
+                Real::percent(30),
+                Real::percent(60),
+                Real::ONE,
+                Real::percent(90),
+            ],
+            events_per_fertile_window: Real::from_int(2),
+            reproductive_success: Real::from_ratio(100, 1000),
+        };
+        let lifespan = Real::from_int(2);
+        let dyn_r = PopulationDynamics::for_species(
+            &r_biology,
+            lifespan,
+            Real::percent(10),
+            Real::percent(10),
+        );
+        let fertile_months = r_biology.fertile_window_months(lifespan);
+        let lifetime_offspring = dyn_r.birth_rate * fertile_months;
+        let lower = Real::from_int(500);
+        let upper = Real::from_int(10_000);
+        assert!(
+            lifetime_offspring >= lower && lifetime_offspring <= upper,
+            "r-strategist lifetime offspring outside [500, 10000] window: got {:?}",
+            lifetime_offspring
+        );
+    }
 }
