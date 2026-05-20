@@ -146,6 +146,14 @@ pub struct Civ {
     /// legacy callers / test fixtures that don't go through
     /// `configure_substrate`.
     pub species_habitat: sim_species::Habitat,
+    /// Set of civ_ids this civ is formally allied with. Conflict
+    /// resolution short-circuits on allied pairs even if their
+    /// territories overlap — so allies can have shared borders,
+    /// garrisons, or even contested cells without triggering
+    /// combat. Minimal diplomacy primitive; future work can add
+    /// duration, conditional / treaty-type alliances. Two-way:
+    /// either side flagging the other suppresses the war.
+    pub allied_with: std::collections::BTreeSet<u32>,
     /// Substrate-derived migration pressure threshold. Replaces
     /// the flat 0.85 in `apply_migration`. Cached at founding via
     /// `configure_substrate`; default 0.85 for legacy callers.

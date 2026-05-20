@@ -236,6 +236,20 @@ impl DynamicToolEffects {
 pub const DYNAMIC_TOOL_ID_START: u32 = 1000;
 
 /// Species habitat domain. See `Species::habitat`.
+///
+/// The first four (Aquatic / Terrestrial / Amphibious / Airborne)
+/// are Earth-typed surface-dwellers. The latter two cover habitats
+/// that an Earth-centric typology omits but that are physically
+/// plausible (and biologically attested on Earth):
+///
+/// - `Subterranean` — primary habitat is below-surface excavated
+///   space. Treats land as native (claims like Terrestrial) but
+///   gains constant subsurface temperature buffering. The
+///   morphological cousin is the Burrow manipulation mode.
+/// - `Endolithic` — substrate-bound life inhabiting rock pore
+///   space directly. Native for Silicate substrates where the
+///   "habitat" is the rock itself; treats peaks and inland cells
+///   as natively habitable, water cells as marginal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Habitat {
     Aquatic,
@@ -248,6 +262,8 @@ pub enum Habitat {
     /// habitat cell. Higher per-cell tech extends crossing range
     /// further than terrestrial species reach.
     Airborne,
+    Subterranean,
+    Endolithic,
 }
 
 /// Cognition substrate topology. See `Species::cognition_topology`.

@@ -18,7 +18,11 @@ fn species_habitability(glyph: char, habitat: Habitat) -> Real {
     let water_native = matches!(habitat, Habitat::Aquatic | Habitat::Amphibious);
     let land_native = matches!(
         habitat,
-        Habitat::Terrestrial | Habitat::Airborne | Habitat::Amphibious
+        Habitat::Terrestrial
+            | Habitat::Airborne
+            | Habitat::Amphibious
+            | Habitat::Subterranean
+            | Habitat::Endolithic
     );
     let water_bonus = Real::percent(120);
     let water_marginal = Real::percent(5);
