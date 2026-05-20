@@ -212,6 +212,36 @@ impl Law for Wind {
             vel_q_after[i] = vel_q_after[i] * damp;
             vel_r_after[i] = vel_r_after[i] * damp;
         }
+
+        // CFL guard: cap |v_along × advect_k × dt| at 1 so the
+        // upwind branch can't overshoot the donor cell in one tick.
+        // The previous design clamped advect_k (rate) but not v
+        // (speed), so a Mars-thin world's wind_k scaling could grow
+        // |v| past CFL. We clamp the velocity magnitude itself here,
+        // post-acceleration + friction, so subsequent advection
+        // stays stable regardless of how aggressive the per-K
+        // pressure gradient is on a low-density atmosphere. The
+        // bound is `|v| × advect_k × dt < 1` ⇒
+        // `|v| < 1 / (advect_k × dt)`. We use 0.5 as a safety
+        // factor (half-CFL).
+        if self.advect_k > Real::ZERO && dt > Real::ZERO {
+            let v_max = Real::from_ratio(1, 2) / (self.advect_k * dt);
+            for v in vel_q_after.iter_mut() {
+                if *v > v_max {
+                    *v = v_max;
+                } else if *v < -v_max {
+                    *v = -v_max;
+                }
+            }
+            for v in vel_r_after.iter_mut() {
+                if *v > v_max {
+                    *v = v_max;
+                } else if *v < -v_max {
+                    *v = -v_max;
+                }
+            }
+        }
+
         let (vel_q_out, vel_r_out) = state.fluid_velocity_mut();
         vel_q_out.copy_from_slice(&vel_q_after);
         vel_r_out.copy_from_slice(&vel_r_after);
