@@ -690,6 +690,15 @@ pub const ALLIANCE_TRUST_INITIAL: (i64, i64) = (100, 100);
 /// 0.5 loses 0.25 trust per conflict check (~6 sim-years); the
 /// trust scalar therefore crosses the 0.2 floor in 3-4 checks.
 pub const ALLIANCE_TRUST_DECAY_WEIGHT: (i64, i64) = (50, 100);
+/// Cooldown in ticks between successive alliances of the same
+/// pair. Without this, a pair whose cosmology / religion drifts
+/// across the 0.4 (form) / 0.6 (dissolve) hysteresis edge can flap
+/// — form, dissolve, form, dissolve every alliance check. 200
+/// ticks ≈ 17 sim-yr at monthly cadence is long enough that the
+/// post-dissolution drift either settles back into proximity (then
+/// reform is meaningful, not flap) or carries the pair further
+/// apart.
+pub const ALLIANCE_FORM_COOLDOWN_TICKS: u64 = 200;
 
 /// 5-axis cosmology euclidean distance between two civs (across
 /// `empirical`, `communitarian`, `reformist`, `mystical`,
@@ -728,10 +737,13 @@ pub fn religion_distance(a: &Civ, b: &Civ) -> Real {
 ///      (mirrored from the `CivContact` emission path).
 ///   5. Neither already allies the other (idempotent — caller
 ///      typically pre-filters but we double-check).
-/// `tick` is reserved for future cool-down / minimum-relationship-
-/// duration gates; currently unused.
+/// `tick` is the current sim tick. Used to enforce
+/// `ALLIANCE_FORM_COOLDOWN_TICKS` between successive alliances of
+/// the same pair: a pair that dissolved an alliance at tick T must
+/// wait at least `ALLIANCE_FORM_COOLDOWN_TICKS` more ticks before
+/// re-allying, preventing flap at the 0.4 / 0.6 hysteresis edge.
 #[must_use]
-pub fn propose_alliance(a: &Civ, b: &Civ, at_war_now: bool, _tick: u64) -> bool {
+pub fn propose_alliance(a: &Civ, b: &Civ, at_war_now: bool, tick: u64) -> bool {
     if at_war_now {
         return false;
     }
@@ -740,6 +752,21 @@ pub fn propose_alliance(a: &Civ, b: &Civ, at_war_now: bool, _tick: u64) -> bool 
     }
     if !a.contact_history.contains(&b.id) || !b.contact_history.contains(&a.id) {
         return false;
+    }
+    // Cooldown: either side can carry a recent-dissolution stamp;
+    // the strictest of the two governs. If neither side has a
+    // prior dissolution, the cooldown is trivially satisfied.
+    let prior_a = a.alliance_cooldown.get(&b.id).copied();
+    let prior_b = b.alliance_cooldown.get(&a.id).copied();
+    let last_dissolve = match (prior_a, prior_b) {
+        (Some(ta), Some(tb)) => Some(ta.max(tb)),
+        (Some(t), None) | (None, Some(t)) => Some(t),
+        (None, None) => None,
+    };
+    if let Some(t_dissolve) = last_dissolve {
+        if tick.saturating_sub(t_dissolve) < ALLIANCE_FORM_COOLDOWN_TICKS {
+            return false;
+        }
     }
     let cosmo_gap = cosmology_distance(a, b);
     if cosmo_gap >= Real::from(ALLIANCE_FORM_COSMO_GAP) {

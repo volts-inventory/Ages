@@ -1688,13 +1688,21 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 // Apply dissolutions: symmetric `allied_with`
                 // remove + clear the trust scalar + event.
                 for (pair, reason) in dissolutions {
+                    // Stamp the dissolution tick into both sides'
+                    // alliance_cooldown maps so `propose_alliance`
+                    // can enforce the cooldown next time these two
+                    // come into proximity. Without this the pair
+                    // flaps form/dissolve at the 0.4/0.6 hysteresis
+                    // edge.
                     if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.0) {
                         civ.allied_with.remove(&pair.1);
                         civ.alliance_trust.remove(&pair.1);
+                        civ.alliance_cooldown.insert(pair.1, tick);
                     }
                     if let Some(civ) = civs.iter_mut().find(|c| c.id == pair.1) {
                         civ.allied_with.remove(&pair.0);
                         civ.alliance_trust.remove(&pair.0);
+                        civ.alliance_cooldown.insert(pair.0, tick);
                     }
                     alliance_dissolved_events.push(AllianceDissolved {
                         tick,

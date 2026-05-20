@@ -141,6 +141,7 @@ impl Civ {
             allied_with: std::collections::BTreeSet::new(),
             contact_history: std::collections::BTreeSet::new(),
             alliance_trust: std::collections::BTreeMap::new(),
+            alliance_cooldown: std::collections::BTreeMap::new(),
             migration_pressure_threshold: Real::percent(85),
             collapsed_tick: None,
             last_discovery_tick: founded_tick,
