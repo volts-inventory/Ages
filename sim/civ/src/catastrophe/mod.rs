@@ -364,6 +364,7 @@ mod tests {
             moons: vec![sim_world::Moon {
                 mass_relative_x100: 100,
                 orbital_period_macros: 28,
+                inclination_deg_x10: 51,
             }],
             orbital_eccentricity_x100: 2,
             axial_tilt_deg: Real::from_int(23),

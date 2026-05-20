@@ -131,6 +131,20 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // medium means no wind dynamics.
     let mut wind = sim_physics::Wind::earth_like();
     wind.has_atmosphere = !matches!(planet.atmosphere, Atmosphere::None);
+    // Atmospheric density coupling. Wind & heat advection
+    // transport mass; thinner atmospheres carry less heat per
+    // unit velocity. Scale `advect_k` linearly with the planet's
+    // density relative to Earth's (122 cg/m³ → factor 1.0). Clamp
+    // at 5× to keep CFL safe under thick Venus-like atmospheres.
+    // Without this every planet's wind transported heat at
+    // Earth-like efficiency, masking the climatological difference
+    // between Mars-Thin and Venus-Reducing entirely.
+    let density_x100 = planet.atmosphere.density_x100();
+    if density_x100 > 0 {
+        let density_factor =
+            (Real::from_int(density_x100) / Real::from_int(122)).min(Real::from_int(5));
+        wind.advect_k = wind.advect_k * density_factor;
+    }
 
     // Hydrologic cycle. Substrate-aware Clausius-Clapeyron
     // so a methane / ammonia / silicate world cycles its solvent
@@ -168,6 +182,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         .map(|m| sim_physics::MoonTide {
             mass_relative: Real::from_ratio(m.mass_relative_x100, 100),
             period_macros: m.orbital_period_macros,
+            declination_r: m.inclination_deg_x10 / 30,
         })
         .collect();
     let tides = sim_physics::Tides::for_planet(moon_tides);

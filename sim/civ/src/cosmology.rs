@@ -152,6 +152,64 @@ pub fn push_for_civ_collapsed() -> Cosmology {
 /// millennium-rare rather than firing every few centuries.
 pub const COSMOLOGY_EMIT_THRESHOLD: (i64, i64) = (50, 100);
 
+/// form-distance contribution from a civ's religion (the
+/// fast-divergent epistemic layer that previously affected only
+/// war strength). Wires the three religion axes into the same
+/// suppress-confidence pipeline cosmology uses, so a polity's
+/// religion actually constrains what counts as plausible science.
+///
+/// - `theology`: monist (-1) likes unifying / single-law forms
+///   (Constant, Linear, PowerLaw); pluralist (+1) tolerates
+///   case-specific forms (Polynomial, ThresholdStep).
+/// - `ritual`: liturgical (+1) prefers procedural / step
+///   semantics (ThresholdStep, Logistic); pragmatic (-1) prefers
+///   smooth continuous (Linear, Polynomial).
+/// - `sacred_time`: cyclical (-1) embraces periodic (PeriodicSine);
+///   eschatological (+1) prefers one-way change (ExpGrowth,
+///   ExpDecay).
+///
+/// Returns `[0, 1]` distance. Combined additively (then clamped)
+/// with cosmology's form_distance by `combined_form_distance`.
+#[must_use]
+#[allow(clippy::match_same_arms)]
+pub fn religion_form_distance(form: Form, religion: &crate::religion::Religion) -> Real {
+    let half = Real::from_ratio(1, 2);
+    let quarter = Real::from_ratio(1, 4);
+    match form {
+        Form::Constant => (Real::ONE - religion.theology) * quarter,
+        Form::Linear => (Real::ONE - religion.theology) * quarter
+            + (Real::ONE + religion.ritual) * quarter,
+        Form::ThresholdStep => (Real::ONE - religion.ritual) * half,
+        Form::Logistic => (Real::ONE - religion.ritual) * half,
+        Form::Polynomial2 | Form::Polynomial3 => (Real::ONE - religion.theology) * half,
+        Form::PeriodicSine => (Real::ONE + religion.sacred_time) * half,
+        Form::ExpDecay | Form::ExpGrowth => (Real::ONE - religion.sacred_time) * half,
+        Form::PowerLaw => (Real::ONE + religion.theology) * quarter,
+        Form::Logarithmic | Form::InverseSquare => (Real::ONE + religion.theology) * quarter,
+    }
+    .clamp01()
+}
+
+/// Combined cosmology + religion form-distance. Sums both
+/// contributions and clamps to `[0, 1]`. Use this in the
+/// suppress-confidence pipeline so both epistemic layers shape
+/// what a civ considers plausible.
+#[must_use]
+pub fn combined_form_distance(
+    form: Form,
+    cosmology: &Cosmology,
+    religion: &crate::religion::Religion,
+) -> Real {
+    let cos = form_distance(form, cosmology);
+    let rel = religion_form_distance(form, religion);
+    // Average (rather than sum) so the two layers carry roughly
+    // equal weight without artificially doubling the suppression
+    // baseline. Each layer caps at 1.0 individually; average is
+    // therefore also in [0, 1].
+    let two = Real::from_int(2);
+    ((cos + rel) / two).clamp01()
+}
+
 /// form-distance tag used by `suppress_confidence`. Returns the
 /// distance `[0, 1]` between the form and the civ's cosmology
 /// preference. Higher = more heretical = stronger suppression.

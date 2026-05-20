@@ -59,7 +59,13 @@ use sim_arith::Real;
 /// law tracked a single `lunar_period_macros`; this struct promotes
 /// that to a list so multi-moon planets get genuine
 /// interference patterns. Mass scales each moon's contribution
-/// to the per-cell potential.
+/// to the per-cell potential. `declination_r` sets the sub-lunar
+/// *latitude* (in axial-r cells) so the bulge tilts off-equator
+/// for real moons / a real solar tide. With declination, cells
+/// further from the moon's sub-lunar latitude see a reduced
+/// bulge magnitude — the latitude-cosine falloff that real
+/// planetary tides exhibit and that lets polar oceans flow
+/// differently from equatorial ones.
 #[derive(Debug, Clone, Copy)]
 pub struct MoonTide {
     /// Tidal contribution weight. Earth's moon ≈ 1.0; the
@@ -69,6 +75,14 @@ pub struct MoonTide {
     /// Macro-steps for one full sub-lunar cycle. Earth's moon
     /// = 28 macro-steps at the standard cadence.
     pub period_macros: u32,
+    /// Sub-lunar latitude offset in axial-r cells (signed; 0 = on
+    /// the equator, positive = south by the `magnetism.rs:107`
+    /// convention). For solar tides this drifts with the seasonal
+    /// cycle; for moons it's fixed by the moon's orbital
+    /// inclination. Defaults to 0 (equatorial) for the legacy
+    /// constructor path; `for_planet` populates it from the moon's
+    /// inclination.
+    pub declination_r: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -90,10 +104,27 @@ impl Tides {
     pub fn earth_like() -> Self {
         Self {
             tide_k: Real::from_ratio(1, 1_000),
-            moons: vec![MoonTide {
-                mass_relative: Real::ONE,
-                period_macros: 28,
-            }],
+            moons: vec![
+                MoonTide {
+                    mass_relative: Real::ONE,
+                    period_macros: 28,
+                    declination_r: 0,
+                },
+                // Solar tide. Earth's sun contributes ~46% of the
+                // lunar tidal force (`mass_relative = 0.46`) and
+                // orbits with a 1-year period. At the default
+                // tick cadence (~12 macros/year) that's
+                // 12 macro-steps for a full sweep. Without this
+                // entry, spring/neap interference can only arise
+                // from moon-moon beating; the standard Earth
+                // spring tide (moon + sun aligned) is solar-
+                // driven.
+                MoonTide {
+                    mass_relative: Real::from_ratio(46, 100),
+                    period_macros: 12,
+                    declination_r: 0,
+                },
+            ],
         }
     }
 
@@ -246,6 +277,7 @@ mod tests {
             moons: vec![MoonTide {
                 mass_relative: Real::ONE,
                 period_macros: u32::MAX,
+                declination_r: 0,
             }],
         };
         for _ in 0..30 {
