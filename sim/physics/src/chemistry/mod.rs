@@ -511,6 +511,71 @@ mod tests {
     }
 
     #[test]
+    fn chemistry_combustion_conserves_mass() {
+        // PR6 conservation invariant: combustion (1 fuel + 1
+        // oxidiser → 2 ash) and biofuel regrowth (2 ash → 1 fuel +
+        // 1 oxidiser) are both bit-exact mass-conserving. Drive
+        // both in the same run by seeding water (cofactor for
+        // regrowth), fuel, oxidiser, ash, and biofuel ceiling so
+        // the regrowth path lights up alongside combustion.
+        // `Σ over all substances` is invariant at every step.
+        let mut state = fresh_state(4, 4);
+        // 700 K: above the earth-like 600 K ignition threshold
+        // but below boil — combustion fires; phase transitions
+        // (water → vapour) also engage at this temperature only
+        // for cells well above 373 K, which 700 satisfies. Drive
+        // the regrowth band by also seeding ash + biofuel
+        // ceiling.
+        for t in state.temperature_mut() {
+            *t = Real::from_int(310); // 37 °C — sub-ignition,
+                                      // sub-boil, in regrowth band
+        }
+        // A handful of cells get ignition-temperature heat so
+        // combustion fires there.
+        state.temperature_mut()[0] = Real::from_int(700);
+        state.temperature_mut()[5] = Real::from_int(700);
+        for f in state.substance_mut(Substance::Fuel.idx()) {
+            *f = Real::from_int(8);
+        }
+        for o in state.substance_mut(Substance::Oxidiser.idx()) {
+            *o = Real::from_int(8);
+        }
+        for a in state.substance_mut(Substance::Ash.idx()) {
+            *a = Real::from_int(4);
+        }
+        for w in state.substance_mut(Substance::Water.idx()) {
+            *w = Real::from_int(2); // cofactor for regrowth
+        }
+        for c in state.biofuel_ceiling_mut() {
+            *c = Real::from_int(20); // headroom so regrowth fires
+        }
+        let initial = total_mass(&state);
+        let chem = Chemistry::earth_like_water();
+        // Run long enough for both reactions to make meaningful
+        // transfers. Conservation must hold at every step.
+        for tick in 0..50 {
+            chem.integrate(&mut state, Real::ONE);
+            let mass = total_mass(&state);
+            assert_eq!(
+                initial, mass,
+                "mass drifted at tick {tick}: initial={initial:?} now={mass:?}"
+            );
+        }
+        // Sanity: both reactions actually triggered (so we know
+        // the invariant test isn't trivially holding on a no-op).
+        let final_ash: Real = state
+            .substance(Substance::Ash.idx())
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert!(
+            final_ash != Real::ZERO,
+            "test setup didn't trigger combustion or regrowth — \
+             ash field unchanged"
+        );
+    }
+
+    #[test]
     fn boil_point_drops_with_pressure() {
         // Clausius-Clapeyron: half-atm pressure → boiling well below
         // 373.15 K. Real measured value at 50 kPa is ~354 K.

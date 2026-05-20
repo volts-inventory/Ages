@@ -1,5 +1,23 @@
 //! Planetary magnetic field as a vector quantity.
 //!
+//! ## Hemisphere convention
+//!
+//! Canonical (shared with `coriolis.rs`, `radiation.rs`, and
+//! `sim/recognition/src/lib.rs::Signature::Hemisphere`):
+//! `signed_offset = axial.r - half_h`; `signed_offset < 0` is the
+//! **northern** hemisphere ("Negative r direction = toward north
+//! pole = compass-needle convention" — see the in-loop comment
+//! below). The centralised helper is
+//! `crate::hemisphere::hemisphere_for_row`. This file pre-dates
+//! the helper and inlines the `signed_offset.cmp(&0)` branch
+//! verbatim; a behaviour-preserving migration to the helper is a
+//! separate PR. The convention itself is canonical; only the
+//! per-call-site duplication is a refactor target.
+//!
+//! Note: `world/src/climate.rs::seasonal_temperature_offset` uses
+//! the **opposite** mapping. See `sim/world/src/hemisphere.rs` for
+//! the audit + the test that names the disagreement.
+//!
 //! Previously the magnetic field was a scalar magnitude (`Vec<Real>`)
 //! with no direction. The recognition library's
 //! `magnetic_field_strong` template even keyed on `Field::Charge`

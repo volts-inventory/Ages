@@ -3,7 +3,29 @@
 //! the capacity factor) — no physics-state mutation. Pulled out
 //! of `lib.rs` so the seasonal-band rationale sits next to its
 //! formula instead of getting buried mid-file.
+//!
+//! ## Hemisphere convention
+//!
+//! This file uses the **legacy** climate hemisphere mapping
+//! (`row > mid` → northern, hemisphere sign `+1`), which is the
+//! **opposite** of the canonical physics convention used by
+//! `magnetism.rs`, `coriolis.rs`, `radiation.rs`, and
+//! `sim/recognition/src/lib.rs::Signature::Hemisphere` (where
+//! row 0 = north pole).
+//!
+//! The disagreement is documented and tested in
+//! `sim/world/src/hemisphere.rs` (see
+//! `legacy_climate_helper_returns_opposite_sign`). Flipping this
+//! file to match the canonical convention would change which cells
+//! get which seasonal phase, which transitively shifts the worldgen
+//! RNG sampling (species selection, biome rolls, …) and breaks
+//! determinism without a coordinated seed rebaseline. The audit-
+//! only refactor keeps behaviour bit-identical by routing this
+//! file through `hemisphere_for_row_climate_legacy`, so the
+//! convention is named in one place rather than implied by an
+//! inline `row_signed.signum()` call.
 
+use crate::hemisphere::{hemisphere_for_row_climate_legacy, Hemisphere};
 use crate::Planet;
 use sim_arith::Real;
 
@@ -54,16 +76,21 @@ pub fn seasonal_temperature_offset(
     let mid = i64::from(height) / 2;
     let row_signed = i64::from(row) - mid;
     let pole_dist_abs = i64::try_from(row_signed.unsigned_abs()).unwrap_or(i64::MAX);
-    // Hemisphere sign: +1 northern (row > mid), -1 southern (row < mid),
-    // 0 on the equator. Northern + summer = positive offset.
-    let hemisphere: i64 = match row_signed.signum() {
-        1 => 1,
-        -1 => -1,
-        _ => 0,
-    };
-    if hemisphere == 0 {
+    // Hemisphere sign: in the legacy climate mapping, +1 = northern
+    // (`row > mid`), -1 = southern (`row < mid`), 0 = equator.
+    // Northern + summer = positive offset. Routed through
+    // `hemisphere_for_row_climate_legacy` so the (intentional, until
+    // a coordinated seed rebaseline) disagreement with the canonical
+    // physics convention is named in one place. See
+    // `sim/world/src/hemisphere.rs` for the audit + tests.
+    let hemi = hemisphere_for_row_climate_legacy(row, height);
+    if matches!(hemi, Hemisphere::Equator) {
         return Real::ZERO;
     }
+    // `physics_sign` on the legacy mapping returns +1 for the
+    // legacy-North half (which is `row > mid`). The behaviour
+    // is bit-identical to the previous `row_signed.signum()` branch.
+    let hemisphere: i64 = hemi.physics_sign();
     // Latitude band ∈ [0, 1]: 0 at the equator, 1 at the pole.
     let latitude = Real::from_int(pole_dist_abs) / Real::from_int(half_height);
     // Tilt scaling ∈ [0, 1] — derived from planet sample.

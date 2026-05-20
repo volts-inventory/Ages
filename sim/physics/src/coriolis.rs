@@ -1,5 +1,15 @@
 //! Coriolis deflection on horizontal velocity.
 //!
+//! ## Hemisphere convention
+//!
+//! Canonical: `signed_offset = axial.r - half_h`; rows with
+//! `signed_offset < 0` are **northern**, matching `magnetism.rs`
+//! and `radiation.rs`. The helper
+//! `crate::hemisphere::hemisphere_for_row` exposes this. Climate
+//! (`world/src/climate.rs`) uses the opposite mapping; the
+//! disagreement is named and tested in
+//! `sim/world/src/hemisphere.rs`.
+//!
 //! Real winds curve right in the northern hemisphere and left
 //! in the southern due to the planet's rotation. The Coriolis
 //! force `F = -2m·Ω × v` for horizontal motion picks up the
