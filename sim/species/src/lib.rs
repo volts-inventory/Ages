@@ -18,16 +18,18 @@
 #![allow(clippy::module_name_repetitions)]
 
 mod derive;
+mod habitat_glyph;
 mod sampling;
 mod species;
 mod types;
 
 pub use derive::derive;
+pub use habitat_glyph::habitat_glyph_multiplier;
 pub use sampling::{modality_supported, species_name_from_seed, template_channels};
 pub use species::Species;
 pub use types::{
-    CognitionTopology, DynamicTool, DynamicToolEffects, Habitat, Manipulation, ManipulationKind,
-    Modality, ModalityKind, PopulationBiology, DYNAMIC_TOOL_ID_START,
+    CognitionAxes, CognitionTopology, DynamicTool, DynamicToolEffects, Habitat, Manipulation,
+    ManipulationKind, Modality, ModalityKind, PopulationBiology, DYNAMIC_TOOL_ID_START,
 };
 
 #[cfg(test)]

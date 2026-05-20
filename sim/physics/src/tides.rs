@@ -33,12 +33,19 @@
 //!    only *moves* surface water around, it doesn't create or
 //!    destroy any.
 //!
-//! No bulge in the r (latitude) direction yet — real tides do
-//! have one (the bulge tilts with lunar declination), but a 1D
-//! model captures the dominant 2-bulge sweep that gives twice-
-//! per-orbit tidal forcing at every cell. The follow-up adds
-//! r-modulation once moon orbital inclination becomes a planet
-//! parameter.
+//! Latitudinal (r) modulation: each moon carries a
+//! `declination_r` (sub-lunar latitude, derived from orbital
+//! inclination at planet-build time). The per-cell potential
+//! is multiplied by `cos²((axial.r - declination_r) · π / height)`
+//! so cells at the moon's sub-lunar latitude see the full bulge,
+//! cells a quarter-circle away (the planet's terminator latitude
+//! relative to that moon) see zero forcing, and antipodal-latitude
+//! cells see the full bulge again. `cos²` (rather than `|cos|`)
+//! keeps the falloff smooth and the values non-negative without
+//! needing a `sin` half-cycle trick. Multi-moon planets with
+//! different inclinations get genuine latitudinal interference —
+//! a polar moon and an equatorial moon force different latitudes
+//! independently.
 //!
 //! Determinism: the only state-derived input is `state.macro_step()`,
 //! which the orchestrator advances exactly once per macro-step.
@@ -52,7 +59,7 @@
 
 use crate::laws::Law;
 use crate::state::PhysicsState;
-use sim_arith::transcendental::{cos, two_pi};
+use sim_arith::transcendental::{cos, pi, two_pi};
 use sim_arith::Real;
 
 /// Per-moon tidal configuration. Earlier the `Tides`
@@ -170,6 +177,8 @@ impl Law for Tides {
         let n = grid.n_cells();
         let mut potential = vec![Real::ZERO; n];
         let two_pi_v = two_pi();
+        let pi_v = pi();
+        let height = i32::try_from(grid.height()).unwrap_or(1).max(1);
         for (m_idx, moon) in self.moons.iter().enumerate() {
             if moon.period_macros == 0 {
                 continue;
@@ -184,12 +193,44 @@ impl Law for Tides {
                     raw_diff - width
                 };
                 let theta = two_pi_v * Real::from_ratio(i64::from(signed_q_diff), i64::from(width));
-                potential[i] = potential[i] + moon.mass_relative * cos(theta + theta);
+                // Latitude falloff: cos² of the (cell-r minus moon's
+                // declination) phase, scaled to a half-period over the
+                // grid height. Cells at the sub-lunar latitude get
+                // full forcing; cells a quarter-grid-height away get
+                // zero forcing; antipodal-latitude cells get full
+                // forcing again. `cos²` (square of `cos`) keeps the
+                // result non-negative without a `sin` half-cycle.
+                let lat_phase = pi_v
+                    * Real::from_ratio(i64::from(axial.r - moon.declination_r), i64::from(height));
+                let lat_cos = cos(lat_phase);
+                let lat_falloff = lat_cos * lat_cos;
+                potential[i] =
+                    potential[i] + moon.mass_relative * cos(theta + theta) * lat_falloff;
             }
         }
 
-        // Step 2: pair-flux water redistribution. Bit-exact
-        // mass conservation by construction.
+        // Step 2: pair-flux water redistribution with donor-limited
+        // flux. Bit-exact mass conservation by construction: every
+        // flux value applied as `+flux` to one cell and `-flux` to
+        // its pair.
+        //
+        // Earlier this loop computed `flux = tide_k · dt · ΔΦ`
+        // unconditionally, then a post-pass clamp drove any
+        // negative `next_w[i]` back to zero. Under earth-like
+        // coefficients the post-pass never fired, but with
+        // pathological coefficients (large `tide_k` relative to
+        // ambient depth, or one cell already near zero from prior
+        // pair-flux outflow within the same tick), the clamp would
+        // silently *gain* mass — every clamped cell appeared with
+        // its negative residue erased.
+        //
+        // Donor-limited fix: before applying the pair, clamp `flux`
+        // so it never pulls more than the donor's currently-available
+        // stock. Direction matters: `flux > 0` means cell j loses
+        // (cap to `next_w[j]`); `flux < 0` means cell i loses
+        // (cap to `next_w[i]`). The non-negative invariant then
+        // follows from the cap rather than the post-pass erasure,
+        // and total water is exactly conserved.
         let prev_w = state.water_depth().to_vec();
         let mut next_w = prev_w.clone();
         for (cid, axial) in grid.cells() {
@@ -198,20 +239,24 @@ impl Law for Tides {
                 let j = nb.0 as usize;
                 if j > i {
                     let dphi = potential[i] - potential[j];
-                    let flux = self.tide_k * dt * dphi;
+                    let mut flux = self.tide_k * dt * dphi;
+                    if flux > Real::ZERO {
+                        // i gains, j loses — cap to j's stock.
+                        let donor = next_w[j].max(Real::ZERO);
+                        if flux > donor {
+                            flux = donor;
+                        }
+                    } else if flux < Real::ZERO {
+                        // j gains, i loses — cap to i's stock.
+                        let donor = next_w[i].max(Real::ZERO);
+                        let neg_donor = Real::ZERO - donor;
+                        if flux < neg_donor {
+                            flux = neg_donor;
+                        }
+                    }
                     next_w[i] = next_w[i] + flux;
                     next_w[j] = next_w[j] - flux;
                 }
-            }
-        }
-        // Defensive non-negative clamp — under earth-like coefficients
-        // and `tide_k=0.001` the per-step flux stays well below typical
-        // water_depth values, so this should never trigger in practice;
-        // it guards against pathological coefficients (large `tide_k`
-        // relative to ambient depth).
-        for w in &mut next_w {
-            if *w < Real::ZERO {
-                *w = Real::ZERO;
             }
         }
         state.water_depth_mut().copy_from_slice(&next_w);
@@ -258,6 +303,103 @@ mod tests {
         assert_eq!(
             initial, after,
             "pair-flux tidal redistribution must conserve total water bit-exactly"
+        );
+    }
+
+    #[test]
+    fn tide_redistribution_donor_limited() {
+        // Pathological-coefficient seed: tide_k=0.5 and varying
+        // depths from 0 to 100. Previously the post-pass non-
+        // negative clamp would have fired and silently *gained*
+        // mass when a low-depth cell got pulled below zero.
+        // With donor-limited flux, total water is bit-exact across
+        // all macro-steps.
+        let grid = HexGrid::new(8, 4);
+        let mut state = PhysicsState::new(grid);
+        for (i, w) in state.water_depth_mut().iter_mut().enumerate() {
+            // Varying depths 0..100 — cells at index 0, 8, 16, 24
+            // start at zero so the first outflow would underflow.
+            *w = Real::from_int((i as i64) * 100 / 32);
+        }
+        let initial: Real = state
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let tides = Tides {
+            tide_k: Real::from_ratio(1, 2), // 0.5 — well above earth-like 0.001
+            moons: vec![MoonTide {
+                mass_relative: Real::ONE,
+                period_macros: 28,
+                declination_r: 0,
+            }],
+        };
+        for _ in 0..50 {
+            tides.integrate(&mut state, Real::ONE);
+            state.advance_macro_step();
+        }
+        let after: Real = state
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert_eq!(
+            initial, after,
+            "donor-limited flux must conserve total water bit-exactly even under pathological tide_k"
+        );
+        // All cells must be non-negative — the donor cap enforces
+        // this without a post-pass clamp.
+        for w in state.water_depth() {
+            assert!(
+                *w >= Real::ZERO,
+                "water depth must stay non-negative under donor-limited flux"
+            );
+        }
+    }
+
+    #[test]
+    fn tide_declination_modulates_potential() {
+        // Two cells at equal q-offset from sub-lunar (so identical
+        // longitudinal forcing) but at different r-offsets from
+        // the moon's declination latitude — the lat falloff must
+        // give them different water-depth response. Earlier
+        // `declination_r` was stored but never read, so this test
+        // would have shown zero difference.
+        //
+        // Cell at r=0 sits on declination_r=0 (full forcing);
+        // cell at r=height/2 sits at the quarter-grid latitude
+        // (zero forcing under cos²). After many ticks, the equator
+        // cell should have moved further from its starting depth
+        // than the high-latitude cell.
+        let grid = HexGrid::new(8, 4);
+        let mut state = PhysicsState::new(grid);
+        for w in state.water_depth_mut() {
+            *w = Real::from_int(100);
+        }
+        let tides = Tides {
+            tide_k: Real::percent(1),
+            moons: vec![MoonTide {
+                mass_relative: Real::ONE,
+                period_macros: u32::MAX, // freeze sub-lunar at q=0
+                declination_r: 0,
+            }],
+        };
+        for _ in 0..30 {
+            tides.integrate(&mut state, Real::ONE);
+            state.advance_macro_step();
+        }
+        // grid is 8x4. cell_id = r * width + q. Equator (r=0, q=0)
+        // is index 0; high-lat (r=2, q=0) — the cos² zero — is
+        // index 16.
+        let equator = state.water_depth()[0];
+        let high_lat = state.water_depth()[16];
+        let equator_drift = (equator - Real::from_int(100)).abs();
+        let high_lat_drift = (high_lat - Real::from_int(100)).abs();
+        assert!(
+            equator_drift > high_lat_drift,
+            "equator cell (on sub-lunar latitude) should drift more than \
+             high-latitude cell (at cos² zero): \
+             equator={equator:?} high_lat={high_lat:?}"
         );
     }
 

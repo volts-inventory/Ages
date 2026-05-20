@@ -165,3 +165,41 @@ fn perceivable_firings_drops_unperceived() {
     // The 9999 firing must be dropped regardless of species seed.
     assert!(!kept.iter().any(|f| f.template_id == 9999));
 }
+
+#[test]
+fn cognition_axes_diverge_from_scalar() {
+    // Earlier `derive` populated `cognition_axes` via
+    // `CognitionAxes::uniform(cognition)`, so every axis aliased
+    // the scalar bit-for-bit. Downstream consumers that wired to
+    // `cognition_axes.working_memory` saw the legacy scalar with
+    // no per-axis differentiation. The production path now uses
+    // `from_scalar_with_seed`, which perturbs each axis
+    // independently. Walk several species: assert the three axes
+    // are NOT all identical for at least one seed and that
+    // `average()` stays close to the scalar.
+    let mut any_diverged = false;
+    for seed in 0..64u64 {
+        let s = fixture(seed);
+        let axes = s.cognition_axes;
+        let all_equal = axes.working_memory == axes.abstraction
+            && axes.abstraction == axes.social;
+        if !all_equal {
+            any_diverged = true;
+        }
+        // average() ≈ scalar — within ±0.05 (clamp at extremes
+        // can introduce a small drift; well below the threshold
+        // that would shift any legacy downstream formula).
+        let avg = axes.average();
+        let drift = (avg - s.cognition).abs();
+        assert!(
+            drift <= Real::percent(5),
+            "seed {seed}: axes.average()={avg:?} drifted >0.05 from cognition={:?}",
+            s.cognition
+        );
+    }
+    assert!(
+        any_diverged,
+        "no species across 64 seeds produced divergent axes — \
+         from_scalar_with_seed must perturb per-axis"
+    );
+}
