@@ -109,6 +109,43 @@ fn drift_tolerance() -> Real {
     Real::from_ratio(1, 1_000_000)
 }
 
+/// Conservation drift tolerance for hydrology specifically.
+/// Hydrology has TWO documented mass-truncating clamps that the
+/// bit-exact pair-flux invariant doesn't cover:
+///
+/// 1. The negative-vapour clamp in `Hydrology::integrate` step 2
+///    (post-advection): if pair-flux ever drives a cell's vapour
+///    below zero (which shouldn't happen under any earth-like
+///    coefficients but is guarded for pathological tide_k /
+///    advect_k values), the value is reset to zero — silently
+///    creating mass.
+///
+/// 2. The per-cell vapour cap in step 4: if a cell's vapour
+///    exceeds `max(water_depth × 100, 10_000)` (a fixed-point
+///    safety bound), the excess is discarded — silently
+///    destroying mass.
+///
+/// Neither clamp fires under earth-like coefficients (verified
+/// by `hydrology_cycle_reaches_steady_state`). But on extreme
+/// substrates (methane-boil at 112 K, ammonia at 240 K) the
+/// saturation curve can push toward those bounds. Use a more
+/// generous tolerance for hydrology so the assert catches
+/// structural leaks (10× tighter than the cap magnitudes) without
+/// false-positive panicking on legitimate clamp firings.
+///
+/// Scales with total water+vapour so the tolerance is meaningful
+/// for both small dev grids and large prod grids. Returns
+/// `total × 0.001` — well below the clamp magnitudes (which would
+/// be visible as 1%+ drift) but well above the bit-exact pair-flux
+/// drift.
+#[cfg(debug_assertions)]
+fn hydrology_drift_tolerance(total_water_plus_vapour: Real) -> Real {
+    let scaled = total_water_plus_vapour * Real::from_ratio(1, 1000);
+    // Floor at the tighter pair-flux tolerance so we still catch
+    // structural bugs on essentially-dry planets.
+    scaled.max(drift_tolerance())
+}
+
 /// Per-family sub-step counts within a macro-step plus per-family
 /// dt values. Defaults match the operator-splitting spec.
 #[derive(Debug, Clone, Copy)]
@@ -262,9 +299,16 @@ pub fn integrate_civ_step(
             #[cfg(debug_assertions)]
             {
                 let post_wv = total_water_plus_vapour(state);
+                // Use the more generous hydrology-specific
+                // tolerance: the two documented vapour clamps in
+                // step 2 + step 4 are allowed to truncate small
+                // amounts on extreme substrates without panicking.
+                // Structural leaks still trip the 0.1%-of-total
+                // bound.
+                let tol = hydrology_drift_tolerance(pre_wv);
                 debug_assert!(
-                    (post_wv - pre_wv).abs() < drift_tolerance(),
-                    "hydrology leaked mass: pre={pre_wv:?} post={post_wv:?}"
+                    (post_wv - pre_wv).abs() < tol,
+                    "hydrology leaked mass: pre={pre_wv:?} post={post_wv:?} tol={tol:?}"
                 );
             }
         }

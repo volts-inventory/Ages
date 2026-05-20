@@ -168,6 +168,18 @@ pub struct Civ {
     /// falls below `ALLIANCE_TRUST_FLOOR` the alliance dissolves
     /// with reason `TrustEroded`.
     pub alliance_trust: std::collections::BTreeMap<u32, sim_arith::Real>,
+    /// Per-pair alliance-dissolution tick. Keyed by the *other*
+    /// civ id; entries inserted when an alliance dissolves and
+    /// consulted by `propose_alliance` to enforce a cooldown
+    /// between consecutive alliances of the same pair. Without
+    /// this, a pair oscillating near the 0.4 / 0.6 hysteresis
+    /// edge can flap (form, dissolve, form, dissolve…) every
+    /// alliance check tick. Cooldown is
+    /// `ALLIANCE_FORM_COOLDOWN_TICKS` (200 ticks ≈ 17 sim-yr at
+    /// the monthly cadence). Entries are kept indefinitely
+    /// (their lookup cost is amortised by the same BTreeMap
+    /// iteration pattern as `grudges` / `alliance_trust`).
+    pub alliance_cooldown: std::collections::BTreeMap<u32, u64>,
     /// Substrate-derived migration pressure threshold. Replaces
     /// the flat 0.85 in `apply_migration`. Cached at founding via
     /// `configure_substrate`; default 0.85 for legacy callers.

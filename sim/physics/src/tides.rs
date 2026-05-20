@@ -16,11 +16,14 @@
 //!    Pure integer arithmetic — no transcendentals, no cell-time
 //!    drift.
 //! 2. Computes a tidal potential per cell:
-//!    `Φ[i] = 1 - 8 · min(|q[i]-sub|, |q[i]-anti|) / width` (clamped
-//!    so two peaks at sub-lunar and antipodal hit Φ=+1, quarter-
-//!    circle low tides hit Φ=-1). Triangular shape rather than
-//!    cos(2θ) because the fixed-point arithmetic has no sin/cos and the order-of-
-//!    magnitude shape is identical for tidal-flux purposes.
+//!    `Φ[i] = mass_relative · cos(2θ) · cos²(latitude_phase)` where
+//!    `θ = 2π · signed_q_diff / width` is the longitudinal angle from
+//!    the sub-lunar point. Two peaks at sub-lunar and antipodal, two
+//!    troughs at the quarter-circle low-tide longitudes. The `cos(2θ)`
+//!    longitudinal shape pairs with the `cos²(latitude)` modulation
+//!    described below. Both use `sim_arith::transcendental::cos`
+//!    (the codebase has no `sin`, so the latitude squared-cosine is
+//!    obtained via `cos²` rather than `sin`).
 //! 3. For each pair (i, j) with i<j: redistributes `water_depth`
 //!    from low-Φ cells to high-Φ cells using the standard pair-
 //!    flux pattern:
@@ -474,6 +477,62 @@ mod tests {
             "equator cell (on sub-lunar latitude) should drift more than \
              high-latitude cell (at cos² zero): \
              equator={equator:?} high_lat={high_lat:?}"
+        );
+    }
+
+    #[test]
+    fn tide_bulge_preserves_longitudinal_symmetry() {
+        // Anti-aliasing test for the donor-limited tide flux.
+        // Under pair-flux with order-dependent donor caps, the
+        // resulting water distribution can lose the spatial
+        // symmetry the potential implies (cos(2θ) is symmetric
+        // around sub-lunar and antipodal, with two equal troughs
+        // 90° away). We assert that under moderate tide_k the
+        // post-tide depth shows the expected two-peak / two-trough
+        // pattern: at the sub-lunar longitude, the antipodal
+        // longitude, and the two trough longitudes 90° apart,
+        // the cells should pair up with equal depths within a
+        // tolerance.
+        let grid = HexGrid::new(16, 4);
+        let mut state = PhysicsState::new(grid);
+        for w in state.water_depth_mut() {
+            *w = Real::from_int(100);
+        }
+        let tides = Tides {
+            tide_k: Real::percent(2),
+            moons: vec![MoonTide {
+                mass_relative: Real::ONE,
+                period_macros: u32::MAX,
+                declination_r: 0,
+            }],
+        };
+        for _ in 0..50 {
+            tides.integrate(&mut state, Real::ONE);
+            state.advance_macro_step();
+        }
+        // grid is 16x4. Equator row (r=0). Sub-lunar q=0, antipodal
+        // q=8, quarter q=4, quarter q=12.
+        let sub_lunar = state.water_depth()[0];
+        let antipodal = state.water_depth()[8];
+        let quarter_a = state.water_depth()[4];
+        let quarter_b = state.water_depth()[12];
+        // Sub-lunar and antipodal are both bulge peaks — should be
+        // close (cos(2 · 0) = cos(2 · π) = 1).
+        let peak_asymmetry = (sub_lunar - antipodal).abs();
+        // Two quarter-circle troughs (cos(2 · π/2) = cos(2 · 3π/2)
+        // = -1) — should also be close to each other.
+        let trough_asymmetry = (quarter_a - quarter_b).abs();
+        // 2% tolerance — pair-flux conservation is bit-exact; this
+        // catches gross order-dependent flux skew from the donor
+        // limiter without overconstraining the discrete sampling.
+        let tol = Real::from_int(2);
+        assert!(
+            peak_asymmetry < tol,
+            "peak asymmetry too large: sub_lunar={sub_lunar:?} antipodal={antipodal:?}"
+        );
+        assert!(
+            trough_asymmetry < tol,
+            "trough asymmetry too large: quarter_a={quarter_a:?} quarter_b={quarter_b:?}"
         );
     }
 

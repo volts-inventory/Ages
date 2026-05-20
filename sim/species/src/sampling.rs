@@ -926,6 +926,17 @@ pub fn derive_population_biology(
     // unbounded ~0.0005..~417 of the legacy formula.
     let events_per_fertile_window =
         (Real::ONE - r_axis) * Real::from_int(30) + r_axis * Real::from_int(2);
+    // Reproductive success: per-event probability of actually
+    // producing the full clutch. K-strategists (r=0) → 0.5%; r-
+    // strategists (r=1) → 10%. Without this, the
+    // `clutch × events / fertile_months` rate overshot real human
+    // K-strategist births by ~500×. With it, K-mammal birth rates
+    // land in the ~0.001-0.01/mo range (real human ≈ 0.0005/mo
+    // per fertile adult; we sit 2-5× above to leave headroom for
+    // sociality-driven effective fertility). The recruit-ceiling
+    // clamp at `step_with_capacity` becomes the rare safety net
+    // rather than the load-bearing demographic limiter.
+    let reproductive_success = Real::from_ratio(5, 1000) + r_axis * Real::from_ratio(95, 1000);
     PopulationBiology {
         clutch_size,
         infant_fraction,
@@ -935,6 +946,7 @@ pub fn derive_population_biology(
         juvenile_survival,
         food_multipliers,
         events_per_fertile_window,
+        reproductive_success,
     }
 }
 
