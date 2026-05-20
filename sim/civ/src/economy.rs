@@ -98,14 +98,29 @@ pub fn step_surplus(civ: &mut Civ, utilisation: Real, at_war_count: u64) {
         Real::ZERO
     };
     let gain_rate = Real::from(SURPLUS_GAIN_PER_TICK);
-    let gain = pop_real * gain_rate * scale_factor;
+    // Saturating arithmetic across the surplus chain: `pop_real`
+    // can hit the Q32.32 ceiling (~2.1e9) for civs sampled with
+    // r-strategist or events_per_window-amplified growth profiles,
+    // and the legacy `*` operator panics on overflow. Saturating
+    // keeps the surplus calculation stable even when population is
+    // pegged at the rate-type maximum.
+    let gain = pop_real
+        .saturating_mul(gain_rate)
+        .saturating_mul(scale_factor);
     // Drain: per war drain rate × war count, denominated in
     // population units so it cancels the gain at parity-scale.
     let drain_rate = Real::from(SURPLUS_WAR_DRAIN_PER_TICK);
     let war_factor = Real::from_int(i64::try_from(at_war_count).unwrap_or(i64::MAX));
-    let drain = pop_real * drain_rate * war_factor;
-    let new_surplus = (civ.surplus + gain - drain).max(Real::ZERO);
-    let ceiling = pop_real * Real::from_int(SURPLUS_CEILING_FRAC);
+    let drain = pop_real
+        .saturating_mul(drain_rate)
+        .saturating_mul(war_factor);
+    // Saturating `surplus + gain - drain` so the same overflow
+    // guard extends to the add / sub steps; otherwise a saturated
+    // `gain` term added to a near-`Real::MAX` `civ.surplus` panics
+    // here even though both individual multiplications were
+    // clamped above.
+    let new_surplus = civ.surplus.saturating_add(gain).saturating_sub(drain).max(Real::ZERO);
+    let ceiling = pop_real.saturating_mul(Real::from_int(SURPLUS_CEILING_FRAC));
     civ.surplus = new_surplus.min(ceiling);
 }
 

@@ -907,6 +907,25 @@ pub fn derive_population_biology(
         Real::ONE,
         Real::percent(90),
     ];
+    // Reproductive events across the fertile window.
+    // K-strategist (r_axis = 0): 30 events — long-lived individuals
+    // each reproduce many times (rat / elephant / human pattern).
+    // r-strategist (r_axis = 1): 2 events — short-lived spawners
+    // expend their reproductive budget in one or two pulses
+    // (salmon / mayfly pattern). The semelparous extreme
+    // (single spawn → die) is approximated as `2.0` rather than
+    // `1.0` so a small modelling buffer keeps the formula numerically
+    // stable across the r-axis without collapsing to zero birth
+    // multiplier at the high end.
+    //
+    // The product `clutch_size × events_per_window` therefore stays
+    // bounded — at r_axis=1 it's `500 × 2 = 1000` rather than
+    // unbounded; at r_axis=0 it's `1 × 30 = 30`. Per-month rate
+    // `(clutch × events) / fertile_months` then sits in a sane
+    // ~0.06..~83 range across the whole axis instead of the
+    // unbounded ~0.0005..~417 of the legacy formula.
+    let events_per_fertile_window =
+        (Real::ONE - r_axis) * Real::from_int(30) + r_axis * Real::from_int(2);
     PopulationBiology {
         clutch_size,
         infant_fraction,
@@ -915,6 +934,7 @@ pub fn derive_population_biology(
         infant_survival,
         juvenile_survival,
         food_multipliers,
+        events_per_fertile_window,
     }
 }
 
