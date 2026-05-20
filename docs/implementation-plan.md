@@ -1,1018 +1,1075 @@
-# Implementation plan: expert-review roadmap
+# Implementation plan: expert-review roadmap (v2)
 
-Companion doc to `docs/expert-review-roadmap.md`. Each of the 18
-backlog items gets a concrete implementation sketch: files to
-touch, data-structure changes, algorithm, test plan, risk
-register, effort. Sequenced across 5 sprints per the roadmap.
+Companion doc to `docs/expert-review-roadmap.md`. **Revision 2** —
+incorporates xenobiologist + astrophysicist feedback on v1. Major
+shape changes:
 
-This is the **draft plan**; xenobiologist + astrophysicist
-reviewers see it before any code lands so completeness gaps
-surface up-front rather than mid-sprint.
+- **Backlog grew from 18 → 24 items** (six entirely new from astro)
+- **Items 6, 7, 12, 13, 14, 15, 16, 17, 18 substantially rewritten**
+  to address physics-accuracy + biology-system gaps the v1 missed
+- **Effort estimate revised from 410h / 11 weeks → ~700h / 17 weeks**
+- **Sequencing reshuffled** to put dependencies first
+  (extinction before speciation, weathering before greenhouse,
+  CFL acoustic-speed in Sprint 1)
+
+This doc is the planned-implementation source-of-truth. Each item
+has technical approach, test plan, risk register, effort. Both
+experts pre-sign-off on v2 before any Sprint 1 code lands.
 
 ## Methodology
 
+(unchanged from v1)
+
 - One sprint at a time, in roadmap order. No skipping ahead.
 - Each item has an acceptance test that lands with the
-  implementation. No item is "done" until its test exists +
-  passes + appears in workspace lib runs.
-- Cross-cutting concerns (determinism, save/load, migration)
-  documented per-sprint, not as afterthoughts.
-- Expert review after each sprint. Reviewer's reject blocks
-  the sprint from closing.
-- Acceptance against the per-expert sign-off checklists in
-  `docs/expert-review-roadmap.md`.
+  implementation. No item is "done" until test exists + passes.
+- Per-sprint expert review. Reviewer rejects block sprint
+  close.
+- Quantitative tests against published values where applicable
+  (Io heat budget, snowball ice-line latitude, faint-young-Sun
+  factor, etc.), not just direction-of-change behavioural
+  tests.
 
 ## Cross-cutting invariants (apply to all sprints)
 
-1. **Q32.32 determinism preserved.** Every new RNG draw must use
-   the existing per-seed `ChaCha20Rng`. No new RNG seeds beyond
-   what's already in the codebase. Any new transcendental call
-   uses `sim_arith::transcendental::{cos, exp, ln, sqrt}` (no
-   `sin`, which the codebase doesn't have). Any new fixed-point
-   division must check for divide-by-zero AND fixed-point
-   overflow via `saturating_mul` / `to_real_nonneg`.
+(unchanged from v1, plus one addition)
 
-2. **Pair-flux conservation by default.** New transport laws use
-   the pair-flux pattern (write `+flux` to one cell, `-flux` to
-   the other) so mass / energy is bit-exact conserved. Any
-   exception is documented + asserted against in a regression
-   test.
+1. Q32.32 determinism preserved.
+2. Pair-flux conservation by default.
+3. Operator-split ordering preserved.
+4. Back-compat for hand-built test fixtures.
+5. No new dependencies.
+6. Per-sprint expert review.
+7. **NEW: quantitative-anchor tests.** Behavioural tests
+   ("number X changes in direction Y") get paired with
+   calibration tests ("number X falls within [A, B] for
+   Earth-analog parameters") wherever published values exist.
 
-3. **Operator-split ordering preserved.** New laws slot into
-   `physics/src/orchestration.rs::integrate_civ_step` at a
-   documented location with rationale (e.g., before / after
-   which kernel and why). The conservation-invariant asserts
-   wrap each new kernel.
+## Sprint 1: numerical hygiene
 
-4. **Back-compat for hand-built test fixtures.** New struct
-   fields default to `Real::ZERO` or `Default::default()` so
-   existing `PopulationBiology { ... }` literal constructions
-   compile without modification. Production samplers populate
-   the new fields with real values.
-
-5. **No new dependencies** (no new crates, no `extern crate`
-   additions). Everything stays inside the existing
-   `sim_arith`, `sim_physics`, `sim_world`, `sim_species`,
-   `sim_civ`, `sim_core`, `sim_recognition`, `sim_population`
-   layer.
-
-6. **Per-sprint expert review.** After each sprint's PRs land
-   on `main`, the relevant expert (xeno / astro / both) runs a
-   pass on the diff. Their accept/reject blocks the next
-   sprint.
-
-## Sprint 1: Numerical hygiene (Tier 1)
-
-5 items, all S/M effort. Cleans up calibration debt from prior
-PRs. Independent of each other — can ship in parallel as 5
-small PRs or one rollup. Recommend parallel for review clarity.
+7 items (was 5). Two additions from astro: 1a, 1b.
 
 ### Item 1: Reproductive_success curve shape
 
-**Why**: PR #30's linear `reproductive_success = 0.005 + r×0.095`
-combined with parabolic `clutch_size = 1 + r²×499` produces a
-mid-axis hump (~6,300 lifetime offspring at r=0.5). R-end
-undershoots salmon (~120 vs ~5,000).
+(unchanged from v1)
 
-**Files**:
-- `sim/species/src/sampling.rs:938-947` (derivation)
-- `sim/population/src/lib.rs` (existing test +
-  add 2 new realism tests)
-
-**Approach**:
-- Replace linear with quadratic: `success = 0.005 × (1-r)² + 0.10
-  × r²`. At r=0.5, success = 0.005 × 0.25 + 0.10 × 0.25 = 0.026,
-  which keeps the mid-axis under control (clutch=125 × events=16
-  × success=0.026 = 52/mo lifetime offspring × 60 fertile_months
-  = 3,120 lifetime — still too many for a true mid).
-- Better shape: **also raise `clutch_size` cap at r=1**. New
-  `clutch_size = 1 + r² × 4999` (was r² × 499). Cap at 5,000
-  for true broadcast spawners. Salmon = 5,000 eggs ✓.
-- At r=1: clutch=5000, events=2, success=0.10 →
-  5000×2×0.10/1.2 = 833/mo, fertile=1.2 → 1,000 lifetime
-  offspring. Still 5× under salmon but in the right order.
-  Acceptable.
-- At r=0.5: clutch=1,250, events=16, success=0.026 →
-  1250×16×0.026/60 = 8.7/mo, fertile=60 → 520 lifetime offspring.
-  Reasonable mid-K-ish "rat-equivalent."
-
-**Test plan**:
-- Existing `k_strategist_birth_rate_realistic_with_reproductive_success`
-  passes unchanged.
-- New `mid_strategist_birth_rate_realistic`: assert mid-axis
-  (r=0.5) species lifetime offspring in [50, 1,000].
-- New `r_strategist_birth_rate_in_broadcast_spawner_range`:
-  assert r=1 species lifetime offspring in [500, 10,000].
-
-**Risk**: existing seeds that produced specific clutch values
-will shift dynamics. Acceptable — calibration honesty trumps
-seed-stability across calibration changes.
+Quadratic success curve + 5,000-cap clutch_size. Companion
+realism tests for mid (r=0.5) and r-end (r=1.0) seeds.
 
 **Effort**: S — 4 hours.
 
 ### Item 2: Two-pass donor-limited tide flux
 
-**Why**: PR #23's single-pass donor cap is order-dependent.
-Bulge symmetry breaks under aggressive `tide_k`. P6 regression
-test exists; underlying fix doesn't.
+(refined from v1 per astro feedback)
 
-**Files**:
-- `sim/physics/src/tides.rs:236-261` (the pair-flux loop)
+Three-pass scheme as v1, **PLUS**:
+- New test `tide_bulge_two_moons_different_declinations_preserves_
+  cos2_shape` — verify declination cos²-shape preserved under
+  multi-moon interference.
+- New test `tide_spring_neap_beat_envelope_preserved_under_donor_
+  cap` — verify amplitude beat pattern survives donor capping.
 
-**Approach**:
-```
-Pass 1 (compute desired):
-  for each pair (i, j) with i < j:
-    desired_flux[i,j] = tide_k × dt × (Φ[i] - Φ[j])
-    accumulate desired_outflow[i] += max(0, desired_flux[i,j])
-    accumulate desired_outflow[j] += max(0, -desired_flux[i,j])
-
-Pass 2 (scale by donor availability):
-  for each cell i:
-    if desired_outflow[i] > prev_w[i]:
-      scale[i] = prev_w[i] / desired_outflow[i]
-    else:
-      scale[i] = 1.0
-
-Pass 3 (apply scaled fluxes):
-  for each pair (i, j) with i < j:
-    raw = desired_flux[i,j]
-    actual = if raw > 0:
-      raw × scale[j]   // j is donor (Φ[j] < Φ[i])
-    else:
-      raw × scale[i]   // i is donor
-    next_w[i] += actual
-    next_w[j] -= actual
-```
-
-Mass-conservative (each `actual` written symmetrically) and
-order-independent (scale computed against `prev_w`).
-
-**Test plan**:
-- Existing `tide_redistribution_donor_limited` passes (calibrate
-  to triple-check bit-exact conservation under tide_k=0.5).
-- Existing `tide_bulge_preserves_longitudinal_symmetry` passes
-  at higher tide_k (raise the test's tide_k from 0.02 to 0.5
-  and re-run).
-- New `tide_redistribution_order_independent`: run the same
-  setup twice with different cell-ID iteration orders, assert
-  identical final `water_depth`.
-
-**Risk**: Triple-pass costs more compute than single-pass. For
-a 1,080-cell grid, ~3× the cells-iteration. Tide cadence is
-infrequent (once per macro-step), so total cost increase is
-modest. Acceptable.
-
-**Effort**: M — 8 hours.
+**Effort**: M — 10 hours (was 8, +2 for additional tests).
 
 ### Item 3: Adaptive dt sub-stepping in wind
 
-**Why**: PR #30's velocity clamp at `wind.rs:215-233` distorts
-physics. Real CFL stability requires subdividing dt, not
-clamping `v`.
+(refined per astro feedback — Items 1a, 1b folded in)
 
-**Files**:
-- `sim/physics/src/wind.rs:200-220` (the integrate loop)
+**Item 1a addition**: CFL criterion includes acoustic speed.
+Real atmospheric CFL is `(|u| + c_s) Δt / Δx < 1`. Compute
+`c_s ≈ sqrt(R T / M_atm)` per cell (or planet-wide approximation
+from atmosphere class). Sub-step count includes the acoustic
+term.
 
-**Approach**:
-```
-1. Compute velocity from pressure gradient (existing step).
-2. Compute CFL number: max(|v_along × advect_k × dt|) over all
-   pairs.
-3. If CFL > 0.5:
-     n_substeps = ceil(CFL / 0.5)
-     dt_sub = dt / n_substeps
-     for _ in 0..n_substeps:
-         re-derive pressure (it depends on T which sub-steps
-           don't change)
-         apply acceleration + friction with dt_sub
-         apply advection with dt_sub
-   else:
-     proceed normally with dt
-```
+**Item 1b**: Remove the n_substep=8 silent cap. Either:
+- Fail loudly: `panic!` in debug, emit warning + skip wind
+  step in release with a flag.
+- Or document "configurations beyond N=16 substeps unsupported"
+  and refuse to simulate (sample new planet at worldgen).
 
-Pressure can be derived once (T doesn't change within Wind's
-own step) so the sub-step loop is cheap.
+Recommend the second — at worldgen check that
+`max_steady_state_wind_speed < 16 × c_s × dx / dt` and reject
+planets that violate.
 
-Remove the post-friction velocity clamp.
+**Pressure re-derivation inside sub-step loop**: T is advected
+within the wind step, so pressure must update inside the loop,
+not just once at the top.
 
-**Test plan**:
-- Existing `wind_advection_conserves_energy_under_varying_column_mass`
-  passes unchanged.
-- Existing `wind_density_scales_all_three_coefficients` passes.
-- New `wind_subdivides_dt_under_high_pressure_gradient`: build
-  a state with extreme equator-pole temperature gradient on a
-  thin atmosphere, drive wind once; assert sub-step count > 1
-  and per-cell wind speeds aren't clamped (i.e., grow naturally
-  under sub-stepping).
+**New test**: `wind_sub_step_converges_with_n_under_pressure_
+gradient` — drive a strong gradient, run wind with N=1, 2, 4,
+8 sub-steps; result should converge as N grows (asymptotic
+limit reached around N=4 for Earth-like seeds).
 
-**Risk**: Sub-stepping in extreme cases could explode (10×
-sub-steps + 1× per-macro-step = 10× compute). Cap n_substeps
-at 8; if CFL would require more, log a warning + clamp to 8.
-Indicates a planetary configuration that just shouldn't be
-supported.
-
-**Effort**: M — 6 hours.
+**Effort**: L — 16 hours (was M=6, +10 for acoustic + pressure
+re-derive + convergence test).
 
 ### Item 4: Saturation-curve vapour cap floor
 
-**Why**: PR #30's flat 10,000 floor at `hydrology.rs:425-438`
-ignores cell saturation pressure. Hot ocean coast can hold
-much more vapour than cold desert.
-
-**Files**:
-- `sim/physics/src/hydrology.rs:425-438` (the cap loop)
-
-**Approach**:
-- Add `saturation_capacity(T, substrate, scale_height_m) ->
-  Real` derived from Clausius-Clapeyron: `cap = base ×
-  exp((T - T_ref) / RT_ref)` clamped to a max ceiling.
-- Per-cell `cap[i] = max(water_depth[i] × 100,
-  saturation_capacity(T[i], substrate, scale_h))`.
-- Drop the flat 10,000 floor.
-
-**Test plan**:
-- Existing `hydrology_vapour_cap_clamps_pathological_overload`
-  still triggers (calibrate cap to match prior test
-  expectations).
-- Existing `hydrology_cycle_reaches_steady_state` passes.
-- New `vapour_cap_scales_with_temperature`: build two cells
-  same water_depth, different T (e.g., 200K vs 350K); assert
-  hot cell has higher cap than cold cell.
-
-**Risk**: A bad calibration could either let vapour run away
-(if cap is too generous on hot cells) or starve evaporation (if
-cap is too tight on cold cells). Calibrate against Earth
-mid-latitude oceans: 300K cell should have cap ≈ 50,000
-units (broadly comparable to current 10,000 flat floor for
-near-mean cells).
+(unchanged from v1)
 
 **Effort**: S — 4 hours.
 
 ### Item 5: Cumulative hydrology mass-conservation assert
 
-**Why**: PR #30's drift tolerance is per-tick. Doesn't bound
-long-run cumulative drift from steady-state clamp firings.
-
-**Files**:
-- `sim/physics/src/orchestration.rs` (`Orchestrator` struct +
-  `step` method)
-- Add a run-end check (sim/core probably invokes a finalize
-  hook).
-
-**Approach**:
-- `Orchestrator` gains `cumulative_hydrology_drift: Real` and
-  `starting_hydrology_total: Option<Real>` fields.
-- On first hydrology call, store the starting total.
-- After each hydrology call (in debug builds), accumulate
-  `abs(post - pre)` into `cumulative_hydrology_drift`.
-- Provide a `cumulative_hydrology_drift_fraction() -> Real`
-  accessor: `cumulative / starting`.
-- At run end (sim_core finalize), debug-assert `drift_fraction
-  < 0.05` (5% growth-bounded ceiling).
-
-**Test plan**:
-- New `cumulative_hydrology_drift_bounded_over_16k_ticks`: run
-  16k ticks on the seed-100 canary, assert drift fraction < 5%.
-- Earth-like seed: assert drift fraction < 0.01% (extremely
-  tight; clamp firings should be near-zero under earth-like
-  coefficients).
-
-**Risk**: Long-runtime tests can run > 1 min and pollute CI.
-Already an existing pattern (`#[ignore = "slow"]` markers on
-16k-tick tests); reuse it.
+(unchanged from v1)
 
 **Effort**: S — 4 hours.
 
 ### Sprint 1 total
 
-~26 hours of implementation. Sprint review: xenobiologist
-not affected (numerical only); astrophysicist approves the
-adaptive-dt + cap reshape + tide order-independence.
+~38 hours (was 26). Sprint review: physicist (numerical) +
+astrophysicist (CFL + acoustic speed validation).
 
-## Sprint 2: Xenobiology foundation
+## Sprint 2: xenobiology foundation (major rewrite)
 
-Two big items in parallel: **#6 multi-species ecosystems** (the
-biggest xeno gap) and **#8 substrate-coupled solvent semantics**.
-Independent files. Different reviewers but both xeno.
+**Substantial reshape from v1.** Original Items 6 + 8 expanded
+to 7 items per xeno feedback. Adds: typed roles, typed
+interactions, recognition-template rework moved IN (not deferred),
+extinction rule, biogeochemical-cycle channels.
 
-### Item 6: Multi-species ecosystems
+### Item 6: Multi-species ecosystems (v2)
 
-**Why**: The biggest xeno gap. Sim has one species per planet —
-no ecology, no symbiosis, no producer/consumer/decomposer,
-no niche partitioning. Ecological collapse not representable.
+**Rewritten per xeno feedback.**
 
-**Files**:
-- `sim/species/src/lib.rs` + new `sim/species/src/ecosystem.rs`
-- `sim/world/src/planet.rs` (single `Species` → `Vec<Species>`)
-- `sim/civ/src/lib.rs` (civ → species lookup needs index)
-- `sim/core/src/lib.rs` (per-planet ecosystem step)
-- `sim/report/src/digest/build.rs` + viewport (surface multi-species
-  state in output)
+**Why**: v1's single `Consumer` role + signed-scalar interaction
+matrix produced a flat 2-tier "biosphere with labels." Real food
+webs need trophic pyramids, typed interactions, and keystone
+detection.
 
 **Data structures**:
+
 ```rust
 // In sim_species
-pub struct EcosystemRole {
-    Producer,         // photosynthetic / chemoautotroph
-    Consumer,         // eats other species
-    Decomposer,       // breaks down dead biomass
-    Mutualist,        // pairs with another species
-    Parasite,         // consumes host without killing
+pub enum EcosystemRole {
+    Producer { metabolism: ProducerMetabolism },
+    PrimaryConsumer,     // herbivore-equivalent
+    SecondaryConsumer,   // carnivore-1
+    ApexConsumer,        // top predator
+    Detritivore,         // consumes dead biomass
+    Saprotroph,          // breaks down fixed carbon (fungi-equivalent)
+    Mutualist { kind: MutualismKind },
+    Parasite { kind: ParasiteKind },
+}
+
+pub enum ProducerMetabolism {
+    Photoautotroph,    // sunlight-driven
+    Chemoautotroph,    // chemical-energy-driven (vent ecosystems)
+    Mixotroph,         // both
+}
+
+pub enum MutualismKind {
+    Pollinator,
+    SeedDisperser,
+    Engineer,        // habitat-modifying (beavers, corals,
+                     // mycorrhizae)
+    Generic,         // direct biomass exchange
+}
+
+pub enum ParasiteKind {
+    Macro,   // worms, fleas
+    Micro,   // bacteria, protists
+    Virus,   // requires host cellular machinery
+}
+
+pub struct Interaction {
+    pub kind: InteractionKind,
+    pub strength: Real,
+    pub functional_response: FunctionalResponse,
+}
+
+pub enum InteractionKind {
+    Predation,        // Lotka-Volterra cycling
+    Competition,      // exclusion-equilibrium
+    Mutualism,        // both benefit
+    Commensalism,     // one benefits, other indifferent
+    Parasitism,       // one benefits, one suffers
+    HabitatModification,  // engineering effect
+}
+
+pub enum FunctionalResponse {
+    Linear,           // Type I
+    Saturating,       // Type II (most realistic)
+    Sigmoidal,        // Type III
 }
 
 pub struct InteractionMatrix {
-    // matrix[a, b] = strength of a's effect on b
-    // positive = a benefits b
-    // negative = a harms b
-    pairs: BTreeMap<(SpeciesId, SpeciesId), Real>,
-}
-
-// On Planet
-pub struct Planet {
-    // ... existing fields ...
-    pub species_registry: Vec<Species>,
-    pub interaction_matrix: InteractionMatrix,
-    pub civ_bearing_species_id: SpeciesId,  // the index in
-        // species_registry that civs are descended from
-}
-
-// On Species
-pub struct Species {
-    // ... existing fields ...
-    pub role: EcosystemRole,
-    pub population_pool: Pop,  // species-level biomass; civ
-        // populations are a subset of the civ-bearing species
+    pub pairs: BTreeMap<(SpeciesId, SpeciesId), Interaction>,
 }
 ```
 
-**Step function**:
-- Per-tick `ecosystem_step` runs after `step_population_per_cell`
-  and before catastrophe checks.
-- For each species, compute per-tick `delta = base_growth +
-  Σ_others (interaction_matrix[other, self] × other.pop_pool)`.
-- Apply per-tick `delta`. Cap at planet `ecological_capacity`.
-- If producer-tier pool drops below 10% of starting, fire
-  `EcologicalCollapse` event → catastrophe (consumer-tier dies,
-  civ-bearing species takes population hit).
+**Per-tick step**:
+- For each species, compute `delta` using functional-response
+  appropriate to each pair (saturating predation, not linear).
+- Apply carrying capacity per role via Lindeman 10:1 pyramid:
+  producer biomass × 0.1 = consumer ceiling.
+- Detect keystone species via network centrality
+  (betweenness over the interaction graph).
 
 **Worldgen**:
-- `sample_planet` populates `species_registry` with 5-15 species
-  (count derived from biosphere class). Each species gets a role,
-  trait distribution drawn from the planet's substrate/atmosphere.
-- Interactions drawn from a per-role-pair distribution: producer
-  × consumer = consumer benefits (positive), producer suffers
-  (negative); decomposer × everything-dead = decomposer
-  benefits; mutualist × specific-partner = both benefit.
-- Civ-bearing species: pick one Consumer (or higher-tier
-  organism) with `cognition >= 0.3`. That species' civs are
-  what the existing civ machinery operates on.
+- Per-planet 8-20 species (was 5-15), with at minimum: 2
+  Producers, 3 PrimaryConsumers, 2 SecondaryConsumers, 1
+  ApexConsumer, 1 Detritivore, 1 Saprotroph, plus 1-3
+  Mutualists and 1-5 Parasites.
+- Trophic pyramid enforced at sampling: per-tier biomass cap
+  follows 10:1 ratio.
+- Civ-bearing species: pick one Consumer (any tier) with
+  cognition ≥ 0.3.
 
-**Migration path**:
-- `Planet::species` field replaced with `Planet::civ_bearing_species()`
-  accessor that returns `&Species` (the existing single-species
-  pattern).
-- Existing call sites work through the accessor; new ecosystem
-  logic operates on `species_registry`.
+**Tests** (more rigorous than v1):
+- `planet_has_trophic_pyramid_with_lindeman_ratio` — assert
+  consumer biomass ≈ 0.1 × producer biomass.
+- `predator_prey_pair_exhibits_lotka_volterra_cycles` — set up
+  isolated pair, run 1000 ticks, verify oscillation.
+- `keystone_species_removal_causes_cascade_disproportionate_
+  to_biomass` — remove a low-biomass high-centrality species,
+  assert larger collapse than removing equal biomass of
+  peripheral species.
+- `producer_collapse_propagates_to_consumer_tiers` — verify
+  cascade.
+- `competition_pair_excludes_at_equilibrium` — distinct
+  dynamics from predation.
 
-**Test plan**:
-- New `planet_has_multi_species_registry`: assert a sampled
-  Lush planet has ≥ 5 species across ≥ 3 roles.
-- New `ecosystem_step_propagates_producer_collapse_to_consumer`:
-  artificially crash producer pool, run ecosystem step, assert
-  consumer pool drops.
-- New `ecological_collapse_event_fires_on_producer_extinction`:
-  drive producer to extinction, assert
-  `EcologicalCollapse` event emits and civ takes a hit.
-- Existing civ + species tests unchanged (back-compat via
-  `civ_bearing_species()` accessor).
+**Effort**: XL — 70 hours (was 50, +20 for typed interactions
++ pyramid enforcement + functional responses).
 
-**Risk register**:
-- **R1**: existing tests construct `Species` literally with the
-  old field set. Default new fields (role=Consumer, pool=Pop::ZERO)
-  so they compile.
-- **R2**: determinism — adding 5-15 species per planet means
-  5-15× more RNG draws at worldgen. Existing seeds will sample
-  different planets. Acceptable — multi-species is a fundamental
-  shift; seed-rebaseline expected.
-- **R3**: report-side rendering — viewport + post-run report
-  need to surface multi-species state. Add a "Biosphere" section
-  to the report listing species and ecological events.
-- **R4**: emergent tools currently key on the single civ-bearing
-  species. With multi-species, do other species also generate
-  emergent tools? No — civ-bearing species only. Keep emergent
-  tool path unchanged.
+### Item 6a (new): Extinction rule
 
-**Effort**: XL — 50 hours over 1-2 weeks.
-
-### Item 8: Substrate-coupled solvent semantics
-
-**Why**: `Substance::{Water, Ice, Vapour}` is named for water but
-relabeled per-substrate. Mechanically identical chemistry across
-substrates. A xenobiologist calls this "naming, not physics."
-
-**Files**:
-- `sim/physics/src/chemistry/substance.rs` (the enum)
-- `sim/physics/src/chemistry/substrate.rs` (per-substrate constants)
-- `sim/physics/src/chemistry/reactions.rs` (phase transitions)
-- `sim/recognition/src/templates.rs` (templates referencing
-  Water etc.)
-- `sim/world/src/init.rs` (per-substrate initialisation)
+**Why**: Per xeno feedback — Speciation (Item 11) without
+extinction → unbounded registry growth. Must land **before**
+speciation.
 
 **Approach**:
-- **Rename** `Water/Ice/Vapour` → `SolventLiquid/SolventSolid/SolventGas`
-  (or keep `Water/Ice/Vapour` for back-compat but document
-  intent). Recommend rename for clarity.
-- Add per-substrate solvent properties: `solvent_latent_heat`,
-  `solvent_freeze_threshold`, `solvent_boil_threshold`,
-  `solvent_density`, `solvent_surface_tension`. Already partially
-  exists in `chemistry/substrate.rs`; extend.
-- Phase-transition logic reads per-substrate constants based on
-  `planet.metabolic_substrate.tag()` (already threaded).
-- Recognition templates referencing "water" → reference "solvent"
-  (generic) or split per-substrate. Recommend generic.
+- Per-tick check: if any species' `population_pool` drops below
+  `EXTINCTION_THRESHOLD` (e.g., 0.001 × planet capacity) and
+  stays there for `EXTINCTION_CONFIRMATION_TICKS`, mark
+  extinct.
+- Extinct species stays in registry (for history) but `is_extant
+  = false`. Ecosystem step skips it.
+- New `SpeciesExtinct { tick, species_id, cause }` event.
 
-**Migration path**:
-- Type aliases `Water = SolventLiquid` etc. for back-compat
-  during transition.
-- All existing call sites continue to work.
-- New code uses the new names.
+**Tests**:
+- `extinct_species_stops_contributing_to_ecosystem`
+- `extinction_cascade_from_keystone_removal`
+- `extinction_event_emits_on_pool_collapse`
 
-**Test plan**:
-- Existing physics + chemistry tests pass unchanged.
-- New `silicate_solvent_freezes_at_substrate_threshold`: 1500K
-  cell on silicate world doesn't freeze; 800K cell does.
-- New `ammoniacal_solvent_has_correct_latent_heat`: verify
-  per-substrate latent heat constants match published values.
+**Effort**: M — 14 hours.
 
-**Risk**:
-- **R1**: 30+ call sites for Water/Ice/Vapour. Renaming touches
-  all of them. Use type aliases to keep old names working
-  during transition.
-- **R2**: Recognition template wording — templates say
-  "surface_water"; should they say "surface_solvent"? Yes,
-  rename for cross-substrate accuracy.
+### Item 6b (new): Biogeochemical-cycle coupling
 
-**Effort**: L — 30 hours over ~1 week.
-
-### Sprint 2 total
-
-~80 hours. Sprint review: xenobiologist approves multi-species
-+ solvent semantics (the two biggest fixes for the "physiology
-not biology" critique). Astrophysicist not directly affected.
-
-## Sprint 3: Xeno + astro coupling
-
-Four items in parallel: **#7 lifecycle topology**, **#9 alt
-redox**, **#13 ice-albedo**, **#14 greenhouse runaway**.
-Different subsystems, independent files.
-
-### Item 7: Lifecycle-topology variants
-
-**Why**: `PopulationBiology` brackets are vertebrate-mammalian.
-Insects have egg/larva/pupa/adult. Plants have seed/seedling/
-mature/senescent. Modular organisms have biomass + budding.
-
-**Files**:
-- `sim/species/src/types.rs` (Lifecycle enum)
-- `sim/population/src/lib.rs` (per-lifecycle step functions)
-- `sim/species/src/sampling.rs` (Lifecycle derivation)
+**Why**: Per xeno feedback — Producers shouldn't "create biomass
+from base_growth." They should fix atmospheric CO₂. Couples
+ecosystem to atmospheric composition.
 
 **Approach**:
-```rust
-pub enum Lifecycle {
-    Vertebrate,        // infant/juvenile/fertile/elder (current)
-    Insect,            // egg/larva/pupa/adult; pupa is non-feeding
-    Plant,             // seed/seedling/mature/senescent; high
-                       //   seed clutch
-    Modular,           // biomass + budding rate; no brackets
-}
-```
+- Producer biomass growth requires CO₂ + (sunlight OR chemical
+  energy). Per-tick: `producer_growth = min(co2_available,
+  energy_available, base_potential)`.
+- Consumer growth consumes producer biomass, returns CO₂ via
+  respiration.
+- Decomposer consumes dead biomass, returns CO₂ + frees nutrients.
+- Couples to `Substance::Vapour` and (new) `Substance::CO2` —
+  must split CO₂ from generic Vapour.
 
-- `PopulationBiology` gains `lifecycle: Lifecycle` field.
-- `Cohort` gains alternative bracket schemas — keep current
-  4-bracket Vertebrate as default; add `Cohort::Insect`,
-  `Cohort::Plant`, `Cohort::Modular` variants (or a single
-  `BracketBag` struct with per-lifecycle accessors).
-- `step_with_capacity` dispatches on `biology.lifecycle`.
-
-**Derivation** (in sampler):
-- Manipulation modes: `WebConstruct + Mandible` → Insect
-  likely. `LimbGrasp + Trunk` → Vertebrate likely.
-- Body plan / cognition: high cognition → Vertebrate.
-- Habitat: Endolithic → Modular default.
-- Random fallback: bias toward Vertebrate (most familiar).
-
-**Test plan**:
-- `insect_lifecycle_pupa_bracket_zero_food`: pupa bracket
-  consumes no food, produces no offspring.
-- `plant_lifecycle_seed_clutch_supermajority`: plant species
-  has 80%+ of pop in seed bracket.
-- `modular_lifecycle_no_brackets_total_equals_biomass`:
-  modular species tracks biomass only; `total()` equals
-  biomass.
-
-**Risk**:
-- **R1**: Cohort variants explode the API surface — every
-  cohort operation needs per-lifecycle dispatch.
-- **R2**: Migration migration (cross-bracket flow) — vertebrate
-  fertile bracket and insect adult bracket are similar but not
-  identical. Map carefully.
-
-**Effort**: L — 40 hours over ~1 week.
-
-### Item 9: Alternative redox chemistry
-
-**Why**: `Substance::Oxidiser` is O₂-shaped. Ammonia substrate
-needs N₂O₄. Methane substrate needs perchlorate. Combustion
-1:1:1 stoichiometry ignores molar masses.
-
-**Files**:
-- `sim/physics/src/chemistry/substance.rs` (per-substrate
-  oxidiser?)
-- `sim/physics/src/chemistry/reactions.rs` (stoichiometry)
-- `sim/world/src/init.rs` (oxidiser deposition)
-
-**Approach**:
-- Keep `Substance::Oxidiser` as generic "oxidising agent"
-  enum slot.
-- Per-substrate `oxidiser_molar_mass: Real`, `combustion_yield_ratio:
-  Real` constants in `chemistry/substrate.rs`. The substrate
-  determines what the Oxidiser is (O₂ for Aqueous, N₂O₄ for
-  Ammoniacal, perchlorate for Hydrocarbon, silicate-melt-O for
-  Silicate).
-- Stoichiometry per-substrate: `combustion(fuel, oxidiser,
-  substrate) → product` with substrate-dependent yields.
-- `LocalisedCombustion` tool requires non-zero oxidiser of the
-  appropriate substrate type.
-
-**Migration**:
-- Existing `Substance::Oxidiser` operations continue to work;
-  per-substrate behavior layered on via substrate dispatch.
-
-**Test plan**:
-- `ammonia_substrate_combustion_uses_n2o4_stoichiometry`:
-  verify per-substrate stoichiometry.
-- `co2_atmosphere_aqueous_substrate_combustion_works`: this is
-  the "Lumen-h fire-locked" case from PR #21; should now
-  succeed (CO₂ atmosphere has trace O₂ from biosphere).
-
-**Risk**:
-- **R1**: Recognition templates reference "fire" with specific
-  signature; per-substrate fire would need per-substrate
-  templates. Defer template rework to Item 8.
-- **R2**: Tool gating that requires "fire confirmed" still works
-  but interprets fire per-substrate.
-
-**Effort**: L — 30 hours over ~1 week.
-
-### Item 13: Ice-albedo feedback
-
-**Why**: Albedo is per-atmosphere-class constant. Real ice
-reflects ~80% of light; ocean absorbs ~95%. Without per-cell
-albedo, no snowball state.
-
-**Files**:
-- `sim/physics/src/radiation.rs` (per-cell albedo derivation)
-- `sim/physics/src/state.rs` (per-cell albedo field?)
-- `sim/world/src/init.rs` (initial albedo from terrain)
-
-**Approach**:
-- Per-cell albedo computed from `(atmosphere.base_albedo +
-  ice_fraction × 0.5 + cloud_fraction × 0.2)`, clamped to
-  [0, 1].
-- `ice_fraction = substance(Ice)[cell] / max_ice_cap` (or
-  some sensible normalisation).
-- `Radiation::integrate` reads per-cell albedo instead of
-  planet-wide.
-
-**Test plan**:
-- `cold_seed_slides_into_snowball`: build a cold-equilibrium
-  state, run 1000 ticks, assert majority of cells acquire ice
-  coverage and equilibrium temperature drops by ≥ 20K.
-- `ice_albedo_feedback_amplifies_cooling`: directly add ice to
-  some cells, observe temperature drop in next radiation step.
-
-**Risk**:
-- **R1**: Snowball state could lock out civilization — once
-  ice-covered, civs starve. Add a tunable `albedo_ice_bonus`
-  parameter so the strength of feedback can be calibrated.
-- **R2**: Computational cost — per-cell albedo lookup runs
-  every macro-step. Cache if needed.
-
-**Effort**: M — 20 hours over ~3 days.
-
-### Item 14: Greenhouse runaway / snowball bistability
-
-**Why**: Climate is steady-state radiation balance. Real climate
-has positive feedback loops. Sim has neither hot-runaway nor
-snowball.
-
-**Files**:
-- `sim/physics/src/radiation.rs` (per-cell greenhouse)
-- couples to vapour density from hydrology
-
-**Approach**:
-- Per-cell `greenhouse_k = atmosphere.base_greenhouse +
-  vapour_fraction × greenhouse_vapour_coefficient`.
-- `vapour_fraction = state.substance(Vapour)[cell] /
-  saturation_cap[cell]` (uses Item 4's saturation cap).
-- Radiation law uses per-cell greenhouse.
-
-**Test plan**:
-- `hot_seed_slides_into_venus_state`: build a hot seed, run
-  1000 ticks, assert temperature rises further (positive
-  feedback) and vapour density increases.
-- `bistable_climate_basins_separate`: pick two close starting
-  states, one slightly hotter than the other; assert they
-  diverge over time (one to hot basin, one to cold basin).
-
-**Risk**:
-- **R1**: Runaway in fixed-point — temperature could climb past
-  fixed-point ceiling. Cap absolute temperature at a sane
-  ceiling (e.g., 2000K).
-- **R2**: Coupling with Item 13 — ice-albedo + greenhouse-vapour
-  must both land for true bistability. Sequence them in the
-  same sprint.
-
-**Effort**: M — 20 hours over ~3 days.
-
-### Sprint 3 total
-
-~110 hours. Sprint review: xenobiologist on items 7 + 9;
-astrophysicist on items 13 + 14.
-
-## Sprint 4: Astro long-timescale
-
-One XL item: **#12 tectonics + erosion**. Standalone sprint
-because of size.
-
-### Item 12: Tectonics + erosion
-
-**Why**: `state.elevation` is "permanently deferred from physics
-mutation". Every planet's geography is freeze-frame forever.
-Astrophysicist calls this "rocky planets without rock cycle —
-incoherent."
-
-**Files**:
-- `sim/physics/src/state.rs` (mutate elevation; add
-  `crustal_thickness` field?)
-- `sim/physics/src/tectonics.rs` (new — plate uplift)
-- `sim/physics/src/erosion.rs` (new — sediment transport)
-- `sim/physics/src/orchestration.rs` (slot new laws into step)
-- `sim/world/src/planet.rs` (per-cell `plate_id`?)
-
-**Data structures**:
-- `state.elevation_mut()`: now mutable (was previously immutable).
-- New `state.crustal_thickness()`: per-cell thickness in km.
-- New `state.plate_id()`: per-cell plate index (assigned at
-  worldgen via Voronoi partition).
-
-**Tectonics**:
-- Per-tick `tectonics::integrate`:
-  - For each plate boundary cell (where neighboring cells have
-    different `plate_id`):
-    - Compute convergence rate from mantle flow proxy (e.g.,
-      uniform per-plate velocity sampled at worldgen).
-    - Convergent: uplift (`elevation[cell] += uplift_k × dt`)
-    - Divergent: rift formation (`elevation[cell] -= rift_k × dt`)
-    - Transform: shear (no elevation change)
-  - Crustal thickness conserved per-plate via pair-flux.
-
-**Erosion**:
-- Per-tick `erosion::integrate`:
-  - For each cell with `water_depth > 0` flowing downhill (via
-    `GravityFlow` velocity):
-    - Compute sediment pickup: `sediment_pickup_k ×
-      velocity_magnitude × water_depth × dt`
-    - Transport sediment downhill (new substance
-      `Substance::Sediment`?)
-    - Deposit at depressions / low-velocity cells.
-  - Net effect: elevation decreases at high-velocity cells
-    (erosion), increases at deposition zones.
-
-**Plate generation** (worldgen):
-- At init, partition grid into N plates (N derived from
-  planet radius / thermal age).
-- Voronoi partition from N seed cells.
-- Per-plate uniform velocity (random direction).
-
-**Test plan**:
-- `tectonics_uplifts_convergent_boundaries`: configure two
-  plates converging, run 1000 ticks, assert elevation at
-  boundary increases.
-- `erosion_lowers_mountain_cells`: configure a high-elevation
-  cell with water flow, assert elevation decreases over time.
-- `sediment_conserved_through_transport`: drive erosion on a
-  multi-cell terrain, assert total elevation + total sediment
-  in transport is conserved.
-- `50000_tick_planet_shows_measurable_geography_change`: run
-  long simulation, assert before/after elevation maps differ.
-
-**Risk register**:
-- **R1**: Massive subsystem — new fields, new laws, new
-  orchestration slots, possibly new Substance. Multi-week.
-- **R2**: Determinism — plate partition must be deterministic
-  from seed. Sediment transport must conserve mass bit-exactly.
-- **R3**: Interaction with existing terrain features (peaks,
-  hills) — terrain_peak is sampled at worldgen and reused
-  throughout. Need to refresh derived metrics on elevation
-  change.
-- **R4**: Tests need to run long sims (50k ticks). Use
-  `#[ignore = "slow"]` markers.
-
-**Effort**: XL — 80 hours over 2 weeks.
-
-### Sprint 4 total
-
-~80 hours, single XL item. Sprint review: astrophysicist (the
-deepest astro fix in the roadmap).
-
-## Sprint 5: Closing the gaps
-
-Six parallel items: **#10 cognition topology**, **#11
-speciation**, **#15 Hadley cells**, **#16 tidal heating**,
-**#17 atmospheric escape**, **#18 stellar variability**.
-All M-effort, different subsystems.
-
-### Item 10: Cognitive topology as real mechanic
-
-**Why**: `CognitionTopology::{Centralized, Distributed}` is
-flavor-only.
-
-**Files**:
-- `sim/civ/src/discovery/hypothesizer.rs` (step function)
-- `sim/species/src/sampling.rs` (axis derivation)
-
-**Approach**:
-- Distributed topology: per-tick multi-fit (2-3 fit attempts
-  per tick instead of 1). But cap `Form::Polynomial2/3`
-  confidence at 0.6 (no formal abstraction).
-- Centralized topology: single fit per tick. Full confidence
-  on all forms.
-- Wire `CognitionAxes` differently: Distributed → derive
-  `social` axis dominantly; Centralized → derive `abstraction`
-  axis dominantly.
-
-**Test plan**:
-- `distributed_species_discovers_faster_at_low_complexity`:
-  same seed, two species (Distributed vs Centralized); after
-  5000 ticks, Distributed has more confirmed relations on
-  Linear/Threshold forms.
-- `centralized_species_reaches_higher_abstraction_ceiling`:
-  symmetric — Centralized confirms more Polynomial relations.
-
-**Effort**: M — 16 hours.
-
-### Item 11: Speciation / evolution events
-
-**Why**: species traits drift but don't *split*. Depends on
-Sprint 2's multi-species ecosystem (item 6).
-
-**Files**:
-- `sim/species/src/lib.rs` (speciation function)
-- `sim/core/src/lib.rs` (trigger conditions)
-
-**Approach**:
-- Per-tick check: for each species, if (catastrophe streak >
-  threshold OR climate-shift > threshold OR
-  isolation-by-geography > threshold), trigger speciation.
-- Speciation: create new species with parent's traits +
-  divergent pull (±0.2 on each trait axis). Add to planet
-  `species_registry`.
-- Allopatric path: when geographic isolation between civ
-  populations exceeds N cells, split.
-- Sympatric path: when niche pressure (resource competition
-  with another species) drives trait drift past threshold.
-
-**Test plan**:
-- `high_catastrophe_pressure_triggers_speciation`: subject
-  species to repeated catastrophes, assert second species
-  appears in registry.
-- `speciated_species_inherits_parent_traits_with_divergence`:
-  verify child species' traits are ±0.2 from parent.
-
-**Effort**: L — 24 hours. Depends on item 6.
-
-### Item 15: Hadley/Ferrel/polar cells
-
-**Why**: Wind is local pressure-gradient + Coriolis; doesn't
-organize into three-cell structure. Depends on Sprint 1's
-adaptive dt (item 3).
-
-**Files**:
-- `sim/physics/src/wind.rs` (meridional overturning)
-- `sim/physics/src/vertical_convection.rs` (couple)
-
-**Approach**:
-- After horizontal wind step, compute equator-pole gradient.
-- Add a meridional bias proportional to:
-  `latitude × (1 - 2×|latitude|/3) × gradient_strength`
-- This produces:
-  - Equator (lat ≈ 0): rising motion
-  - Mid-latitude (lat ≈ 30°): descending motion
-  - High-latitude (lat ≈ 60°): rising motion
-  - Pole (lat ≈ 90°): descending motion
-- Couple to `VerticalConvection` for the rising/descending
-  signature.
-
-**Test plan**:
-- `hadley_cell_descends_at_30_latitude`: run sustained
-  gradient, assert vertical velocity profile shows descending
-  motion at mid-latitudes.
+**Tests**:
+- `producer_growth_consumes_atmospheric_co2`
+- `consumer_respiration_returns_co2_to_atmosphere`
+- `decomposer_chain_balances_carbon_budget`
 
 **Effort**: L — 30 hours.
 
-### Item 16: Tidal heating
+### Item 7: Lifecycle topology variants (v2)
 
-**Why**: Io is heated by Jupiter's tidal flexing. No internal-
-friction heat source in current sim.
+**Substantially expanded per xeno feedback.**
 
-**Files**:
-- `sim/physics/src/tides.rs` (add heat output)
+```rust
+pub enum Lifecycle {
+    Vertebrate,                              // 4-bracket (current)
+    Aquatic { semelparous: bool },          // tadpole-frog OR salmon
+    Insect,                                  // egg/larva/pupa/adult
+    Eusocial { castes: Vec<CasteRole> },     // queen + sterile workers
+    Plant,                                   // seed/seedling/mature/sen
+    Microbial { fission_strategy: Fission }, // binary, budding
+    Modular,                                 // colonial — biomass + bud
+}
 
-**Approach**:
-- Per-cell heat contribution = `Σ moons (mass_relative × dt ×
-  friction_k × local_potential_gradient²)`
-- Where `friction_k` is tunable (Io-like config gives
-  significant heat; Earth-Moon gives negligible).
-- Fed into `state.temperature_mut()`.
+pub enum CasteRole {
+    Reproductive,    // queens, drones
+    Worker,          // sterile, forages
+    Soldier,         // sterile, defensive
+    Nurse,           // tends young
+}
 
-**Test plan**:
-- `tidal_heating_warms_io_like_configuration`: planet with
-  massive close moon shows measurable temperature elevation
-  independent of insolation.
+pub enum Fission {
+    Binary,          // bacteria, archaea
+    Budding,         // yeast
+    Conjugation,     // some prokaryotes — HGT path
+}
+```
 
-**Effort**: M — 12 hours.
+**Resolves Item 1 contradiction**: r=1 broadcast spawner now
+routes through `Aquatic { semelparous: true }` lifecycle.
+Single-spawn-and-die step function handles it correctly.
 
-### Item 17: Atmospheric escape
+**Tests** (more thorough than v1):
+- `aquatic_semelparous_lifecycle_single_spawn_then_death`
+- `eusocial_lifecycle_castes_track_independently`
+- `microbial_binary_fission_doubles_per_generation_time`
+- `plant_alternation_of_generations_if_complex`
 
-**Why**: Light atmospheres should escape Jeans-style. Mars-thin
-worlds should be thin *because* they lost atmosphere over Gyr.
+**Effort**: L — 48 hours (was 40, +8 for additional variants).
 
-**Files**:
-- `sim/physics/src/atmosphere.rs` (new — atmospheric evolution)
-- `sim/world/src/planet.rs` (mutable atmosphere mass)
-- `sim/physics/src/orchestration.rs` (slot in)
+### Item 7a (new): Tolerance envelopes
 
-**Approach**:
-- Per-tick atmospheric mass loss rate per substance:
-  `loss = base_jeans_rate × T_exo / (gravity × molecular_mass)`
-- Lighter molecules (H, He) escape faster than heavier (CO₂, N₂).
-- Composition shifts toward heavier molecules over time.
-- Surface pressure decays with mass loss.
-
-**Test plan**:
-- `low_gravity_hot_planet_loses_atmosphere_over_50000_ticks`:
-  run long sim, assert atmospheric mass decreases.
-- `high_gravity_cold_planet_retains_atmosphere`: control case.
-
-**Effort**: M — 16 hours. Depends on Item 18 (stellar variability
-provides EUV flux).
-
-### Item 18: Stellar variability
-
-**Why**: `stellar_luminosity` is constant. Stars flare, have
-sunspot cycles, evolve through main sequence.
-
-**Files**:
-- `sim/physics/src/radiation.rs` (time-varying luminosity)
-- `sim/civ/src/catastrophe/triggers.rs` (flare events)
+**Why**: Per xeno feedback — Extremophile niche specialisation
+not representable. Mass-extinction differential survival not
+representable.
 
 **Approach**:
-- Slow secular: `stellar_luminosity(t) = base × (1 + secular_k
-  × t / star_main_sequence_lifetime)`. Earth's Sun has gone
-  from 70% to 100% over 4.5 Gyr (faint-young-Sun problem).
-- Fast variation: sunspot cycle (~11 yr period, ±0.1% amplitude).
-- Flare events: stochastic, rare, sudden insolation burst.
-  Hook into catastrophe system as `SolarFlare`.
+```rust
+pub struct ToleranceEnvelope {
+    pub temp_range: (Real, Real),
+    pub ph_range: (Real, Real),
+    pub salinity_range: (Real, Real),
+    pub radiation_max: Real,
+    pub pressure_range: (Real, Real),
+}
+```
 
-**Test plan**:
-- `stellar_luminosity_drifts_over_long_run`: 50k ticks,
-  luminosity at end differs from start.
-- `flare_event_fires_as_catastrophe`: artificially trigger
-  flare, assert SolarFlare catastrophe emits.
+- `Species::tolerance: ToleranceEnvelope` (sampled per substrate
+  defaults, perturbed per-species).
+- Habitat occupancy gates on cell conditions ∩ tolerance.
+- Catastrophe survival multiplied by `species.tolerance_match(local
+  conditions)` — extremophiles survive radiation events, etc.
+
+**Tests**:
+- `extremophile_species_occupies_high_radiation_cells`
+- `mass_extinction_differential_survival_by_tolerance`
 
 **Effort**: M — 16 hours.
 
+### Item 7b (new): Dormancy / cryptobiosis
+
+**Why**: Per xeno feedback — Tardigrade-grade survival of
+catastrophes is a documented seed-bank mechanism that lets
+biospheres recover after asteroid impacts. Without it, every
+catastrophe is a hard population kill.
+
+**Approach**:
+- `Species::dormancy_capability: Real` ∈ [0, 1].
+- Catastrophe damage = `base_damage × (1 - dormancy ×
+  catastrophe_severity_factor)`.
+- Dormant population stays at low metabolism, can resurrect over
+  hundreds of ticks post-event.
+
+**Tests**:
+- `dormant_species_survives_catastrophe_at_reduced_rate`
+- `seed_bank_resurrection_repopulates_post_extinction_event`
+
+**Effort**: S — 8 hours.
+
+### Item 8: Substrate-coupled solvent semantics (v2)
+
+**Expanded per xeno feedback** — phase transitions alone are
+"naming, not physics." Add solubility + reaction kinetics shifts.
+
+**Approach** (v1 plus):
+- `solvent_solubility[Substance]: Real` — per-substrate
+  table indicating dissolution propensity of each substance
+  in the solvent. Water dissolves many salts; ammonia dissolves
+  different things; liquid methane dissolves almost nothing.
+  Affects chemistry kernel availability of reactions.
+- `solvent_reaction_kinetics_prefactor: Real` — per-substrate
+  Arrhenius prefactor multiplier. Cold solvents (liquid
+  methane) have slower reactions than warm (liquid water).
+- **Recognition templates per-substrate**: rename
+  `surface_water` template to `surface_solvent`, but signature
+  varies per substrate. Civs on liquid-methane world see a
+  "methane-surface" pattern; civs on water world see "water-
+  surface" — semantically separate templates with substrate-
+  specific signatures.
+
+**Tests** (more rigorous than v1):
+- `methane_substrate_solubility_excludes_most_substances`
+- `ammoniacal_solvent_reaction_kinetics_match_published`
+- `recognition_template_surface_solvent_per_substrate_signature`
+
+**Effort**: XL — 50 hours (was L=30, +20 for solubility +
+kinetics + template rework).
+
+### Item 9: Alternative redox chemistry (v2)
+
+**Expanded per xeno feedback** — multiple oxidisers per
+substrate, reduction-potential ladder, syntrophy.
+
+**Approach** (v1 plus):
+- Per-substrate `Vec<Oxidiser>` (not single).
+- Each oxidiser has `reduction_potential: Real` (V) and
+  `available_density: Real`.
+- Chemolithotroph producers (added in Item 6b's
+  `Chemoautotroph` ProducerMetabolism) partition by which
+  oxidiser they reduce — high-potential first (oxygen),
+  then sequentially lower-potential as those deplete.
+- **Syntrophy**: implement via Item 6's
+  `Interaction::Mutualism` — H₂-producing bacteria pair with
+  methanogens that consume H₂. Neither can survive alone in
+  the niche.
+
+**Tests** (more rigorous):
+- `chemolithotroph_species_partition_by_reduction_potential`
+- `syntrophy_pair_extinction_when_separated`
+- `co2_atmosphere_combustion_works_via_alt_oxidiser`
+
+**Effort**: L — 40 hours (was 30, +10 for multi-oxidiser +
+syntrophy).
+
+### Sprint 2 total
+
+~286 hours (was 80). The big xeno sprint. Sprint review:
+xenobiologist primary, astrophysicist on biogeochemical cycles
+(Item 6b couples to atmospheric composition).
+
+## Sprint 3: xeno + astro coupling (major rewrite)
+
+**Reshape per both expert feedback.** 13 → 14 then now → 17
+adds carbon-silicate weathering thermostat (was missing).
+Items 13, 14 substantially rewritten with correct physics.
+
+### Item 10: Cognitive topology as real mechanic (v2)
+
+**Refined per xeno feedback** — four-way topology, not binary.
+
+```rust
+pub enum CognitionTopology {
+    Centralized,         // vertebrate brain
+    DistributedRedundant, // octopus, 2/3 neurons in arms
+    Collective,           // eusocial colony mind
+    Acentric,            // slime mold — chemical gradients, no neurons
+}
+```
+
+- **Centralized**: deep abstraction, serial reasoning. High
+  `abstraction` axis, low parallel discovery rate.
+- **DistributedRedundant**: parallel sensing/processing per
+  body part. Multi-fit per tick, but limited integration —
+  `abstraction` capped at 0.6.
+- **Collective**: very high `social` axis, requires colony
+  presence for cognition (drops to near-zero in isolated
+  individuals).
+- **Acentric**: very slow but persistent. Long `attempt_period`
+  but no forgetting; cumulative knowledge survives generations
+  better.
+
+Plus: communication-channel coupling. Chemical-comm species
+have slow long-distance correlation; bioluminescent species
+fast but line-of-sight; vibrational fast but short-range.
+Hypothesizer transmission speed depends on comm channel.
+
+**Tests** (more orthogonal):
+- `collective_species_cognition_drops_in_isolation`
+- `acentric_species_retains_knowledge_across_generations_better`
+- `comm_channel_modality_affects_transmission_speed`
+
+**Effort**: L — 30 hours (was M=16, +14 for four-way + comm
+coupling).
+
+### Item 11: Speciation events (v2)
+
+**Substantially expanded per xeno feedback** — add allopatric/
+sympatric/polyploid paths, founder effect, post-extinction
+adaptive radiation, correlated trait drift.
+
+**Triggers**:
+- Geographic isolation (allopatric) — populations separated by
+  > N cells without contact for > M ticks.
+- Niche pressure (sympatric) — competition with another
+  species on overlapping resources, trait drift in opposing
+  directions.
+- Polyploidy (plant-only) — instant, rare event for `Lifecycle::
+  Plant` species.
+- Founder effect — small bottleneck population with allele
+  drift toward fixation differently.
+- Post-extinction adaptive radiation — rate boosted 5× for
+  100 generations after mass-extinction event.
+
+**Trait divergence**: correlated, not random. Use allometry
+matrix:
+```rust
+fn divergence_pull(parent_traits, axis_idx, seed):
+    // Body-mass-correlated traits change together:
+    // bigger body → longer lifespan → slower metabolism
+    // → larger clutch
+```
+
+**Tests** (more rigorous):
+- `allopatric_isolation_triggers_speciation`
+- `niche_pressure_drives_sympatric_speciation`
+- `polyploidy_speciation_only_for_plant_lifecycle`
+- `founder_effect_rapid_drift_in_bottleneck`
+- `post_extinction_radiation_rate_5x_for_100_generations`
+- `daughter_species_traits_correlated_via_allometry`
+
+**Effort**: L — 40 hours (was 24, +16 for additional triggers
++ allometry).
+
+### Item 11a (new): Horizontal gene transfer
+
+**Why**: Per xeno feedback — Dominant evolution mode for
+prokaryotes (99% of Earth's biospheric history). Vertical
+speciation alone misses this.
+
+**Approach**:
+- For `Lifecycle::Microbial` species, per-tick low probability
+  trait-swap with co-located other Microbial species.
+- Probability proportional to cell-overlap × time-overlap.
+- Speeds adaptation in prokaryote-equivalent niches.
+
+**Tests**:
+- `hgt_propagates_trait_between_colocated_microbial_species`
+- `hgt_only_fires_for_microbial_lifecycle`
+
+**Effort**: M — 12 hours.
+
+### Item 13: Ice-albedo feedback (v2)
+
+**Substantially rewritten per astro feedback** — linear ramp
+can't produce bifurcation. Need sigmoid + bimodal channels.
+
+**Approach**:
+- Per-cell albedo from three channels:
+  - `snow_fraction: Real` (over land or ice)
+  - `sea_ice_fraction: Real` (gray, not white)
+  - `cloud_fraction: Real` (already in atmosphere)
+- Sigmoid transition at freeze threshold:
+  `albedo = base + 0.5 × sigmoid((T_freeze - T) / 5)` so albedo
+  jumps quickly across the freeze line, not linearly.
+- Snow accumulates on ice; sea-ice without snow is darker.
+- Melt-ponds in summer (sea_ice partially melted) further darken.
+
+**Tests** (calibration-anchored):
+- `albedo_step_at_freeze_threshold_produces_bifurcation`
+- `cold_seed_with_marginal_temp_falls_into_one_of_two_basins_
+  not_intermediate`
+- `snowball_ice_line_at_30_latitude_under_solar_constant_loss`
+  (real snowball-Earth modelling result)
+
+**Effort**: L — 30 hours (was M=20, +10 for sigmoid + multi-
+channel + bifurcation test).
+
+### Item 14: Greenhouse runaway / snowball bistability (v2)
+
+**Substantially rewritten per astro feedback** — linear vapour
+coupling can't produce real Venus runaway. Need Clausius-
+Clapeyron exponential.
+
+**Approach**:
+- Separate `Substance::CO2`, `Substance::H2O_Vapour`,
+  `Substance::CH4` channels (was lumped as Vapour).
+- Per-cell greenhouse from sum of per-substance contributions:
+  `greenhouse = Σ (substance_density × substance_greenhouse_k)`
+- H₂O contribution exponential in T (Clausius-Clapeyron):
+  `h2o_density = saturation_pressure_at(T)` — couples *both*
+  ways through T.
+- CO₂ contribution linear (long-lived gas, not T-coupled).
+- CH₄ contribution short-lived (photolysis decay).
+
+**Tests** (calibration-anchored):
+- `hot_seed_slides_into_venus_state_via_h2o_runaway`
+- `runaway_threshold_at_published_T_temp` (Komabayashi-
+  Ingersoll limit)
+- `co2_thermostat_held_by_weathering_negative_feedback`
+  (requires Item 14a)
+
+**Effort**: L — 40 hours (was M=20, +20 for per-substance
+separation + Clausius-Clapeyron coupling).
+
+### Item 14a (new): Carbon-silicate weathering thermostat
+
+**Why**: Per astro feedback — Without this, every Earth-like
+seed drifts toward Venus over Gyr. The weathering rate
+accelerates with T + precipitation, so it acts as a negative
+feedback that holds CO₂ at habitable levels.
+
+**Approach**:
+- Per-tick CO₂ consumption rate (via silicate weathering):
+  `weathering = base × T_factor × precipitation_factor`
+- T_factor: Arrhenius-like increase with cell T.
+- Precipitation_factor: high in wet cells (high water_depth +
+  vapour), zero in dry.
+- CO₂ removed from atmosphere over geological timescales.
+- Volcanism (Item 12d) returns CO₂; weathering removes it.
+  Balance sets equilibrium CO₂ → equilibrium T → equilibrium
+  Earth.
+
+**Tests**:
+- `weathering_rate_increases_with_temperature`
+- `weathering_increases_with_precipitation`
+- `weathering_thermostat_holds_earth_like_at_300k_equilibrium`
+  (long-run test)
+
+**Effort**: M — 20 hours.
+
+### Sprint 3 total
+
+~242 hours (was 110). Sprint review: xeno + astro both, with
+particular attention to whether bistability tests pass.
+
+## Sprint 4: astro long-timescale (major rewrite)
+
+**Substantially expanded per astro feedback** — v1's Item 12
+was missing four critical rock-cycle mechanisms. Now broken
+into 5 sub-items.
+
+### Item 12: Tectonics + erosion (v2 core)
+
+(rewritten — only uplift + fluvial erosion as v1 said)
+
+**Effort**: L — 50 hours (was 80, but split — subduction etc.
+now separate sub-items).
+
+### Item 12a (new): Subduction
+
+**Why**: Per astro feedback — Convergent oceanic-continental
+boundaries consume oceanic crust. Without this, plate area is
+conserved forever and ocean basins can't be destroyed. Single
+most important rock-cycle mechanic.
+
+**Approach**:
+- For convergent boundaries between plates with `crust_type ∈
+  {Oceanic, Continental}`: identify denser plate (oceanic) and
+  mark it consumed.
+- Per-tick crust-area transfer at convergent boundary.
+- Sinking crust returns mantle-buffered minerals via volcanism
+  (couples to Item 12d).
+
+**Tests**:
+- `oceanic_continental_convergence_consumes_oceanic_crust`
+- `ocean_basin_can_be_completely_consumed_over_geological_time`
+
+**Effort**: M — 20 hours.
+
+### Item 12b (new): Crust_age + ocean-floor age
+
+**Approach**:
+- New per-cell `crust_age: u64` field (ticks since formation).
+- At divergent (ridge) boundaries, new oceanic crust spawns
+  with `age = 0`.
+- Oceanic crust depth scales as `depth = base + 350 × √age`
+  (real ridge-cooling formula, scaled units).
+
+**Tests**:
+- `ridge_crust_starts_age_zero`
+- `ocean_depth_increases_with_crustal_age`
+
+**Effort**: S — 8 hours.
+
+### Item 12c (new): Isostasy
+
+**Why**: Crust thickness drives surface elevation via Airy
+isostasy. Without it, thickening crust doesn't lift, erosion
+doesn't trigger rebound.
+
+**Approach**:
+- `h_surface = h_base + (ρ_mantle / ρ_crust - 1) × thickness`
+  (Airy formula, scaled).
+- Update elevation after any tectonic / erosion update.
+
+**Tests**:
+- `crustal_thickening_lifts_surface_elevation`
+- `erosion_triggers_isostatic_rebound`
+
+**Effort**: M — 12 hours.
+
+### Item 12d (new): Volcanism + outgassing
+
+**Why**: Per astro feedback — Closes the carbon-silicate cycle
+loop. Convergent + divergent boundaries emit CO₂ + H₂O.
+
+**Approach**:
+- Per-tick volcanic emission rate at active boundary cells.
+- Returns CO₂ + H₂O to atmosphere.
+- Hot-spot volcanism (non-boundary) as rare random event.
+- Couples to Item 14a (weathering removes; volcanism adds).
+
+**Tests**:
+- `volcanism_emits_co2_at_subduction_zones`
+- `weathering_volcanism_balance_holds_earth_like_co2`
+
+**Effort**: M — 18 hours.
+
+### Item 12e (new): Slab-pull plate dynamics
+
+**Why**: Per astro feedback — Frozen-in plate velocities make
+tectonics a snapshot, not a cycle. Real plates accelerate /
+decelerate via slab pull at subduction zones.
+
+**Approach**:
+- Plate velocity per-tick adjusted by sum of slab-pull forces
+  at its subducting edges.
+- Slab pull magnitude ∝ slab length × density contrast.
+
+**Tests**:
+- `plate_velocities_evolve_via_slab_pull`
+- `subduction_zone_initiation_changes_plate_velocity`
+
+**Effort**: L — 30 hours.
+
+### Sprint 4 total
+
+~138 hours (was 80). Sprint review: astrophysicist (the deepest
+astro fix in the roadmap).
+
+## Sprint 5: closing the gaps (major rewrite + new items)
+
+**Expanded per both expert feedback.** Items 16, 17, 18 each
+rewritten with correct physics. Plus 6 new items 19-24.
+
+### Item 15: Hadley/Ferrel/polar cells (v2)
+
+**Substantially rewritten per astro feedback** — v1's prescribed
+bias was cosmetic. Need angular-momentum-emergent.
+
+**Approach**:
+- After horizontal wind step, compute angular-momentum
+  conservation per air parcel moving meridionally.
+- Poleward-moving parcels conserve `(Ω r cos² lat + u cos lat)`
+  → westerly jets aloft.
+- Subsidence at jet shear instability → mid-latitude descending
+  zone.
+- Number of cells emerges from `rotation_rate × planet_radius`:
+  slow rotator → one Hadley cell; rapid rotator → 3 cells.
+
+**Tests**:
+- `slow_rotator_has_one_pole_to_pole_hadley_cell`
+- `earth_like_rotation_has_three_cell_structure`
+- `ferrel_cell_eddy_driven_not_thermally_direct`
+
+**Effort**: XL — 50 hours (was L=30, +20 for true emergent
+mechanic).
+
+### Item 16: Tidal heating (v2 — fixed formula)
+
+**Rewritten per astro feedback — v1 formula was physically wrong.**
+
+**Correct formula**:
+```
+H = (21/2) × (k₂/Q) × R⁵ × n⁵ × e² / G
+```
+- k₂: Love number (per-substrate, ~0.3 for rocky)
+- Q: tidal quality factor (~100 for rocky, ~1000 for icy)
+- R: body radius (new field — requires Item 21)
+- n: mean motion = 2π / orbital_period
+- e: orbital eccentricity (must add `eccentricity` field
+  to Moon — currently missing)
+- G: gravitational constant
+
+**Approach**:
+- Add `Moon::eccentricity: Real` field.
+- Compute per-moon heating rate via correct formula.
+- Distribute heat across cell temperatures.
+- Couple to tidal-locking: locked moons in circular orbits
+  have e ≈ 0 → minimal heating. Eccentric / resonance-pumped
+  orbits (Io-Laplace) sustain e via gravitational forcing
+  from other moons.
+
+**Tests** (calibration-anchored):
+- `circular_orbit_moon_produces_zero_tidal_heating`
+- `io_like_configuration_global_heat_flux_in_50_to_200_tw_range`
+  (matches Io's real ~100 TW)
+
+**Effort**: L — 30 hours (was M=12, +18 for correct formula +
+radius dependency + eccentricity).
+
+### Item 17: Atmospheric escape (v2 — multi-channel)
+
+**Substantially rewritten per astro feedback** — v1's Jeans-only
+won't reproduce Mars's loss history.
+
+**Approach** (four channels):
+1. **Jeans (thermal)**: as v1.
+2. **Hydrodynamic blow-off**: for hot young atmospheres with
+   high XUV flux (from Item 18a EUV channel).
+3. **Photochemical**: O from H₂O photolysis, etc. — primary
+   non-thermal loss for Mars today.
+4. **Ion escape**: charged species escape along open magnetic
+   field lines. Coupled to `state.magnetic_field()` — planets
+   with strong fields lose less via this channel.
+- Composition shifts via differential rates (light first).
+
+**Tests**:
+- `mars_analog_loses_atmosphere_via_combined_channels_at_realistic_rate`
+- `magnetic_field_protection_reduces_ion_escape`
+- `low_gravity_hot_planet_loses_h_first_then_o_then_co2`
+
+**Effort**: L — 36 hours (was M=16, +20 for multi-channel +
+magnetic-field coupling).
+
+### Item 18: Stellar variability (v2 — SED + star types)
+
+**Expanded per astro feedback** — v1 was a stub.
+
+**Approach** (v1 plus):
+- Add `Star::spectral_type: SpectralType { M, K, G, F, A }`.
+- Per-type flare rates (M-dwarfs 100× G-dwarfs).
+- Add SED breakdown: separate `bolometric_luminosity`,
+  `euv_flux`, `uv_flux`, `visible_flux`, `ir_flux`. Each
+  evolves with main-sequence age.
+- HZ edge migration with luminosity drift.
+- Post-main-sequence: red-giant brightening (1000× over Myr
+  at end-of-MS).
+
+**Tests**:
+- `m_dwarf_flare_rate_100x_g_dwarf`
+- `habitable_zone_edge_migrates_outward_over_gyr`
+- `red_giant_phase_renders_inner_planets_uninhabitable`
+
+**Effort**: L — 30 hours (was M=16, +14 for SED + star types
++ HZ migration).
+
+### Item 18a (new): EUV flux channel
+
+**Why**: Per astro feedback — Item 17 needs EUV for hydrodynamic
+escape; Item 18 must expose it.
+
+**Approach**:
+- `Star::euv_flux: Real`, evolves with main-sequence age.
+- Young stars: 10-100× modern EUV.
+- Drops with main-sequence age following `t^(-1.5)` (real
+  stellar EUV decay).
+- Read by Item 17 for hydrodynamic escape rate.
+
+**Tests**:
+- `young_star_high_euv_drives_hydrodynamic_atmosphere_loss`
+
+**Effort**: S — 6 hours.
+
+### Item 19 (new): Tidal-locking dynamics
+
+**Why**: Per astro feedback — Tidal locking sets eccentricity
+damping. Important for Items 16, 17. Currently `day_length_hours`
+is a static worldgen-only value.
+
+**Approach**:
+- Per-tick tidal-locking force from each moon.
+- Worldgen samples `locking_state ∈ {Synchronous, Resonance(p,q),
+  FreeRotator}`.
+- Locked worlds have permanent day/night faces; sub-stellar
+  point is fixed.
+- Damping of eccentricity over time toward circular orbit
+  (unless resonance-pumped).
+
+**Tests**:
+- `tidally_locked_moon_eccentricity_damps_to_zero`
+- `laplace_resonance_pumps_eccentricity_to_steady_state`
+- `tidally_locked_planet_has_fixed_sub_stellar_point`
+
+**Effort**: L — 32 hours.
+
+### Item 20 (new): Magnetic-field reversals
+
+**Why**: Per astro feedback — Earth's dipole flips every ~250 kyr.
+Affects cosmic-ray ground flux + sky-glow + (via Item 17)
+atmospheric escape.
+
+**Approach**:
+- Per-tick Markov chain for dipole reversal state: {Normal,
+  Reversing, Reversed}.
+- Reversal events take ~1000 ticks; during reversal, dipole
+  weakens → cosmic-ray ground flux up → mutation rate up
+  (couples to species drift in Item 11).
+- Couples to atmospheric escape via Item 17 ion-channel.
+
+**Tests**:
+- `magnetic_reversal_occurs_on_average_every_250000_ticks`
+- `reversal_event_weakens_field_for_1000_tick_window`
+- `cosmic_ray_ground_flux_inverse_to_field_strength`
+
+**Effort**: M — 20 hours.
+
+### Item 21 (new): Planetary mass-radius-density coupling
+
+**Why**: Per astro feedback — Currently `gravity` is a single
+scalar; a high-G planet might be high-mass or high-density,
+with very different escape velocities + atmospheric retention.
+
+**Approach**:
+- Replace `Planet::gravity` with `(mass, radius)` pair.
+- Density derived per substrate: `density = substrate_density_constant`.
+- `gravity = G × mass / radius²` (computed accessor).
+- Escape velocity exposed for Item 17.
+- Love number `k₂` for Item 16 depends on radius + substrate.
+
+**Tests**:
+- `gravity_correctly_derived_from_mass_and_radius`
+- `escape_velocity_correct_for_earth_analog`
+- `mass_radius_relation_per_substrate_yields_correct_density`
+
+**Effort**: M — 18 hours.
+
+### Item 22 (new): Vertical Coriolis (full 3D rotation)
+
+**Why**: Per astro feedback — Existing Coriolis is 1D-q-only.
+Full 3D rotation drives proper atmospheric circulation.
+
+**Approach**:
+- Replace `Ω_z` scalar with `(Ω_x, Ω_y, Ω_z)` vector.
+- Couple to `VerticalConvection`.
+- Enables proper Hadley/Ferrel emergence in Item 15.
+
+**Tests**:
+- `vertical_coriolis_component_active`
+- `coriolis_3d_couples_to_vertical_convection`
+
+**Effort**: M — 20 hours.
+
+### Item 23 (new): Cloud microphysics
+
+**Why**: Per astro feedback — Clouds drive actual albedo and
+greenhouse coupling. Items 13/14 treat clouds as constant.
+
+**Approach**:
+- Per-cell cloud fraction derived from vapour saturation +
+  vertical convection.
+- Cloud albedo contribution to Item 13.
+- Cloud greenhouse contribution to Item 14.
+- Cloud type: low-albedo-high-greenhouse (cirrus) vs high-
+  albedo-low-greenhouse (stratus) by altitude.
+
+**Tests**:
+- `cloud_fraction_rises_with_vapour_supersaturation`
+- `cloud_type_albedo_greenhouse_correctly_signed`
+
+**Effort**: L — 30 hours.
+
+### Item 24 (new): Tidal-locking-state worldgen sampling
+
+**Why**: Per astro feedback — Mercury 3:2, synchronous, free-
+rotator regimes should be sampled at worldgen.
+
+**Approach**:
+- Sampler examines moon mass + orbital period + planet rotation
+  rate; assigns one of {Synchronous, Resonance(p,q), FreeRotator}.
+- Couples to Item 19 dynamics + Item 18 day_length.
+
+**Tests**:
+- `close_massive_moon_samples_synchronous_locking`
+- `mercury_analog_samples_3_2_resonance`
+
+**Effort**: S — 8 hours.
+
 ### Sprint 5 total
 
-~114 hours. Sprint review: both experts (mix of xeno + astro).
+~310 hours (was 114). Sprint review: both experts, final
+integrated review with the per-expert sign-off checklists.
 
 ## Cross-sprint concerns
 
-### Determinism preservation
-
-Each sprint adds new RNG draws (worldgen for plates, species
-registry, etc.). Reserve a per-sprint RNG seed offset so each
-sprint's RNG draws don't interleave with the prior sprint's.
-
-```rust
-let sprint_2_seed = planet_seed.wrapping_add(0x_S2_DEADBEEF);
-let sprint_3_seed = planet_seed.wrapping_add(0x_S3_DEADBEEF);
-// etc
-```
-
-Existing seeds get rebaselined per sprint (worldgen changes
-shift everything downstream). Acceptable — each sprint is a
-documented seed-rebaseline event.
-
-### Test infrastructure scaling
-
-By Sprint 5, the workspace will have ~600+ tests. Run time
-per-test must stay bounded. Long-running tests (16k+ ticks)
-must stay marked `#[ignore = "slow"]` and only run in
-release-mode CI.
-
-### Save/load migration
-
-The project currently doesn't serialise mid-run state (it's a
-batch-mode sim). If save/load is added later, all new fields
-must be serialisable. Use `#[derive(Serialize, Deserialize)]`
-patterns consistent with existing structs.
-
-### Documentation updates
-
-Each sprint adds new mechanics. Update `docs/` accordingly:
-- Sprint 2: `docs/xenobiology.md` (new)
-- Sprint 4: `docs/tectonics.md` (new)
-- Sprint 5: `docs/climate-feedbacks.md` (new), update
-  `docs/physics.md`
+(v1 unchanged plus additions)
 
 ### Performance
 
-Multi-species + per-cell albedo + tectonics + 3-pass tide flux
-all add per-tick work. Profile after each sprint. Target: a
-1080-cell grid 5000-tick run completes in < 5 min release-mode.
+By v2 final sprint: multi-species (8-20 per planet) × full
+ecosystem step + per-cell albedo + tectonics + 3-pass tide flux
++ 3D Coriolis + cloud microphysics + per-substance separations
+all add per-tick work. Target relaxed to: 1080-cell grid
+5000-tick run completes in < 10 min release-mode (was 5 min).
+
+### Test scaling
+
+By Sprint 5: ~80 new tests on top of existing 440. Run time
+budget: full lib suite under 30s in debug, 2 min in release.
+Long integration tests stay `#[ignore = "slow"]`.
+
+### Substance enum growth
+
+Sprint 2 adds `Substance::CO2`, splits `Vapour` → multiple.
+Sprint 5 may add more (per substrate). Coordinate the enum
+expansion in one PR to avoid merge churn.
+
+### Determinism
+
+New RNG draws per sprint:
+- Sprint 2: 8-20 species per planet × multiple traits = ~200
+  new draws per worldgen.
+- Sprint 4: Voronoi plates = ~50 new draws per worldgen.
+- Sprint 5: tidal locking state, magnetic reversal seed, etc.
+  ~20 new draws.
+
+Total worldgen RNG shift: ~270 new draws per planet (vs ~50
+currently). Existing seeds rebaseline once per sprint.
 
 ## Verification gates
 
+(unchanged from v1)
+
 Per-sprint expert review (xeno / astro / both as appropriate)
-must approve before next sprint starts. Reviewers run a
-domain pass on the merged diff; they flag completeness gaps,
-realism issues, missing test coverage, or design tensions.
+must approve before next sprint starts. Final post-Sprint-5
+review against per-expert sign-off checklists.
 
-**Sprint 1**: physicist review (numerical correctness).
-**Sprint 2**: xenobiologist review (multi-species, solvent).
-**Sprint 3**: both xeno + astro (split items).
-**Sprint 4**: astrophysicist review (tectonics).
-**Sprint 5**: both, final integrated review.
+## Risk register (updated)
 
-After Sprint 5, the per-expert sign-off checklists in
-`docs/expert-review-roadmap.md` must both pass.
+- **R1: Scope creep** (now realised) — backlog grew 18 → 24.
+  Resist further growth unless review surfaces blockers.
+- **R2: Determinism drift** — each sprint shifts seeds. Document
+  rebaseline per sprint.
+- **R3: Performance** — relax target to < 10 min/5000-tick.
+  Profile per sprint.
+- **R4: API churn** — Substance enum growth + Lifecycle variants
+  + multi-species refactor are concurrent. Coordinate enum
+  changes.
+- **R5: Test scaling** — 80+ new tests. Group by sprint; reuse
+  fixtures.
+- **R6: Expert availability** — per-sprint review needs
+  turnaround. Buffer.
+- **R7: Save/load** — out of scope. Note in commits.
+- **R8 (new): Calibration drift** — quantitative-anchor tests
+  pin specific values (Io heat ~100 TW, snowball ice line
+  ~30° latitude). Published values may change; track citation
+  sources.
 
-## Risk register (project-wide)
-
-- **R1: Scope creep.** 18 items is already an aggressive 5-
-  sprint plan. Resist adding mid-sprint items unless they
-  block the sprint's existing work.
-- **R2: Determinism drift.** Each new RNG draw shifts seeds.
-  Document each shift in the per-sprint changelog.
-- **R3: Performance.** Per-tick work grows. Profile + measure
-  per sprint.
-- **R4: API churn.** Refactors (Lifecycle, multi-species)
-  ripple through call sites. Use type aliases + deprecated
-  re-exports to soften transitions.
-- **R5: Test suite scaling.** 18 items × ~3 tests each = 50+
-  new tests. Group related tests; reuse fixtures.
-- **R6: Expert availability.** Per-sprint expert review needs
-  expert turnaround. If review is slow, sprints stall. Plan
-  buffer.
-- **R7: Save/load** — out of scope but future-affecting. Note
-  in commits.
-
-## Effort summary
+## Effort summary (v2)
 
 | Sprint | Hours | Weeks (1 dev) |
 |---|---|---|
-| 1 (numerical hygiene) | 26 | 1 |
-| 2 (xeno foundation) | 80 | 2 |
-| 3 (xeno + astro coupling) | 110 | 3 |
-| 4 (astro tectonics) | 80 | 2 |
-| 5 (closing gaps) | 114 | 3 |
-| **Total** | **410** | **11** |
+| 1 (numerical hygiene) | 38 | 1 |
+| 2 (xeno foundation) | 286 | 6 |
+| 3 (xeno + astro coupling) | 242 | 5 |
+| 4 (astro tectonics) | 138 | 3 |
+| 5 (closing gaps) | 310 | 7 |
+| **Total** | **1,014** | **22** |
 
-~11 weeks for a single dev focused on this. Parallel devs
-shorten via items 6/8 in Sprint 2, items 7/9/13/14 in Sprint 3,
-all of Sprint 5 — substantial parallelism possible.
+Wait — that's more than the previous summary. Let me account:
+- Sprint 2 includes the major Item 6 rewrite + new 6a/6b + Item
+  7 expansion + new 7a/7b + Item 8 expansion + Item 9 expansion.
+- Sprint 5 includes major Items 15/16/17/18 rewrites + new
+  18a/19/20/21/22/23/24.
+
+The honest estimate is ~22 weeks single-dev. Substantial
+parallelism possible — most Sprint 5 items independent;
+Sprint 2 has 6 vs 6a vs 6b serial but 7, 7a, 7b, 8, 9 mostly
+parallel.
+
+**Realistic schedule: 14-18 weeks** with reasonable parallelism
+(2-3 parallel implementers).
+
+## Open questions to settle before kickoff
+
+(unchanged from v1)
+
+- Q1: Save/load — in scope or follow-up?
+- Q2: Performance targets — confirm < 10 min/5000-tick.
+- Q3: Expert review cadence — sync or async?
+- Q4: Test coverage minimum.
+- Q5: Documentation — rendered visualisations?
+- **Q6 (new): Substance enum stability** — frequent enum changes
+  break match exhaustiveness. Coordinate.
+- **Q7 (new): Calibration source-of-truth** — which published
+  values are authoritative for the quantitative-anchor tests?
+
+Resolve before Sprint 1 PR opens.
 
 ## Closing acceptance
 
 After Sprint 5, both expert sign-off checklists from
-`docs/expert-review-roadmap.md` must pass. The sim will go from
-"well-engineered demo with characterised limits" to "credible
-representation in both lenses."
-
-Open questions to settle before kickoff:
-- **Q1**: Save/load — is it in scope for this roadmap or a
-  follow-up?
-- **Q2**: Performance targets — confirm the < 5 min/5000-tick
-  target.
-- **Q3**: Expert review cadence — sync or async?
-- **Q4**: Test coverage minimum — current is ~60% line coverage;
-  any of this work require raising the bar?
-- **Q5**: Documentation — do we need rendered visualisations
-  of the new mechanics (e.g., a sample post-run report showing
-  multi-species ecosystem state)?
-
-Resolve before Sprint 1 PR opens.
+`docs/expert-review-roadmap.md` must pass. Plus, both experts
+must re-review the final v2 plan to confirm completeness
+before kickoff.
