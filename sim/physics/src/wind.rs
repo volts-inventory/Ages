@@ -293,15 +293,25 @@ pub fn column_mass_ratios(elevation: &[Real], scale_height_m: i64) -> Vec<Real> 
         return vec![Real::ONE; elevation.len()];
     }
     let scale_h = Real::from_int(scale_height_m);
+    // Floor `m` at 1% (0.01) to keep the divide-by-mass at the end
+    // of Wind's energy-conserving advection from overflowing. In
+    // pure math, `m = exp(-elev/H)` is strictly positive — but in
+    // Q32.32 fixed-point dividing energy `e` by `m ≈ 2e-9` overflows
+    // when `e > 4.3`. The `-20` lower clamp on the exp argument
+    // alone left `m` near 2e-9 in pathological worlds (terrain peak
+    // 30km on 8km scale-height). 0.01 is the practical floor: it
+    // means an extreme high-altitude cell has 1% of sea-level column
+    // mass at most for the purposes of the energy / temperature
+    // round-trip, which keeps fixed-point safe without distorting
+    // the conservation invariant materially (a 1% floor is the same
+    // order as the existing `m_safe` floor in the integrator).
+    let m_floor = Real::from_ratio(1, 100);
     elevation
         .iter()
         .map(|elev| {
-            // Same clamp window as `Hydrology::cell_pressure_pa`:
-            // bound the argument to `[-20, +1]` so extreme terrain
-            // doesn't push fixed-point `exp` out of range.
             let argument = -*elev / scale_h;
             let clamped = argument.max(-Real::from_int(20)).min(Real::ONE);
-            exp(clamped)
+            exp(clamped).max(m_floor)
         })
         .collect()
 }
