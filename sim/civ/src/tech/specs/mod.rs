@@ -99,7 +99,9 @@ impl ToolKind {
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
             | ToolKind::ExperimentApparatus
-            | ToolKind::HerbalMedicine => 5,
+            | ToolKind::HerbalMedicine
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood => 5,
             // tier-3: pre-industrial. Sustained hypothesizer
             // activity plus the experimental gate below ensures the
             // apparatus is being used. Lowered 25 → 15 because the
@@ -120,7 +122,8 @@ impl ToolKind {
             // tier-3 sensorium
             | ToolKind::FieldSensor
             | ToolKind::DistanceImaging
-            | ToolKind::AcousticEngineering => 15,
+            | ToolKind::AcousticEngineering
+            | ToolKind::HydraulicWorks => 15,
             // tier-4: industrial. Multi-generation canon. Pairs
             // with the experimental floor below. Lowered 75 → 50
             // so a long-lived civ with active apparatus work can
@@ -137,7 +140,10 @@ impl ToolKind {
             | ToolKind::MassLiteracy
             | ToolKind::AerialTransport
             // tier-4 sensorium
-            | ToolKind::MagneticSensor => 50,
+            | ToolKind::MagneticSensor
+            | ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks
+            | ToolKind::BiomimeticDesign => 50,
             // tier-5: information-age + transcendence. Combined
             // with the 80-experimental floor and the 3000 species-
             // maturity floor, demands a long-lived civ standing on
@@ -205,7 +211,9 @@ impl ToolKind {
             | ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
             | ToolKind::ExperimentApparatus
-            | ToolKind::HerbalMedicine => 0,
+            | ToolKind::HerbalMedicine
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood => 0,
             // tier-3: a few apparatus-supported confirmations.
             ToolKind::ChemicalProjectile
             | ToolKind::PrecisionTimekeeping
@@ -219,7 +227,8 @@ impl ToolKind {
             | ToolKind::AmphibiousConstruction
             | ToolKind::FieldSensor
             | ToolKind::DistanceImaging
-            | ToolKind::AcousticEngineering => 3,
+            | ToolKind::AcousticEngineering
+            | ToolKind::HydraulicWorks => 3,
             // tier-4: sustained experimental tradition. Lowered
             // 20 → 12 alongside the confirmed-relation drop so the
             // experimental-effort budget is proportional and the
@@ -234,7 +243,10 @@ impl ToolKind {
             | ToolKind::AnalyticalEngines
             | ToolKind::MassLiteracy
             | ToolKind::AerialTransport
-            | ToolKind::MagneticSensor => 12,
+            | ToolKind::MagneticSensor
+            | ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks
+            | ToolKind::BiomimeticDesign => 12,
             // tier-5: information-age + transcendence — the
             // civ has built a mature experimental epistemology.
             ToolKind::DigitalComputation
@@ -260,11 +272,20 @@ impl ToolKind {
         match self {
             ToolKind::ThermalSensor
             | ToolKind::RemoteAcoustic
-            | ToolKind::HerbalMedicine => Real::percent(20),
+            | ToolKind::HerbalMedicine
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood => Real::percent(20),
             ToolKind::FieldSensor
             | ToolKind::DistanceImaging
             | ToolKind::AmphibiousConstruction
-            | ToolKind::AcousticEngineering => Real::percent(35),
+            | ToolKind::AcousticEngineering
+            | ToolKind::HydraulicWorks => Real::percent(35),
+            // Tier-4 alt-path: PrecisionInstruments,
+            // DistributedNetworks, BiomimeticDesign — same 0.50
+            // floor as the rest of tier-4.
+            ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks
+            | ToolKind::BiomimeticDesign => Real::percent(50),
             // Tier-4 magnetic_sensor and tier-5 (transcendence-tier)
             // tools share a 0.55 floor on per-civ literacy. Tier-5
             // is gated separately by a species-cumulative maturity

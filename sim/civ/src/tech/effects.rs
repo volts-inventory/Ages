@@ -97,6 +97,32 @@ impl ToolKind {
             // is the capacity headline (programmable bulk materials
             // — pre-tested for arbitrary load specs).
             ToolKind::MetamaterialLattice => Real::percent(125),
+            // Alternate-path additions ─────────────────────────
+            // AnimalHusbandry: selective breeding 2-3× over wild
+            // domestication — significant tier-2 density bump for
+            // biota-rich worlds. Below AnimalSymbiosis's 2.5× since
+            // it stacks on top of that (the prereq).
+            ToolKind::AnimalHusbandry => Real::percent(140),
+            // PreservedFood: small capacity lift (better surplus
+            // → bigger population that survives lean seasons), but
+            // the headline effect is on food_crisis_resistance.
+            ToolKind::PreservedFood => Real::percent(110),
+            // BiomimeticDesign: clever construction — modest
+            // capacity bump from copying biological efficiency.
+            ToolKind::BiomimeticDesign => Real::percent(110),
+            // HydraulicWorks: irrigation + reservoir buffering at
+            // scale — significant tier-3 boost. Sits between
+            // FluidControl (1.20) and Mechanisation (10.0).
+            ToolKind::HydraulicWorks => Real::percent(150),
+            // PrecisionInstruments: indirect — through the
+            // discovery rate it unlocks (faster law-fitting →
+            // faster downstream tools). Direct capacity impact
+            // small.
+            ToolKind::PrecisionInstruments => Real::percent(105),
+            // DistributedNetworks: economic coordination at scale.
+            // Modest capacity lift; main effect on cohesion +
+            // literacy.
+            ToolKind::DistributedNetworks => Real::percent(115),
             _ => Real::ONE,
         }
     }
@@ -121,6 +147,17 @@ impl ToolKind {
             // HerbalMedicine: famine fallback (edible-plant
             // catalogue doubles as starvation-tier food).
             ToolKind::HerbalMedicine => Real::percent(4),
+            // AnimalHusbandry: insurance via standing herd. Below
+            // BulkStorage's 12 but real.
+            ToolKind::AnimalHusbandry => Real::percent(8),
+            // PreservedFood: headline effect. Drying / brining /
+            // fermentation buffer lean seasons — matches BulkStorage
+            // calibration since the function is identical, just the
+            // chemistry differs (no kiln required).
+            ToolKind::PreservedFood => Real::percent(10),
+            // HydraulicWorks: reservoir buffering smooths drought
+            // years.
+            ToolKind::HydraulicWorks => Real::percent(8),
             _ => Real::ZERO,
         }
     }
@@ -163,6 +200,9 @@ impl ToolKind {
             // observation as a tactical advantage (rangefinding,
             // forward intelligence).
             ToolKind::DistanceImaging => Real::percent(5),
+            // BiomimeticDesign: clever weapon + armour
+            // construction (claws, spines, lamellar from biology).
+            ToolKind::BiomimeticDesign => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -393,6 +433,13 @@ impl ToolKind {
             // public oratory carry oral curriculum further, so
             // literacy lifts even before mass writing.
             ToolKind::AcousticEngineering => Real::percent(8),
+            // DistributedNetworks: news + notice propagation lifts
+            // literacy across a polity.
+            ToolKind::DistributedNetworks => Real::percent(10),
+            // PrecisionInstruments: clean measurement reinforces
+            // formal-quantitative literacy (every craftsperson
+            // now reads a calibrated scale).
+            ToolKind::PrecisionInstruments => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -483,6 +530,9 @@ impl ToolKind {
             // acoustic signalling is the pre-EM telegraphy
             // (drum / horn networks).
             ToolKind::RemoteAcoustic => Real::percent(5),
+            // DistributedNetworks: relay-station news lifts
+            // transmission fidelity across the polity.
+            ToolKind::DistributedNetworks => Real::percent(8),
             _ => Real::ZERO,
         }
     }
@@ -534,6 +584,12 @@ impl ToolKind {
             ToolKind::ThermalSensor => Real::percent(5),
             ToolKind::FieldSensor => Real::percent(5),
             ToolKind::MagneticSensor => Real::percent(5),
+            // PrecisionInstruments: headline tier-4 discovery
+            // booster — clean measurement is the scientific-
+            // revolution lever. Stacks alongside AnalyticalEngines'
+            // computational lift so a civ that builds both gets
+            // ~+0.30 aggregate.
+            ToolKind::PrecisionInstruments => Real::percent(15),
             _ => Real::ZERO,
         }
     }
@@ -569,6 +625,14 @@ impl ToolKind {
             // larger than face-to-face range, lifting cohesion at
             // tier-3.
             ToolKind::AcousticEngineering => Real::percent(7),
+            // DistributedNetworks: the polity-binding tool — late
+            // tier-4 cohesion lift that doesn't depend on the
+            // industrial chemistry chain.
+            ToolKind::DistributedNetworks => Real::percent(12),
+            // HydraulicWorks: shared infrastructure as identity
+            // (the irrigation canal everyone tends, the aqueduct
+            // every district drinks from).
+            ToolKind::HydraulicWorks => Real::percent(5),
             _ => Real::ZERO,
         }
     }
@@ -642,6 +706,15 @@ impl ToolKind {
             // NICUs); GeneticManipulation (fertility treatment).
             ToolKind::AdvancedMedicine => Real::percent(10),
             ToolKind::GeneticManipulation => Real::percent(5),
+            // AnimalHusbandry: dietary protein from herd milk +
+            // meat improves fertile-bracket conception rates.
+            ToolKind::AnimalHusbandry => Real::percent(4),
+            // PreservedFood: consistent year-round nutrition
+            // (no hungry-spring gap depressing fertility).
+            ToolKind::PreservedFood => Real::percent(3),
+            // HerbalMedicine: small obstetric improvements
+            // (post-partum hygiene, fever tea).
+            ToolKind::HerbalMedicine => Real::percent(3),
             _ => Real::ZERO,
         }
     }

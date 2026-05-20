@@ -7,7 +7,7 @@ use super::ToolKind;
 use sim_recognition::ChannelKind;
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 61] = [
+    pub const ALL: [ToolKind; 67] = [
         ToolKind::DistanceImaging,
         ToolKind::RemoteAcoustic,
         ToolKind::FieldSensor,
@@ -74,11 +74,18 @@ impl ToolKind {
         ToolKind::OrganicSynthesis,
         // tier-2 (capability): controlled-conditions apparatus.
         ToolKind::ExperimentApparatus,
-        // tier-2/3 alternate-path additions: branching tools that
-        // don't chain through fire so the discovery path widens for
-        // no-oxidiser substrates and species without thermal sensors.
+        // tier-2/3/4 alternate-path additions: branching tools
+        // that don't chain through fire so the discovery path
+        // widens for no-oxidiser substrates and species without
+        // thermal sensors.
         ToolKind::HerbalMedicine,
         ToolKind::AcousticEngineering,
+        ToolKind::AnimalHusbandry,
+        ToolKind::PreservedFood,
+        ToolKind::BiomimeticDesign,
+        ToolKind::HydraulicWorks,
+        ToolKind::PrecisionInstruments,
+        ToolKind::DistributedNetworks,
     ];
 
     /// Tier-5 tools — the late-game capabilities. Used by 's
@@ -162,6 +169,12 @@ impl ToolKind {
             ToolKind::ExperimentApparatus => 59,
             ToolKind::HerbalMedicine => 60,
             ToolKind::AcousticEngineering => 61,
+            ToolKind::AnimalHusbandry => 62,
+            ToolKind::PreservedFood => 63,
+            ToolKind::BiomimeticDesign => 64,
+            ToolKind::HydraulicWorks => 65,
+            ToolKind::PrecisionInstruments => 66,
+            ToolKind::DistributedNetworks => 67,
         }
     }
 
@@ -234,6 +247,12 @@ impl ToolKind {
             ToolKind::ExperimentApparatus => "experiment_apparatus",
             ToolKind::HerbalMedicine => "herbal_medicine",
             ToolKind::AcousticEngineering => "acoustic_engineering",
+            ToolKind::AnimalHusbandry => "animal_husbandry",
+            ToolKind::PreservedFood => "preserved_food",
+            ToolKind::BiomimeticDesign => "biomimetic_design",
+            ToolKind::HydraulicWorks => "hydraulic_works",
+            ToolKind::PrecisionInstruments => "precision_instruments",
+            ToolKind::DistributedNetworks => "distributed_networks",
         }
     }
 
@@ -316,6 +335,15 @@ impl ToolKind {
             ToolKind::ExperimentApparatus => 2,
             ToolKind::HerbalMedicine => 2,
             ToolKind::AcousticEngineering => 3,
+            ToolKind::AnimalHusbandry => 2,
+            ToolKind::PreservedFood => 2,
+            // BiomimeticDesign: promoted to tier-4 because its
+            // AbstractMathematics prereq (tier-3) requires strictly
+            // lower tier on the prereq side.
+            ToolKind::BiomimeticDesign => 4,
+            ToolKind::HydraulicWorks => 3,
+            ToolKind::PrecisionInstruments => 4,
+            ToolKind::DistributedNetworks => 4,
         }
     }
 
@@ -422,11 +450,18 @@ impl ToolKind {
             // `manipulation_prereqs` (broad — every kind) does the
             // body-plan gating in `is_buildable`.
             ToolKind::ExperimentApparatus => &[],
-            // HerbalMedicine + AcousticEngineering grant no new
-            // sensory channels — their effect lives on the
-            // demographic / cultural side, not perception.
-            ToolKind::HerbalMedicine => &[],
-            ToolKind::AcousticEngineering => &[],
+            // HerbalMedicine + AcousticEngineering + the rest of
+            // the alternate-path block grant no new sensory
+            // channels — their effects live on the demographic /
+            // cultural side, not perception.
+            ToolKind::HerbalMedicine
+            | ToolKind::AcousticEngineering
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood
+            | ToolKind::BiomimeticDesign
+            | ToolKind::HydraulicWorks
+            | ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks => &[],
         }
     }
 
@@ -520,10 +555,17 @@ impl ToolKind {
             // samples flow into the existing measurement track), not
             // on perception.
             ToolKind::ExperimentApparatus => &[],
-            // HerbalMedicine / AcousticEngineering: demographic +
-            // cultural effects, not perception.
-            ToolKind::HerbalMedicine => &[],
-            ToolKind::AcousticEngineering => &[],
+            // HerbalMedicine / AcousticEngineering / and the rest
+            // of the alternate-path block: demographic + cultural
+            // effects, not perception.
+            ToolKind::HerbalMedicine
+            | ToolKind::AcousticEngineering
+            | ToolKind::AnimalHusbandry
+            | ToolKind::PreservedFood
+            | ToolKind::BiomimeticDesign
+            | ToolKind::HydraulicWorks
+            | ToolKind::PrecisionInstruments
+            | ToolKind::DistributedNetworks => &[],
         }
     }
 }

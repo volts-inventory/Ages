@@ -306,6 +306,31 @@ impl ToolKind {
             // build path linear after the masonry/sensor pair are
             // both in.
             ToolKind::AcousticEngineering => &[(5, ChannelKind::AcousticAir)],
+            // AnimalHusbandry: confirmed `surface_water` (5) on
+            // Tactile — same universal water-presence gate. (A
+            // species observing herd-watering behaviour fits a law
+            // about animals + water.)
+            ToolKind::AnimalHusbandry => &[(5, ChannelKind::Tactile)],
+            // PreservedFood: confirmed `surface_water` (5). Brine,
+            // ferment liquor, sun-drying all anchor on the same
+            // universal water-cycle observations.
+            ToolKind::PreservedFood => &[(5, ChannelKind::Tactile)],
+            // BiomimeticDesign: confirmed `tidal_extremum` (14) —
+            // the periodic phenomena that anchor formal-mathematics
+            // abstraction. Same gate as AbstractMathematics' lineage.
+            ToolKind::BiomimeticDesign => &[(14, ChannelKind::Tactile)],
+            // HydraulicWorks: confirmed `surface_water` (5).
+            // Engineering with water requires having fit *some*
+            // law about how water moves.
+            ToolKind::HydraulicWorks => &[(5, ChannelKind::Tactile)],
+            // PrecisionInstruments: confirmed `tidal_extremum` (14).
+            // The tradition of periodic-phenomenon measurement.
+            ToolKind::PrecisionInstruments => &[(14, ChannelKind::Tactile)],
+            // DistributedNetworks: confirmed `surface_water` (5)
+            // as a stand-in for "long-distance phenomena
+            // propagation". No specific physics gate beyond what
+            // its tier-2/3 prereqs already enforce.
+            ToolKind::DistributedNetworks => &[(5, ChannelKind::Tactile)],
         }
     }
 }

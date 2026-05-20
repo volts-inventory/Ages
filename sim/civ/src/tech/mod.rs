@@ -492,6 +492,62 @@ pub enum ToolKind {
     /// Provides a non-fire route into tier-3 alongside
     /// MechanicalAdvantage.
     AcousticEngineering,
+
+    /// `AnimalHusbandry` — selective breeding + domestic-herd
+    /// management beyond first-contact domestication. Refines
+    /// `AnimalSymbiosis`. Tier-2 capacity + fertility lift; one of
+    /// the main mid-game density bumps for biota-rich worlds.
+    /// Branching alt-path for species that didn't fall onto the
+    /// fire / cultivation chain — animals can be a primary food
+    /// + traction source even without fire.
+    AnimalHusbandry,
+
+    /// `PreservedFood` — drying, salting, fermenting, smoking.
+    /// Tier-2 storage path that doesn't require fire (sun-drying,
+    /// brining, lactic / acetic fermentation are all pre-fire
+    /// techniques). Builds on `FoodProcessing` + `FluidGathering`.
+    /// The non-pottery alternative to `BulkStorage` —
+    /// substantially boosts food_crisis_resistance without
+    /// requiring `LocalisedCombustion`.
+    PreservedFood,
+
+    /// `BiomimeticDesign` — nature-inspired engineering: copying
+    /// observed biological structures (gecko adhesion, beehive
+    /// hexagons, mantis-shrimp resonance) into civic constructs.
+    /// Tier-3. Builds on `AnimalSymbiosis` + `AbstractMathematics`
+    /// (close observation of biota + formal abstraction).
+    /// Capacity boost + war strength bonus (clever construction).
+    /// A no-fire path into tier-3 craft engineering alongside
+    /// `MechanicalAdvantage`.
+    BiomimeticDesign,
+
+    /// `HydraulicWorks` — aqueducts, dams, water mills, sluice
+    /// gates. Large-scale fluid engineering as civic infrastructure.
+    /// Tier-3. Builds on `FluidControl` + `PermanentMasonry`. Big
+    /// capacity multiplier (irrigation at scale) and food crisis
+    /// resistance (reservoir buffering). One of the alt-paths into
+    /// `Mechanisation`-tier productivity for non-combustion worlds.
+    HydraulicWorks,
+
+    /// `PrecisionInstruments` — calibrated rulers, lenses, scales,
+    /// chronometers beyond `PrecisionTimekeeping`'s calendar
+    /// astronomy. Tier-4. Builds on `AbstractMathematics` +
+    /// `ArtisanalSpecialisation`. Lifts the per-civ discovery
+    /// rate (cleaner measurements = faster law-fitting) and a
+    /// small experimental-relation bonus through tighter clamps.
+    /// The "scientific revolution" tool that lets a civ punch
+    /// above its tier when the substrate doesn't support
+    /// industrial chemistry.
+    PrecisionInstruments,
+
+    /// `DistributedNetworks` — interconnected market towns + early
+    /// postal / signalling networks. Tier-4. Builds on
+    /// `TradeNetworks` + `LongRangeCommunication`. Heavy cohesion
+    /// lift across distributed territory + literacy boost (news /
+    /// notice transmission). A polity-binding tool that doesn't
+    /// require fire-derived materials, so available on every
+    /// world.
+    DistributedNetworks,
 }
 
 /// **Retired :** previously the wall-clock unlock gate.
