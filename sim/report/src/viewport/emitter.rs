@@ -308,6 +308,23 @@ impl<W: Write> ViewportEmitter<W> {
                     self.civ_label(p.civ_b)
                 ))
             }
+            Event::AllianceFormed(a) => Some(format!(
+                "{} + {} allied",
+                self.civ_label(a.civ_a),
+                self.civ_label(a.civ_b)
+            )),
+            Event::AllianceDissolved(a) => {
+                let reason = match a.reason {
+                    protocol::AllianceDissolveReason::CosmologyDrift => "drift",
+                    protocol::AllianceDissolveReason::WarMisalignment => "war misalignment",
+                    protocol::AllianceDissolveReason::TrustEroded => "trust eroded",
+                };
+                Some(format!(
+                    "{} \u{2A2F} {} alliance broke ({reason})",
+                    self.civ_label(a.civ_a),
+                    self.civ_label(a.civ_b)
+                ))
+            }
             Event::TechUnlocked(t) => {
                 // Serendipitous unlocks read as "stumbled onto"
                 // (one prereq waived by lucky-discovery roll). Strict

@@ -154,6 +154,20 @@ pub struct Civ {
     /// duration, conditional / treaty-type alliances. Two-way:
     /// either side flagging the other suppresses the war.
     pub allied_with: std::collections::BTreeSet<u32>,
+    /// Set of civ_ids this civ has ever made peaceful contact
+    /// with. Populated by the contact mechanism in sim-core when
+    /// a `CivContact` event fires for the pair. Read by the
+    /// alliance-formation rule to require prior contact history
+    /// before allowing a pair to ally — civs that have never
+    /// interacted can't suddenly forge a treaty.
+    pub contact_history: std::collections::BTreeSet<u32>,
+    /// Per-allied-pair trust scalar (Q32.32 in `[0, 1]`). Keyed
+    /// by the *other* civ id; entries created at alliance
+    /// formation, removed at dissolution. Decays per check when
+    /// the pair's religion / cosmology gap widens; when trust
+    /// falls below `ALLIANCE_TRUST_FLOOR` the alliance dissolves
+    /// with reason `TrustEroded`.
+    pub alliance_trust: std::collections::BTreeMap<u32, sim_arith::Real>,
     /// Substrate-derived migration pressure threshold. Replaces
     /// the flat 0.85 in `apply_migration`. Cached at founding via
     /// `configure_substrate`; default 0.85 for legacy callers.

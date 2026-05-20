@@ -90,6 +90,47 @@ pub struct CivContact {
     pub civ_b: u32,
 }
 
+/// Mutual alliance formed between two civs. Both civs satisfied
+/// the alliance criteria simultaneously (cosmology proximity,
+/// religion proximity, prior peaceful contact). After formation,
+/// `conflict::resolve` short-circuits on the pair so allies can
+/// share borders without war. Pair is normalised so
+/// `civ_a < civ_b`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AllianceFormed {
+    pub tick: u64,
+    pub civ_a: u32,
+    pub civ_b: u32,
+}
+
+/// Why a previously-formed alliance dissolved.
+///   - `cosmology_drift`: 5-axis cosmology distance grew beyond
+///     the dissolution floor (`ALLIANCE_DISSOLVE_COSMO_GAP`,
+///     currently 0.6).
+///   - `war_misalignment`: one ally declared war on a third party
+///     that the other ally is at peace with.
+///   - `trust_eroded`: cumulative trust scalar (decays as
+///     religion / cosmology distance grows) crossed below the
+///     trust floor (`ALLIANCE_TRUST_FLOOR`, currently 0.2).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AllianceDissolveReason {
+    CosmologyDrift,
+    WarMisalignment,
+    TrustEroded,
+}
+
+/// An alliance between two civs dissolved. Pair is normalised
+/// so `civ_a < civ_b`. `reason` indicates which dissolution rule
+/// fired.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AllianceDissolved {
+    pub tick: u64,
+    pub civ_a: u32,
+    pub civ_b: u32,
+    pub reason: AllianceDissolveReason,
+}
+
 /// Catastrophe event. Emitted when a per-civ trigger fires
 /// (volcanic eruption from extreme charge × temperature, disease
 /// outbreak from crowding × civ-age). `kind` is one of

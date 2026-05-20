@@ -569,6 +569,11 @@ impl Digest {
                     c.lapsed_count = c.lapsed_count.saturating_add(1);
                 }
             }
+            // PR4: alliance bookkeeping is currently surfaced via
+            // the viewport log line; no per-civ digest aggregation
+            // yet (the chapter could grow `alliances_formed` /
+            // `alliances_dissolved` counters in a follow-up).
+            Event::AllianceFormed(_) | Event::AllianceDissolved(_) => {}
         }
     }
 
