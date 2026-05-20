@@ -40,7 +40,7 @@ pub use laws::Law;
 pub use lorentz::Lorentz;
 pub use magnetism::Magnetism;
 pub use mechanics::Mechanics;
-pub use orchestration::{integrate_civ_step, OrchestrationConfig};
+pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorState};
 pub use radiation::Radiation;
 pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tides::{MoonTide, Tides};

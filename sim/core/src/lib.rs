@@ -18,7 +18,7 @@ use protocol::{
 use sim_arith::Real;
 use sim_civ::{catastrophe, conflict, cosmology, tech, transmission, Civ};
 use sim_events::Emitter;
-use sim_physics::{HexGrid, PhysicsState};
+use sim_physics::{HexGrid, OrchestratorState, PhysicsState};
 use sim_recognition::RecognitionLibrary;
 use sim_world::{init_planet, sample_planet, Atmosphere, Composition, Magnetosphere};
 use std::collections::BTreeSet;
@@ -87,6 +87,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
 
     let grid = HexGrid::new(cfg.grid_width, cfg.grid_height);
     let mut state = PhysicsState::new(grid);
+    // Persistent orchestrator state — carries the cumulative
+    // conservation-drift accumulators across every tick of the run
+    // so the debug-mode slow-leak detector sees the full history.
+    // Constructed once here; threaded into every `physics_phase`
+    // call so the per-tick deltas accumulate into a single tally.
+    let mut orch_state = OrchestratorState::new();
     let planet = sample_planet(cfg.seed);
     emitter.emit(&Event::Planet(planet_to_event(&planet)))?;
     init_planet(&mut state, &planet);
@@ -288,8 +294,15 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         );
 
     for tick in 0..cfg.max_ticks {
-        let prev_state_for_measurements =
-            phases::physics_phase(emitter, tick, &mut state, cfg, &laws, &civs)?;
+        let prev_state_for_measurements = phases::physics_phase(
+            emitter,
+            tick,
+            &mut state,
+            &mut orch_state,
+            cfg,
+            &laws,
+            &civs,
+        )?;
         let firings = phases::recognition_phase(
             emitter,
             tick,

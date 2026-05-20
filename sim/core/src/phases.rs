@@ -19,7 +19,7 @@ use protocol::{
 use sim_arith::Real;
 use sim_civ::{cosmology, discovery::HypothesisEvent, tech, Civ};
 use sim_events::Emitter;
-use sim_physics::{integrate_civ_step, PhysicsState};
+use sim_physics::{integrate_civ_step, OrchestratorState, PhysicsState};
 use sim_recognition::{ChannelKind, Firing, RecognitionLibrary};
 use sim_species::{ManipulationKind, Species};
 use sim_world::Planet;
@@ -36,10 +36,12 @@ use std::collections::{BTreeMap, BTreeSet};
 /// post-physics apparatus sampling (in `cohort_and_figure_phase`)
 /// reads the cell's post-physics value — pairing `(clamp_value,
 /// post_phys_value)` for the civ's hypothesizer.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn physics_phase<E: Emitter>(
     emitter: &mut E,
     tick: u64,
     state: &mut PhysicsState,
+    orch_state: &mut OrchestratorState,
     cfg: &RunConfig,
     laws: &Laws,
     civs: &[Civ],
@@ -62,6 +64,7 @@ pub(crate) fn physics_phase<E: Emitter>(
     let prev_state_for_measurements = state.clone();
     integrate_civ_step(
         state,
+        orch_state,
         &cfg.orchestration,
         &laws.fluid,
         &laws.heat,
