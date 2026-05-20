@@ -2,7 +2,8 @@
 //! rise and fall within it.
 
 use crate::types::{
-    CognitionTopology, DynamicTool, Habitat, Manipulation, Modality, PopulationBiology,
+    CognitionAxes, CognitionTopology, DynamicTool, Habitat, Manipulation, Modality,
+    PopulationBiology,
 };
 use sim_arith::Real;
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,8 +18,22 @@ pub struct Species {
     /// reads better than "civ 1 founded").
     pub name: String,
     /// Trait scalars, all in `[0, 1]`. Feed `t0_loss` and the
-    /// fit-tolerance / minimum-sample formulas.
+    /// fit-tolerance / minimum-sample formulas. `cognition` is
+    /// the aggregate scalar (the average of `cognition_axes`)
+    /// kept for backward compatibility with every downstream
+    /// formula that reads `species.cognition`. Future-touch
+    /// formulas can read the relevant axis directly off
+    /// `cognition_axes` — e.g. hypothesizer-cadence on
+    /// `working_memory`, tech-tool-capacity on `abstraction`,
+    /// transmission-fidelity on `social`.
     pub cognition: Real,
+    /// Multi-axis cognitive profile. Collapsing cognition to a
+    /// single scalar means a working-memory-strong species
+    /// (cephalopod-like) and a social-cognition-strong species
+    /// (canine-like) are interchangeable in every downstream
+    /// formula. Axes are independent in `[0, 1]`; the legacy
+    /// `cognition` scalar is the unweighted average.
+    pub cognition_axes: CognitionAxes,
     pub sociality: Real,
     pub communication_fidelity: Real,
     /// Lifespan in years. Influences `t0_loss` via per-generation

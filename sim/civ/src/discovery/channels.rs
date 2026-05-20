@@ -57,6 +57,83 @@ pub fn relation_id_for(template_id: u32, channel: Channel) -> u32 {
     template_id * 16 + (channel as u32)
 }
 
+/// Which physics channels each species sensory modality grants
+/// access to. Mapping is biology-grounded: ElectricField /
+/// MagneticSense / RadioNative see ChargeMagnitude;
+/// ChemicalTaste / Pheromone smell substance gradients (Vapour /
+/// Fuel / Oxidiser); Acoustic + Seismic feel pressure / depth /
+/// elevation. Visual sees radiation (Temperature via thermal
+/// radiation, Fuel via fire glow). Tactile is the broadest
+/// baseline — direct contact with the cell. Gestural / Postural
+/// are communication channels, not perception; they grant no
+/// observation access.
+///
+/// Returned slice may be empty for non-perceptual modalities.
+/// Callers union across the species' modality list.
+// Not yet consumed by the production hypothesizer path; ships
+// now as the foundation a follow-up wires through `with_attempt_
+// period` so candidate generation reflects species sensoriums.
+#[allow(dead_code)]
+#[must_use]
+pub fn channels_for_modality(modality: sim_species::ModalityKind) -> &'static [Channel] {
+    use sim_species::ModalityKind as MK;
+    match modality {
+        MK::VisualLight | MK::VisualPolarization => {
+            &[Channel::Temperature, Channel::Fuel, Channel::Elevation]
+        }
+        MK::InfraredThermal => &[Channel::Temperature, Channel::Fuel],
+        MK::ChemicalTaste | MK::ChemicalPheromone => {
+            &[Channel::Vapour, Channel::Fuel, Channel::Oxidiser]
+        }
+        MK::AcousticAir | MK::AcousticWater | MK::Seismic => {
+            &[Channel::WaterDepth, Channel::Elevation, Channel::Temperature]
+        }
+        MK::ElectricField | MK::MagneticSense | MK::RadioNative => &[Channel::ChargeMagnitude],
+        // Tactile is the broadest fallback — direct contact with
+        // the cell grants access to most local fields. Without
+        // Tactile-as-broad-default a tactile-only species (which
+        // every species has at least implicitly) would be choked
+        // off from most channels.
+        MK::Tactile => &[
+            Channel::Temperature,
+            Channel::WaterDepth,
+            Channel::Elevation,
+            Channel::Ice,
+            Channel::Vapour,
+        ],
+        // Pure-output / communication modalities — no perception
+        // contribution.
+        MK::Bioluminescent | MK::Gestural | MK::Postural => &[],
+    }
+}
+
+/// Union of channels reachable by *any* of the species' sensory
+/// modalities. Fossil + Fuel are always included as universally
+/// accessible — every civ can dig / observe surface biomass via
+/// tools rather than native senses. If the union otherwise
+/// would be empty (a Bioluminescent-only / Gestural-only seed),
+/// fall back to the full ALL list as a safety floor.
+#[allow(dead_code)]
+#[must_use]
+pub fn perceivable_channels(
+    modalities: &[sim_species::Modality],
+) -> Vec<Channel> {
+    let mut set: std::collections::BTreeSet<Channel> = std::collections::BTreeSet::new();
+    for m in modalities {
+        for ch in channels_for_modality(m.kind) {
+            set.insert(*ch);
+        }
+    }
+    // Universal-access fallback: a civ can always dig (Fossil)
+    // and observe its own surface biomass (Fuel).
+    set.insert(Channel::Fossil);
+    set.insert(Channel::Fuel);
+    if set.is_empty() {
+        return Channel::ALL.to_vec();
+    }
+    set.into_iter().collect()
+}
+
 impl Channel {
     /// Per-channel normalisation scale. Sampled `x` values are
     /// divided by this so the fit-module's `Σϕ(x)ϕ(x)ᵀ` accumulator

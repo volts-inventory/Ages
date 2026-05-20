@@ -100,6 +100,7 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         seed: planet.seed,
         name,
         cognition,
+        cognition_axes: crate::types::CognitionAxes::uniform(cognition),
         sociality,
         communication_fidelity,
         lifespan_years,
