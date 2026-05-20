@@ -62,14 +62,20 @@
 //!   reaches steady state rather than accumulating vapour
 //!   unbounded.
 //! - **Hard vapour cap**: even if the balance somehow breaks,
-//!   per-cell vapour is clamped to `100 × max(water_depth)` at
-//!   the end of each integrate. That ceiling is far above any
-//!   plausible steady-state vapour level (the atmosphere can't
-//!   hold that much), so the clamp is a safety net rather than
-//!   a routine constraint. Without the clamp, a future
+//!   per-cell vapour is clamped to a temperature-dependent
+//!   saturation capacity at the end of each integrate (see
+//!   [`saturation_vapour_cap`]). The cap follows a
+//!   Clausius-Clapeyron-like quartic in `T/T_ref` so cold cells
+//!   collapse to a small capacity (correctly representing the
+//!   physical fact that cold air can hold very little water
+//!   vapour) and warm cells get a much higher capacity than the
+//!   previous flat `10_000` floor. Without any cap, a future
 //!   regression in either drive could overflow the I32F32 range
 //!   (~2e9) thousands of ticks downstream — exactly the failure
-//!   mode the PR #22 retry needs to avoid.
+//!   mode the PR #22 retry needed to avoid. The temperature-
+//!   dependent form (Sprint 1 Item 4) replaces the earlier flat
+//!   `10_000` floor that over-saturated cold cells and
+//!   under-capped warm cells.
 //!
 //! Above-boil evaporation still uses the existing excess-driven
 //! branch (`evap_rate × excess × water_depth × dt`) — boil-point
@@ -105,6 +111,81 @@ const NEIGHBOUR_DIRECTIONS: [(i64, i64); 6] = [
 /// `scale_height_m` parameter; this constant remains as the
 /// `earth_like()` default for unit tests.
 const DEFAULT_SCALE_HEIGHT_M: i64 = 8_400;
+
+/// Reference temperature used by [`saturation_vapour_cap`], in
+/// kelvin. `373` is chosen as the sea-level boiling point of
+/// water — a convenient anchor that matches the dominant
+/// substrate's Clausius-Clapeyron behaviour. The exact value
+/// only sets the calibration of `T/T_ref`; the curve shape
+/// (and the qualitative cold-cell-collapse / warm-cell-headroom
+/// behaviour the cap exists to express) is invariant to the
+/// choice within an order of magnitude.
+const SAT_CAP_T_REF_K: i64 = 373;
+
+/// Peak vapour capacity, in the same units as
+/// `Substance::Vapour` density, that [`saturation_vapour_cap`]
+/// returns when `T == T_ref`. Set to `50_000` so the curve's
+/// peak is comfortably above the old flat `10_000` floor (the
+/// "warm cells get under-capped" failure mode the floor
+/// caused) while staying well below the I32F32 ceiling (~2e9)
+/// even at extreme temperatures.
+const SAT_CAP_C_BASE: i64 = 50_000;
+
+/// Safety floor on [`saturation_vapour_cap`]'s output. Stops
+/// the curve from collapsing to zero (or below) at `T → 0` and
+/// guarantees downstream code never divides by a cap value of
+/// zero. Set well below the `T_ref` peak so it only binds for
+/// genuinely near-absolute-zero cells.
+const SAT_CAP_FLOOR: i64 = 100;
+
+/// Per-cell saturation vapour capacity as a function of
+/// temperature. Replaces the earlier flat `10_000` floor with
+/// a Clausius-Clapeyron-like curve so the cap reflects the real
+/// physical capacity of the atmosphere to hold vapour at the
+/// cell's temperature.
+///
+/// **Curve form**: `cap(T) = C_base × (T / T_ref)^4`, floored
+/// at `SAT_CAP_FLOOR`. The quartic was chosen over a quadratic
+/// (or true exponential `exp(-L/RT)`) because:
+///
+/// - True `exp` would require a transcendental call per cell
+///   per tick — expensive, and the existing
+///   `sim_arith::transcendental::exp` is range-limited.
+/// - A quartic is a reasonable polynomial fit to
+///   Clausius-Clapeyron over the planetary range of interest
+///   (~150 K to ~600 K): it gives strong cold-cell collapse
+///   (`(0.5)^4 = 0.0625` of peak, i.e. ~3125 at 186 K) and
+///   meaningful warm-cell headroom (`(1.2)^4 ≈ 2.07` of peak,
+///   i.e. ~103,000 at 448 K) without ever calling `exp`.
+/// - The arithmetic stays inside Q32.32 even at silicate-world
+///   temperatures (~2000 K): `(2000/373)^4 ≈ 825`, so the
+///   peak is `~4.1e7` — three orders of magnitude below the
+///   `~2e9` Q32.32 ceiling.
+///
+/// At `T == T_ref` (373 K), `cap == C_base` (50,000) — well
+/// above the old `10_000` floor, so warm cells get the
+/// headroom they need. At `T == 0`, the floor binds at `100`,
+/// so downstream `>= cap` checks never see zero.
+///
+/// `pub(crate)` so future precipitation logic in the
+/// hydrology module can reference the same curve without
+/// duplicating the polynomial.
+#[must_use]
+pub(crate) fn saturation_vapour_cap(temperature: Real) -> Real {
+    let t_ref = Real::from_int(SAT_CAP_T_REF_K);
+    let c_base = Real::from_int(SAT_CAP_C_BASE);
+    let floor = Real::from_int(SAT_CAP_FLOOR);
+    // Clamp T at zero. Negative-K inputs are physically
+    // meaningless (and the temperature field uses kelvin) but
+    // a defensive clamp keeps the curve monotonic should a
+    // future caller pass through a transiently-negative value.
+    let t = temperature.max(Real::ZERO);
+    let ratio = t / t_ref;
+    let ratio_sq = ratio * ratio;
+    let ratio_quartic = ratio_sq * ratio_sq;
+    let raw = c_base * ratio_quartic;
+    raw.max(floor)
+}
 
 #[derive(Debug, Clone)]
 pub struct Hydrology {
@@ -415,20 +496,31 @@ impl Law for Hydrology {
         // with the symmetric evap + precip drives above, a
         // pathological seed could in principle accumulate vapour
         // above the I32F32 (~2e9) ceiling and overflow downstream
-        // fit code. Earlier the cap was `100 × max(water_depth)`
-        // over the *entire grid* — meaning a single deep ocean cell
-        // at 1000 m set every cell's cap to 100,000, including
-        // inland desert cells that had no business with that much
-        // headroom. Now per-cell: `cap[i] = max(100 × water_depth[i],
-        // static_floor)`. Cells with no water get only the static
-        // floor; cells near the ocean get the deep-water tolerance
-        // they need. The static floor stays at 10_000 so dry-cell
-        // vapour can still build up to reasonable storm-system
-        // concentrations on planets that start water-poor.
-        let static_floor = Real::from_int(10_000);
+        // fit code. Earlier iterations of this cap used:
+        //
+        // - a flat `10_000` ceiling (Sprint 0); ignored
+        //   `water_depth`, so dry desert cells were treated the
+        //   same as deep ocean cells. Bad.
+        // - `max(100 × water_depth, 10_000)` per-cell (PR #30);
+        //   added local-water headroom but kept the same flat
+        //   `10_000` *floor*. The floor was independent of
+        //   temperature, so cold cells (200 K, low physical
+        //   capacity) over-saturated up to 10,000 and warm cells
+        //   (350 K, high physical capacity) got under-capped.
+        //
+        // Sprint 1 Item 4 replaces the flat floor with
+        // [`saturation_vapour_cap`], a Clausius-Clapeyron-like
+        // quartic in `T/T_ref`. Cold cells now collapse to a
+        // small saturation capacity (3125 at 186 K, 100 at the
+        // floor); warm cells get a much larger one (~50,000 at
+        // 373 K, ~100,000 at 448 K). The water-depth headroom
+        // term is retained — coastal cells with deep oceans
+        // need that buffer for storm-system vapour
+        // concentrations even at cool temperatures.
         for (i, v) in vapour_advected.iter_mut().enumerate() {
             let local_water = water_depth_next.get(i).copied().unwrap_or(Real::ZERO);
-            let cap = (local_water * Real::from_int(100)).max(static_floor);
+            let sat_cap = saturation_vapour_cap(temps_next[i]);
+            let cap = (local_water * Real::from_int(100)).max(sat_cap);
             if *v > cap {
                 *v = cap;
             }
@@ -743,25 +835,30 @@ mod tests {
         // per-cell clamp in Step 4 stops the overflow. Seed a
         // cell with vapour already above the cap and verify
         // the next integrate clamps it.
+        //
+        // Sprint 1 Item 4: the cap is now
+        // `max(water_depth × 100, saturation_vapour_cap(T))`.
+        // At 280 K, `saturation_vapour_cap` ≈ 50000 × (280/373)^4
+        // ≈ 15_864. With water_depth = 50, the water term gives
+        // 50 × 100 = 5_000. Effective cap = 15_864.
         let grid = HexGrid::new(3, 3);
         let mut state = PhysicsState::new(grid);
         for w in state.water_depth_mut() {
             *w = Real::from_int(50);
         }
-        // Vastly over the cap (50 × 100 = 5000) to ensure the
-        // clamp triggers regardless of static-floor logic.
         let centre = state.grid().cell_id(crate::grid::Axial::new(1, 1)).0 as usize;
         state.substance_mut(Substance::Vapour.idx())[centre] = Real::from_int(1_000_000);
-        // Hot cell so we exercise the above-boil branch as well.
+        // 280 K — cool but well above the floor branch.
         state.temperature_mut()[centre] = Real::from_int(280);
         let hydro = Hydrology::earth_like();
         hydro.integrate(&mut state, Real::ONE);
         let v_after = state.substance(Substance::Vapour.idx())[centre];
-        // Cap is `max(max_water × 100, 10_000)`. Max water is 50
-        // → `max(5000, 10000) = 10_000`. After the clamp the
-        // pathologically-overloaded cell must be at most that.
+        // Computed cap upper bound: at the post-integrate
+        // temperature (slightly cooled by evap, but still
+        // ≈ 280 K) the sat-cap is < 16_000. Allow some slack
+        // for floor-vs-water-term selection.
         assert!(
-            v_after <= Real::from_int(10_000),
+            v_after <= Real::from_int(20_000),
             "pathological vapour overload should have been clamped; \
              got {v_after:?}"
         );
@@ -770,6 +867,128 @@ mod tests {
         assert!(
             v_after < Real::from_int(100_000),
             "vapour clamp didn't reduce the field; got {v_after:?}"
+        );
+    }
+
+    #[test]
+    fn sat_cap_increases_with_temperature() {
+        // Sprint 1 Item 4: the curve must be monotonic in T
+        // over the range that matters for planetary cells. A
+        // cold cell (150 K) must have a strictly smaller cap
+        // than a warm cell (350 K), which must have a strictly
+        // smaller cap than a hot cell (500 K).
+        let cold = saturation_vapour_cap(Real::from_int(150));
+        let warm = saturation_vapour_cap(Real::from_int(350));
+        let hot = saturation_vapour_cap(Real::from_int(500));
+        assert!(
+            cold < warm,
+            "sat_cap(150) should be less than sat_cap(350): \
+             cold={cold:?} warm={warm:?}"
+        );
+        assert!(
+            warm < hot,
+            "sat_cap(350) should be less than sat_cap(500): \
+             warm={warm:?} hot={hot:?}"
+        );
+    }
+
+    #[test]
+    fn sat_cap_floor_holds_at_zero() {
+        // Sprint 1 Item 4: at T = 0, the quartic gives a literal
+        // 0 cap which would let downstream `>= cap` logic divide
+        // by zero or treat the cell as having no capacity. The
+        // floor must trip and keep the cap at a small positive
+        // value.
+        let at_zero = saturation_vapour_cap(Real::ZERO);
+        assert!(
+            at_zero >= Real::from_int(SAT_CAP_FLOOR),
+            "sat_cap(0) should hit the safety floor: got {at_zero:?}"
+        );
+        // Negative input (defensive): must not blow up. Should
+        // also hit the floor via the internal `max(0)` clamp.
+        let at_negative = saturation_vapour_cap(Real::from_int(-50));
+        assert!(
+            at_negative >= Real::from_int(SAT_CAP_FLOOR),
+            "sat_cap of negative input should still respect the floor: \
+             got {at_negative:?}"
+        );
+    }
+
+    #[test]
+    fn sat_cap_matches_ref_value() {
+        // Sprint 1 Item 4: at T = T_ref the quartic evaluates
+        // exactly to `C_base × 1 = C_base`. This is a sanity
+        // anchor on the calibration — if a future tweak to the
+        // ref temperature or C_base accidentally desynchronises
+        // them, this catches it.
+        let at_ref = saturation_vapour_cap(Real::from_int(SAT_CAP_T_REF_K));
+        assert_eq!(
+            at_ref,
+            Real::from_int(SAT_CAP_C_BASE),
+            "sat_cap(T_ref) should equal C_base bit-exactly: got {at_ref:?}"
+        );
+    }
+
+    #[test]
+    fn cold_cell_cannot_oversaturate_under_new_cap() {
+        // Regression for Sprint 1 Item 4. Pre-fix, a 200 K cold
+        // cell with no surface water and a vapour overload would
+        // be clamped to the flat 10_000 floor — far above the
+        // physical capacity of cold air. Now the cap collapses
+        // to `sat_cap(200) ≈ 50_000 × (200/373)^4 ≈ 4_122`, so
+        // the same overloaded cell ends much lower.
+        let grid = HexGrid::new(3, 3);
+        let mut state = PhysicsState::new(grid);
+        // No surface water — isolates the temperature-driven
+        // cap from the water-depth headroom term.
+        let centre = state.grid().cell_id(crate::grid::Axial::new(1, 1)).0 as usize;
+        state.substance_mut(Substance::Vapour.idx())[centre] = Real::from_int(1_000_000);
+        // 200 K — well below boil; old flat floor would have
+        // pinned the cap at 10_000.
+        for t in state.temperature_mut() {
+            *t = Real::from_int(200);
+        }
+        let hydro = Hydrology::earth_like();
+        hydro.integrate(&mut state, Real::ONE);
+        let v_after = state.substance(Substance::Vapour.idx())[centre];
+        // The new sat_cap(200) is ≈ 4_122. Allow modest slack
+        // for the post-integrate temperature shift from
+        // condensation latent heat (a few K of warming) and
+        // the corresponding cap re-evaluation. Strictly less
+        // than the old flat floor of 10_000 is the actual
+        // regression-guard threshold.
+        assert!(
+            v_after < Real::from_int(10_000),
+            "cold-cell cap should be below the old flat 10_000 floor; \
+             got {v_after:?}"
+        );
+        // And: the cap definitely fired (started at 1M).
+        assert!(
+            v_after < Real::from_int(50_000),
+            "vapour clamp didn't reduce the field; got {v_after:?}"
+        );
+    }
+
+    #[test]
+    fn warm_cell_cap_exceeds_old_flat_floor() {
+        // Companion regression for Sprint 1 Item 4. A warm cell
+        // (T ≈ T_ref) should have a cap well above the old
+        // flat 10_000 — that's the entire reason the floor
+        // needed replacement (warm cells were getting
+        // under-capped). At T = 373 K, sat_cap = C_base =
+        // 50_000.
+        let at_ref = saturation_vapour_cap(Real::from_int(SAT_CAP_T_REF_K));
+        assert!(
+            at_ref > Real::from_int(10_000),
+            "warm-cell cap must exceed the old flat 10_000 floor: \
+             got {at_ref:?}"
+        );
+        // And at hotter temperatures the cap should keep
+        // climbing (no implicit ceiling).
+        let hot = saturation_vapour_cap(Real::from_int(500));
+        assert!(
+            hot > at_ref,
+            "hot cell cap must exceed T_ref cap: hot={hot:?} ref={at_ref:?}"
         );
     }
 }
