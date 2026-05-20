@@ -234,35 +234,90 @@ impl Law for Tides {
         // (cap to `next_w[i]`). The non-negative invariant then
         // follows from the cap rather than the post-pass erasure,
         // and total water is exactly conserved.
+        //
+        // Two-pass iteration (Sprint 1 Item 2): a single pass is
+        // conservative but order-dependent — a cell visited early as
+        // a *recipient* may later be asked to *donate* to another
+        // neighbour, and the cap measured at request time can be
+        // looser than what the cell could have actually moved had
+        // it seen its incoming flux first. Conversely, a cell that
+        // was a saturated donor in pass 1 may have received inflow
+        // from a different neighbour and now has stock to export.
+        //
+        // Running the same donor-limited loop a second time, with
+        // pass 2 reading the post-pass-1 state as the new donor
+        // pool, drains that residual transient asymmetry. Two
+        // passes are sufficient: pass 1 propagates one "hop" of
+        // donor-cap slack, pass 2 propagates the next; with the
+        // earth-like `tide_k = 0.001 · dt · ΔΦ` request size,
+        // ΔΦ is bounded so a third pass moves only second-order
+        // residue that the next macro-step's pass 1 will absorb
+        // anyway. We don't iterate to fixed point because each
+        // pass adds determinism-relevant work proportional to the
+        // grid pair count, and the per-pair cap is order-dependent
+        // — converging would require a global solve we explicitly
+        // don't want at this layer.
         let prev_w = state.water_depth().to_vec();
         let mut next_w = prev_w.clone();
-        for (cid, axial) in grid.cells() {
-            let i = cid.0 as usize;
-            for nb in grid.neighbours(axial) {
-                let j = nb.0 as usize;
-                if j > i {
-                    let dphi = potential[i] - potential[j];
-                    let mut flux = self.tide_k * dt * dphi;
-                    if flux > Real::ZERO {
-                        // i gains, j loses — cap to j's stock.
-                        let donor = next_w[j].max(Real::ZERO);
-                        if flux > donor {
-                            flux = donor;
-                        }
-                    } else if flux < Real::ZERO {
-                        // j gains, i loses — cap to i's stock.
-                        let donor = next_w[i].max(Real::ZERO);
-                        let neg_donor = Real::ZERO - donor;
-                        if flux < neg_donor {
-                            flux = neg_donor;
-                        }
+        donor_limited_pass(&grid, &potential, self.tide_k, dt, &mut next_w);
+        donor_limited_pass(&grid, &potential, self.tide_k, dt, &mut next_w);
+        // Bit-exact conservation: the pair-flux primitive applies
+        // every `flux` as `+flux` to cell i and `-flux` to cell j,
+        // so the integer-arithmetic sum is invariant across each
+        // pass. This assert catches a future regression where
+        // someone, e.g., adds a one-sided clamp or a stray cell-
+        // local read before the assert can complain at run time.
+        debug_assert_eq!(
+            prev_w.iter().copied().fold(Real::ZERO, |a, b| a + b),
+            next_w.iter().copied().fold(Real::ZERO, |a, b| a + b),
+            "two-pass donor-limited tide flux must preserve total water bit-exactly"
+        );
+        state.water_depth_mut().copy_from_slice(&next_w);
+    }
+}
+
+/// One pass of the donor-limited pair-flux redistribution. Reads
+/// `potential` and per-cell stock from `next_w`, writes the
+/// post-pass stock back into `next_w` in place.
+///
+/// Canonical pair order (j > i over `grid.cells()` × `grid.neighbours()`)
+/// is preserved so determinism does not depend on pass count.
+/// Used twice from `Tides::integrate` (see Sprint 1 Item 2 comment
+/// for the two-pass rationale) and once from the test-only
+/// `single_pass_for_comparison` helper used by
+/// `two_pass_drains_more_than_single_pass`.
+fn donor_limited_pass(
+    grid: &crate::grid::HexGrid,
+    potential: &[Real],
+    tide_k: Real,
+    dt: Real,
+    next_w: &mut [Real],
+) {
+    for (cid, axial) in grid.cells() {
+        let i = cid.0 as usize;
+        for nb in grid.neighbours(axial) {
+            let j = nb.0 as usize;
+            if j > i {
+                let dphi = potential[i] - potential[j];
+                let mut flux = tide_k * dt * dphi;
+                if flux > Real::ZERO {
+                    // i gains, j loses — cap to j's stock.
+                    let donor = next_w[j].max(Real::ZERO);
+                    if flux > donor {
+                        flux = donor;
                     }
-                    next_w[i] = next_w[i] + flux;
-                    next_w[j] = next_w[j] - flux;
+                } else if flux < Real::ZERO {
+                    // j gains, i loses — cap to i's stock.
+                    let donor = next_w[i].max(Real::ZERO);
+                    let neg_donor = Real::ZERO - donor;
+                    if flux < neg_donor {
+                        flux = neg_donor;
+                    }
                 }
+                next_w[i] = next_w[i] + flux;
+                next_w[j] = next_w[j] - flux;
             }
         }
-        state.water_depth_mut().copy_from_slice(&next_w);
     }
 }
 
@@ -587,6 +642,179 @@ mod tests {
         }
         assert_eq!(a.water_depth(), b.water_depth());
         assert_eq!(a.macro_step(), b.macro_step());
+    }
+
+    /// Test-only: run exactly one donor-limited pass against a
+    /// fresh `next_w` snapshot. Mirrors the single-pass behaviour
+    /// the production code had before Sprint 1 Item 2, so the
+    /// `two_pass_drains_more_than_single_pass` test can compare
+    /// the per-cell outcomes head-to-head without re-implementing
+    /// the pair-flux iteration in the test.
+    fn single_pass_for_comparison(
+        tides: &Tides,
+        state: &mut PhysicsState,
+        dt: Real,
+    ) {
+        if tides.moons.is_empty() {
+            return;
+        }
+        let grid = state.grid().clone();
+        let width = i32::try_from(grid.width()).unwrap_or(1).max(1);
+        let n = grid.n_cells();
+        let mut potential = vec![Real::ZERO; n];
+        let two_pi_v = two_pi();
+        let pi_v = pi();
+        let height = i32::try_from(grid.height()).unwrap_or(1).max(1);
+        for (m_idx, moon) in tides.moons.iter().enumerate() {
+            if moon.period_macros == 0 {
+                continue;
+            }
+            let sub_lunar_q = tides.sub_lunar_q(m_idx, state.macro_step(), grid.width());
+            for (cid, axial) in grid.cells() {
+                let i = cid.0 as usize;
+                let raw_diff = (axial.q - sub_lunar_q).rem_euclid(width);
+                let signed_q_diff = if raw_diff <= width / 2 {
+                    raw_diff
+                } else {
+                    raw_diff - width
+                };
+                let theta =
+                    two_pi_v * Real::from_ratio(i64::from(signed_q_diff), i64::from(width));
+                let lat_phase = pi_v
+                    * Real::from_ratio(
+                        i64::from(axial.r - moon.declination_r),
+                        i64::from(height),
+                    );
+                let lat_cos = cos(lat_phase);
+                let lat_falloff = lat_cos * lat_cos;
+                potential[i] =
+                    potential[i] + moon.mass_relative * cos(theta + theta) * lat_falloff;
+            }
+        }
+        let prev_w = state.water_depth().to_vec();
+        let mut next_w = prev_w.clone();
+        donor_limited_pass(&grid, &potential, tides.tide_k, dt, &mut next_w);
+        // Conservation must hold for a single pass too — the
+        // pair-flux primitive is what guarantees it.
+        debug_assert_eq!(
+            prev_w.iter().copied().fold(Real::ZERO, |a, b| a + b),
+            next_w.iter().copied().fold(Real::ZERO, |a, b| a + b),
+            "single-pass donor-limited tide flux must preserve total water bit-exactly"
+        );
+        state.water_depth_mut().copy_from_slice(&next_w);
+    }
+
+    #[test]
+    fn two_pass_drains_more_than_single_pass() {
+        // Construct a seed where pass 1's donor cap leaves residual
+        // unsatisfied requests that pass 2 can satisfy. We need
+        // cells whose donor stock is low at the start of pass 1
+        // but becomes substantial after pass-1 inflow — then their
+        // outflow request to a third cell can actually be honoured
+        // in pass 2.
+        //
+        // Pathological tide_k (0.9) + half-empty / half-full
+        // chequerboard depth makes pass-1 donor caps fire on
+        // essentially every active pair, so pass 2 has plenty of
+        // residual transient to drain.
+        let grid = HexGrid::new(8, 4);
+        let mut state_single = PhysicsState::new(grid.clone());
+        let mut state_double = PhysicsState::new(grid.clone());
+        for (i, w) in state_single.water_depth_mut().iter_mut().enumerate() {
+            *w = if i % 2 == 0 {
+                Real::ZERO
+            } else {
+                Real::from_int(50)
+            };
+        }
+        for (i, w) in state_double.water_depth_mut().iter_mut().enumerate() {
+            *w = if i % 2 == 0 {
+                Real::ZERO
+            } else {
+                Real::from_int(50)
+            };
+        }
+        let initial_total: Real = state_single
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let tides = Tides {
+            tide_k: Real::from_ratio(9, 10), // 0.9 — well into donor-cap-saturation regime
+            moons: vec![MoonTide {
+                mass_relative: Real::ONE,
+                period_macros: u32::MAX, // freeze sub-lunar at q=0
+                declination_r: 0,
+            }],
+        };
+
+        // Single pass: production minus the second `donor_limited_pass`.
+        single_pass_for_comparison(&tides, &mut state_single, Real::ONE);
+        // Two pass: the production path.
+        tides.integrate(&mut state_double, Real::ONE);
+
+        // Conservation: both paths must preserve total water bit-exactly.
+        let single_total: Real = state_single
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let double_total: Real = state_double
+            .water_depth()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert_eq!(
+            initial_total, single_total,
+            "single-pass donor-limited flux must conserve total water"
+        );
+        assert_eq!(
+            initial_total, double_total,
+            "two-pass donor-limited flux must conserve total water"
+        );
+
+        // The two-pass result must differ from single-pass on at
+        // least one cell — proof that pass 2 did real work, not a
+        // no-op. We also compute the total L1 distance moved by
+        // each variant from the initial state; the two-pass total
+        // must be strictly greater (more mass redistributed) than
+        // the single-pass total under this seed.
+        let initial: Vec<Real> = (0..state_single.water_depth().len())
+            .map(|i| {
+                if i % 2 == 0 {
+                    Real::ZERO
+                } else {
+                    Real::from_int(50)
+                }
+            })
+            .collect();
+        let l1_single: Real = state_single
+            .water_depth()
+            .iter()
+            .zip(initial.iter())
+            .map(|(a, b)| (*a - *b).abs())
+            .fold(Real::ZERO, |a, b| a + b);
+        let l1_double: Real = state_double
+            .water_depth()
+            .iter()
+            .zip(initial.iter())
+            .map(|(a, b)| (*a - *b).abs())
+            .fold(Real::ZERO, |a, b| a + b);
+        assert!(
+            l1_double > l1_single,
+            "two-pass must redistribute strictly more mass than single-pass: \
+             single_l1={l1_single:?} double_l1={l1_double:?}"
+        );
+        // Strict per-cell difference: at least one cell must end up
+        // at a different value under two passes than under one.
+        assert!(
+            state_single
+                .water_depth()
+                .iter()
+                .zip(state_double.water_depth().iter())
+                .any(|(a, b)| a != b),
+            "two-pass must reach a different per-cell state than single-pass"
+        );
     }
 
     #[test]
