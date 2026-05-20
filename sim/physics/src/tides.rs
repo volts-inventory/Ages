@@ -16,11 +16,14 @@
 //!    Pure integer arithmetic — no transcendentals, no cell-time
 //!    drift.
 //! 2. Computes a tidal potential per cell:
-//!    `Φ[i] = 1 - 8 · min(|q[i]-sub|, |q[i]-anti|) / width` (clamped
-//!    so two peaks at sub-lunar and antipodal hit Φ=+1, quarter-
-//!    circle low tides hit Φ=-1). Triangular shape rather than
-//!    cos(2θ) because the fixed-point arithmetic has no sin/cos and the order-of-
-//!    magnitude shape is identical for tidal-flux purposes.
+//!    `Φ[i] = mass_relative · cos(2θ) · cos²(latitude_phase)` where
+//!    `θ = 2π · signed_q_diff / width` is the longitudinal angle from
+//!    the sub-lunar point. Two peaks at sub-lunar and antipodal, two
+//!    troughs at the quarter-circle low-tide longitudes. The `cos(2θ)`
+//!    longitudinal shape pairs with the `cos²(latitude)` modulation
+//!    described below. Both use `sim_arith::transcendental::cos`
+//!    (the codebase has no `sin`, so the latitude squared-cosine is
+//!    obtained via `cos²` rather than `sin`).
 //! 3. For each pair (i, j) with i<j: redistributes `water_depth`
 //!    from low-Φ cells to high-Φ cells using the standard pair-
 //!    flux pattern:
