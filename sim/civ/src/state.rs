@@ -65,6 +65,13 @@ impl Civ {
     ) -> Self {
         let grammar = NameGrammar::derive(species_modalities, id, species_seed);
         let attempt_period = attempt_period_for_cognition(intelligence);
+        // Sensor-gated candidate set: figures' hypothesizers see
+        // only the channels the species can actually perceive.
+        // Empty modality lists fall back to the universally-
+        // touchable minimum (`Temperature`+`Elevation`) inside
+        // `perceivable_channels_from_kinds`.
+        let species_channels =
+            crate::discovery::perceivable_channels_from_kinds(species_modalities);
         let (figures, next_figure_id) = found_band(
             &grammar,
             id,
@@ -74,6 +81,7 @@ impl Civ {
             intelligence,
             &[],
             attempt_period,
+            Some(&species_channels),
         );
         let centroid = figures.first().map_or(0, |f| f.cell_assignment);
         // per-seed cosmology pole-position bias. The species

@@ -35,7 +35,7 @@ fn falsification_trigger_default_30_civ_aware_uses_metabolism_scaled() {
 
 #[test]
 fn cross_product_candidates_have_unique_stable_ids() {
-    // 5 templates × 8 channels = 40 candidates; ids stable
+    // 5 templates × `Channel::ALL.len()` candidates; ids stable
     // across runs so confirmations survive a refresh.
     let cs = Hypothesizer::candidates_for(&baseline_templates());
     let ids: BTreeSet<u32> = cs.iter().map(|c| c.relation_id).collect();
@@ -460,4 +460,141 @@ fn confirmed_measurement_flags_experimental_when_apparatus_contributed() {
         conf.is_experimental,
         "apparatus contribution must flip flag"
     );
+}
+
+// PR5 (expert review 2): tighten `channels_for_modality` and wire
+// `candidates_for_with_channels` through the production constructor.
+// Tests below assert the four behavioural invariants the expert
+// flagged: magnetoreceptors read `MagneticField` (not
+// `ChargeMagnitude`); tactile-only species end up narrowly gated;
+// `refresh_perceivable` honours the sensor-gated channel set across
+// a tool unlock; and the legacy no-channel path still produces the
+// full cross-product.
+
+#[test]
+fn magnetic_sense_species_perceives_magnetic_not_charge() {
+    // Bird-style magnetoreceptor species: only `MagneticSense`.
+    // Must perceive the planetary `|B|` channel (`MagneticField`)
+    // and must NOT perceive `ChargeMagnitude` — electric-charge
+    // gradients are the ElectricField sense, not magnetic. The
+    // previous mapping conflated the two and would have flunked
+    // this assertion.
+    let mods = vec![sim_species::Modality {
+        kind: sim_species::ModalityKind::MagneticSense,
+        range_m: Real::from_int(1),
+        fidelity: Real::from_int(1),
+        bandwidth: Real::from_int(1),
+    }];
+    let channels = perceivable_channels(&mods);
+    assert!(
+        channels.contains(&Channel::MagneticField),
+        "MagneticSense must reach MagneticField, got {channels:?}",
+    );
+    assert!(
+        !channels.contains(&Channel::ChargeMagnitude),
+        "MagneticSense must NOT reach ChargeMagnitude (that's ElectricField), got {channels:?}",
+    );
+}
+
+#[test]
+fn tactile_only_species_has_narrow_perception() {
+    // Contact-only sense: temperature (thermal) + elevation
+    // (surface relief). Earlier the fallback listed 5 channels and
+    // was paired with the Fuel/Fossil universal floor for ~7 total
+    // — the "restriction" barely restricted.
+    let mods = vec![sim_species::Modality {
+        kind: sim_species::ModalityKind::Tactile,
+        range_m: Real::from_int(1),
+        fidelity: Real::from_int(1),
+        bandwidth: Real::from_int(1),
+    }];
+    let channels = perceivable_channels(&mods);
+    assert_eq!(
+        channels.len(),
+        2,
+        "tactile-only species must land on exactly 2 channels, got {channels:?}",
+    );
+    assert!(channels.contains(&Channel::Temperature));
+    assert!(channels.contains(&Channel::Elevation));
+}
+
+#[test]
+fn perceivable_channels_empty_modalities_falls_back_to_minimum() {
+    // Empty-modality species (or output-only Bioluminescent /
+    // Gestural / Postural only) must reach the now-reachable safety
+    // floor: `Temperature` + `Elevation`. Previously this branch was
+    // unreachable because Fuel + Fossil were force-included.
+    let mods: Vec<sim_species::Modality> = vec![sim_species::Modality {
+        kind: sim_species::ModalityKind::Gestural,
+        range_m: Real::from_int(1),
+        fidelity: Real::from_int(1),
+        bandwidth: Real::from_int(1),
+    }];
+    let channels = perceivable_channels(&mods);
+    assert_eq!(channels, vec![Channel::Temperature, Channel::Elevation]);
+
+    let channels_empty = perceivable_channels(&[]);
+    assert_eq!(channels_empty, vec![Channel::Temperature, Channel::Elevation]);
+}
+
+#[test]
+fn tool_unlock_extends_civ_perceivable_channels() {
+    // Sensor-gated hypothesizer: starts on a narrow `MagneticField`
+    // channel set. Calling `refresh_perceivable_with_channels` with
+    // a wider perceivable-template list AND the *same* channel set
+    // must regenerate candidates over that channel only — the
+    // legacy `refresh_perceivable` path would have widened back to
+    // `Channel::ALL` and undone the sensor gating.
+    let channels = vec![Channel::MagneticField];
+    let mut h = Hypothesizer::with_attempt_period_and_channels(
+        Real::ONE,
+        &[1, 2],
+        20,
+        Some(&channels),
+    );
+    assert_eq!(h.candidates.len(), 2);
+    for c in &h.candidates {
+        assert_eq!(c.channel, Channel::MagneticField);
+    }
+
+    // Simulate a tool unlock that makes template id 3 perceivable
+    // (the tool granted a recognition channel that intersects with
+    // template 3's required channel list). The candidate set
+    // should grow to 3 (templates 1, 2, 3), all on MagneticField.
+    h.refresh_perceivable_with_channels(&[1, 2, 3], Some(&channels));
+    assert_eq!(h.candidates.len(), 3, "expected 3 candidates after unlock");
+    for c in &h.candidates {
+        assert_eq!(
+            c.channel,
+            Channel::MagneticField,
+            "sensor-gated refresh must preserve the per-civ channel set",
+        );
+    }
+
+    // Negative control: the legacy `refresh_perceivable` (no
+    // channel set) silently widens to the full Channel::ALL cross
+    // product. Verifies the wire-through is strictly necessary —
+    // calling the wrong API regenerates the unfiltered candidate
+    // set just like the expert flagged.
+    h.refresh_perceivable(&[1, 2, 3]);
+    assert_eq!(
+        h.candidates.len(),
+        3 * Channel::ALL.len(),
+        "legacy refresh must widen to full Channel::ALL cross-product",
+    );
+}
+
+#[test]
+fn legacy_full_channel_path_unchanged() {
+    // Sanity check on the legacy callable. `candidates_for(ids)`
+    // (no channel argument) must still produce the full
+    // `Channel::ALL` cross-product. Tests + planet-agnostic
+    // construction paths rely on this; the wire-through is opt-in
+    // via `with_attempt_period_and_channels`.
+    let cs = Hypothesizer::candidates_for(&[10, 20, 30]);
+    assert_eq!(cs.len(), 3 * Channel::ALL.len());
+    let channels: BTreeSet<Channel> = cs.iter().map(|c| c.channel).collect();
+    for ch in Channel::ALL {
+        assert!(channels.contains(&ch), "missing channel {ch:?}");
+    }
 }

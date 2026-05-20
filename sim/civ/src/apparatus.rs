@@ -121,7 +121,10 @@ impl Channel {
             // Geology: not clampable in 1 tick. Fossil deposits
             // are buried hydrocarbon stocks set at worldgen — a
             // civ can't reshape them within an experiment window.
-            Channel::Elevation | Channel::Fossil => None,
+            // MagneticField: the planetary dipole isn't clampable
+            // either — civs can't reshape `|B|` inside an
+            // experiment window.
+            Channel::Elevation | Channel::Fossil | Channel::MagneticField => None,
         }
     }
 }
@@ -224,7 +227,7 @@ fn write_channel_at_cell(state: &mut PhysicsState, channel: Channel, cell: usize
         Channel::Vapour => state.substance_mut(Substance::Vapour.idx())[cell] = value,
         Channel::Ice => state.substance_mut(Substance::Ice.idx())[cell] = value,
         // Not clampable; covered by `clamp_ladder() == None`.
-        Channel::Elevation | Channel::Fossil => {}
+        Channel::Elevation | Channel::Fossil | Channel::MagneticField => {}
     }
 }
 
