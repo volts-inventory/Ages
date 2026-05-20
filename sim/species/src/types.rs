@@ -299,16 +299,69 @@ pub struct CognitionAxes {
 
 impl CognitionAxes {
     /// Build from a single scalar — replicate the value across
-    /// all three axes. Used as the migration path: existing
-    /// worldgen samples a scalar `cognition`, and the multi-axis
-    /// struct is back-filled here. Future worldgen samples
-    /// each axis independently.
+    /// all three axes. Retained for unit tests that need a known,
+    /// uniform shape; production worldgen uses
+    /// `from_scalar_with_seed` so axes diverge per species rather
+    /// than aliasing the scalar everywhere.
     #[must_use]
     pub fn uniform(c: Real) -> Self {
         Self {
             working_memory: c,
             abstraction: c,
             social: c,
+        }
+    }
+
+    /// Production constructor — build three axes deterministically
+    /// perturbed off the base scalar. Each axis gets an
+    /// independent offset in `[-0.15, +0.15]`, derived from a
+    /// `splitmix64` hash of `(seed, axis_index)` so no new RNG
+    /// stream is introduced and rebuilds are bit-identical.
+    /// The three offsets are then zero-summed (subtract their
+    /// mean) so `average()` equals the input scalar exactly — no
+    /// drift from the legacy single-scalar API.
+    ///
+    /// Each axis is clamped to `[0, 1]` after the offset to
+    /// preserve the global `[0, 1]` cognition contract. Clamping
+    /// can re-introduce a tiny drift in `average()` for inputs
+    /// near the extremes; the drift is bounded by the per-axis
+    /// offset magnitude (0.15) so the average stays within
+    /// `±0.05` of `c` for any input in `[0.15, 0.85]` and within
+    /// `±0.15` everywhere — well below the threshold that would
+    /// shift any legacy downstream formula.
+    #[must_use]
+    pub fn from_scalar_with_seed(c: Real, seed: u64) -> Self {
+        // SplitMix64-style hash of (seed, axis_idx). Deterministic
+        // and fast — no allocation, no RNG state. Output bits map
+        // to a signed offset in [-0.15, +0.15].
+        fn axis_offset(seed: u64, axis_idx: u64) -> Real {
+            let mut z = seed.wrapping_add(axis_idx.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            // Take the low 16 bits and map to [-1.0, +1.0], then
+            // scale by 0.15. `as i64` gives a signed range.
+            let bits = (z & 0xFFFF) as i64; // 0..65535
+            let signed = bits - 32_768; // -32768..32767
+            // signed / 32768 in [-1, +1) — scale by 0.15.
+            // `from_ratio` is Q32.32-exact for these magnitudes.
+            Real::from_ratio(signed * 15, 32_768 * 100)
+        }
+        let off_a = axis_offset(seed, 0);
+        let off_b = axis_offset(seed, 1);
+        let off_c = axis_offset(seed, 2);
+        // Zero-sum the offsets so `average()` of the three perturbed
+        // axes equals `c` before clamping. Subtracting the mean
+        // preserves independence (the three offsets stay distinct).
+        let mean = (off_a + off_b + off_c) / Real::from_int(3);
+        let off_a = off_a - mean;
+        let off_b = off_b - mean;
+        let off_c = off_c - mean;
+        let clamp01 = |x: Real| -> Real { x.max(Real::ZERO).min(Real::ONE) };
+        Self {
+            working_memory: clamp01(c + off_a),
+            abstraction: clamp01(c + off_b),
+            social: clamp01(c + off_c),
         }
     }
 

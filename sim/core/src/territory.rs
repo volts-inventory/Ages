@@ -266,57 +266,14 @@ pub(crate) fn pick_habitable_cell(
     seed
 }
 
-/// Per-habitat habitability score for cell selection. For
-/// terrestrial species the standard multiplier applies (coast
-/// 1.20, plain 1.00, inland 0.90, hill 0.60, peak 0.10). For
-/// aquatic species the band gets re-keyed: deep ocean 1.00 (their
-/// natural deep-water home), shallow 0.80 (less productive), coast
-/// 1.20 (richest — fish + tidepool feeding), land scores 0 (their
-/// claim gate filtered it out anyway). Amphibious species land in
-/// between (coast 1.20, land 1.00, deep water 0.80).
-fn score_for_habitat(glyph: char, habitat: sim_species::Habitat) -> sim_arith::Real {
-    use sim_arith::Real;
-    use sim_species::Habitat;
-    match habitat {
-        // Airborne lives on land like terrestrial (flight is for
-        // wrong-biome transit, not preferred habitat) so both pull
-        // straight from the per-glyph habitability table.
-        Habitat::Terrestrial | Habitat::Airborne => sim_world::habitability_multiplier(glyph),
-        Habitat::Aquatic => match glyph {
-            '\u{2248}' => Real::ONE,          // ≈ deep ocean — the deep-water home
-            '~' => Real::percent(80),         // ~ shallow sea
-            '\u{2591}' => Real::percent(120), // ░ coast — richest (tidal feeding)
-            _ => Real::ZERO,
-        },
-        Habitat::Amphibious => match glyph {
-            '\u{2591}' => Real::percent(120),      // ░ coast — best of both
-            '\u{2592}' | '\u{00B7}' => Real::ONE,  // ▒ inland / · plain
-            '~' | '\u{2248}' => Real::percent(80), // ~ shallow / ≈ deep
-            '\u{25B3}' => Real::percent(60),       // △ hill
-            '\u{25B2}' => Real::percent(10),       // ▲ peak
-            _ => Real::ZERO,
-        },
-        // Subterranean: inverts the surface bias — peaks +
-        // inland have the deepest excavable substrate; coast
-        // less so (water table). Water = uninhabitable.
-        Habitat::Subterranean => match glyph {
-            '\u{25B2}' => Real::percent(130),     // ▲ peak — deepest dry stone
-            '\u{25B3}' => Real::ONE,              // △ hill
-            '\u{2592}' | '\u{00B7}' => Real::ONE, // ▒ inland / · plain
-            '\u{2591}' => Real::percent(60),      // ░ coast — wet, less stable
-            _ => Real::ZERO,
-        },
-        // Endolithic: substrate-bound life. Same shape as
-        // subterranean — rock pore-space dwelling — but peaks
-        // and inland are pure-native; coast is marginal.
-        Habitat::Endolithic => match glyph {
-            '\u{25B2}' => Real::percent(120),     // ▲ peak
-            '\u{25B3}' => Real::ONE,              // △ hill
-            '\u{2592}' | '\u{00B7}' => Real::ONE, // ▒ inland / · plain
-            '\u{2591}' => Real::percent(40),      // ░ coast — marginal
-            _ => Real::ZERO,
-        },
-    }
+/// Per-habitat habitability score for cell selection. Pure
+/// delegate to `sim_species::habitat_glyph_multiplier` — the
+/// single source of truth shared with `sim_civ::capacity` so
+/// territory-preferred terrain and capacity-rewarded terrain
+/// can't disagree (the Subterranean peak vs. inland mismatch
+/// that earlier shipped quietly).
+pub(crate) fn score_for_habitat(glyph: char, habitat: sim_species::Habitat) -> sim_arith::Real {
+    sim_species::habitat_glyph_multiplier(habitat, glyph)
 }
 
 /// Pick a habitable cell as far as possible from a set of

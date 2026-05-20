@@ -100,7 +100,18 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         seed: planet.seed,
         name,
         cognition,
-        cognition_axes: crate::types::CognitionAxes::uniform(cognition),
+        // Perturb each axis off the base scalar deterministically
+        // from the species seed so downstream consumers that wire
+        // to `cognition_axes.working_memory` (or `.abstraction`,
+        // or `.social`) see genuinely different per-axis values
+        // rather than the bit-identical alias `uniform` produced.
+        // The seed is mixed with the planet seed plus a per-axis
+        // domain tag inside `from_scalar_with_seed` — no new RNG
+        // draw, fully deterministic on `planet.seed`.
+        cognition_axes: crate::types::CognitionAxes::from_scalar_with_seed(
+            cognition,
+            planet.seed,
+        ),
         sociality,
         communication_fidelity,
         lifespan_years,
