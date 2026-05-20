@@ -94,15 +94,57 @@ impl Pop {
     /// fractional bits and saturates negatives to zero — the
     /// expected behaviour wherever a population aggregate feeds a
     /// ratio or weight that has no meaning for negative counts.
+    ///
+    /// Also saturates the integer part below `Real`'s Q32.32 ceiling
+    /// (~2.1e9) so a `Pop` carrying more than the rate-type
+    /// maximum doesn't panic the `Real::from_int` shift downstream.
+    /// Civs with hyper-r growth / events_per_window amplification
+    /// can push aggregate pop past the Q32.32 limit; the cap keeps
+    /// callers (economy, ratios, fits) numerically stable. Callers
+    /// that genuinely need the full `Pop` range should not route
+    /// through `Real` here.
     #[must_use]
     pub fn to_real_nonneg(self) -> Real {
-        Real::from_int(self.0.to_num::<i64>().max(0))
+        // Q32.32 holds integers up to roughly i64::MAX >> 32
+        // (~2,147,483,647). Cap one below so `from_int`'s implicit
+        // left-shift by 32 stays within i64 with margin for the
+        // downstream multiplications that read the result.
+        const REAL_MAX_INT: i64 = (i64::MAX >> 32) - 1;
+        let raw: i64 = self.0.to_num::<i64>().max(0).min(REAL_MAX_INT);
+        Real::from_int(raw)
     }
 
     /// Return a `f64` *for display only*. Not for use in deterministic
     /// computation; if you call this in a sim loop you have a bug.
     pub fn to_f64_for_display(self) -> f64 {
         self.0.to_num()
+    }
+
+    /// Saturating multiplication by a `Real`. Clamps near the
+    /// `Pop` (Q96.32) overflow boundary instead of panicking. Used
+    /// at the population/birth-rate boundary where `fertile_pop ×
+    /// birth_rate` can spike under r-strategist sampling extremes
+    /// (clutch ≈ 500 over a 1-yr fertile window) and a naive
+    /// `Mul<Real>` would overflow the underlying Q-format. The
+    /// returned value preserves sign and never panics for finite
+    /// inputs.
+    #[must_use]
+    pub fn saturating_mul_real(self, rhs: Real) -> Self {
+        let lhs = self.0;
+        let rhs_w = I96F32::from_num(rhs.raw());
+        // `fixed::FixedI128::checked_mul` returns `None` on overflow;
+        // saturate to the underlying type's ±MAX in that case so the
+        // caller gets a clamped value rather than a panic.
+        let prod = lhs.checked_mul(rhs_w).unwrap_or_else(|| {
+            let neg_lhs = lhs < I96F32::ZERO;
+            let neg_rhs = rhs_w < I96F32::ZERO;
+            if neg_lhs ^ neg_rhs {
+                I96F32::MIN
+            } else {
+                I96F32::MAX
+            }
+        });
+        Self(prod)
     }
 }
 
@@ -237,6 +279,57 @@ impl Real {
     #[must_use]
     pub fn clamp01(self) -> Self {
         self.max(Self::ZERO).min(Self::ONE)
+    }
+
+    /// Saturating multiplication. Clamps to `Real::MIN` / `Real::MAX`
+    /// (the Q32.32 range bounds, ±~2.1e9) on overflow instead of
+    /// panicking. Used wherever a derived rate (e.g. birth_rate)
+    /// could be amplified by a planet / tech multiplier to a value
+    /// near the Q32.32 ceiling; the saturating form keeps downstream
+    /// math stable rather than wrapping or panicking.
+    #[must_use]
+    pub fn saturating_mul(self, rhs: Self) -> Self {
+        let prod = self.0.checked_mul(rhs.0).unwrap_or_else(|| {
+            let neg_l = self.0 < I32F32::ZERO;
+            let neg_r = rhs.0 < I32F32::ZERO;
+            if neg_l ^ neg_r {
+                I32F32::MIN
+            } else {
+                I32F32::MAX
+            }
+        });
+        Self(prod)
+    }
+
+    /// Saturating addition. Clamps at the Q32.32 range bounds
+    /// instead of panicking on overflow. Used in the surplus /
+    /// economic chain where a saturated rate multiplied by a large
+    /// `Pop` can produce a near-`Real::MAX` summand that would
+    /// otherwise wrap or panic at the next `+`.
+    #[must_use]
+    pub fn saturating_add(self, rhs: Self) -> Self {
+        let sum = self.0.checked_add(rhs.0).unwrap_or_else(|| {
+            if rhs.0 < I32F32::ZERO {
+                I32F32::MIN
+            } else {
+                I32F32::MAX
+            }
+        });
+        Self(sum)
+    }
+
+    /// Saturating subtraction. Symmetric counterpart to
+    /// `saturating_add` for chains that mix gain / drain terms.
+    #[must_use]
+    pub fn saturating_sub(self, rhs: Self) -> Self {
+        let diff = self.0.checked_sub(rhs.0).unwrap_or_else(|| {
+            if rhs.0 < I32F32::ZERO {
+                I32F32::MAX
+            } else {
+                I32F32::MIN
+            }
+        });
+        Self(diff)
     }
 
     /// Return a `f64` *for display only*. Not for use in deterministic
@@ -560,6 +653,42 @@ mod tests {
     fn raw_roundtrip() {
         let x = Real::from_ratio(7, 3);
         assert_eq!(Real::from_raw(x.raw()), x);
+    }
+
+    #[test]
+    fn real_saturating_mul_clamps_on_overflow() {
+        // Two large positive Q32.32 values whose product exceeds
+        // ±2.1e9: 1e6 × 1e6 = 1e12. Saturating multiply must clamp
+        // to the i64-MAX bit pattern rather than panic.
+        let a = Real::from_int(1_000_000);
+        let b = Real::from_int(1_000_000);
+        let prod = a.saturating_mul(b);
+        // The saturated value should be very large but finite.
+        assert!(prod > Real::from_int(2_000_000_000) || prod == Real::from_raw(I32F32::MAX));
+    }
+
+    #[test]
+    fn real_saturating_mul_normal_case_matches_mul() {
+        // Within-range product: saturating_mul must agree with `*`.
+        let a = Real::from_ratio(5, 2);
+        let b = Real::from_ratio(4, 1);
+        assert_eq!(a.saturating_mul(b), a * b);
+    }
+
+    #[test]
+    fn pop_saturating_mul_real_does_not_panic_on_huge_inputs() {
+        // 1 billion fertile × 500 births/month — the hyper-r
+        // overflow scenario from the expert review. Q96.32 is wide
+        // enough to hold this, but extending further (the
+        // overflow-guard test exercises billions × 500 × tech
+        // multipliers) must not panic.
+        let pop = Pop::from_int(1_000_000_000);
+        let rate = Real::from_int(500);
+        let _result = pop.saturating_mul_real(rate);
+        // Sanity: re-multiplying by a huge planet/tech multiplier
+        // shouldn't blow up either.
+        let huge = Real::from_int(1_000_000);
+        let _result2 = pop.saturating_mul_real(rate).saturating_mul_real(huge);
     }
 }
 

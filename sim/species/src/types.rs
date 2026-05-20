@@ -427,6 +427,30 @@ pub struct PopulationBiology {
     /// juveniles eat moderately less (~0.6), elders eat near-full
     /// (~0.9 — same body mass, lower activity).
     pub food_multipliers: [Real; 4],
+    /// Number of separate reproductive events across the fertile
+    /// bracket. Semelparous species (one big spawn → death, e.g.
+    /// pacific salmon) = `1.0`; iteroparous-mammalian (yearly to
+    /// monthly clutches, e.g. rats) = `12.0`..`24.0`; iteroparous
+    /// insects can run `100+`. Reformulates `birth_rate` from
+    /// `clutch_size / fertile_months` (which conflates a one-shot
+    /// 5000-egg salmon with a small-clutch monthly rat to identical
+    /// per-month dynamics) to
+    /// `(clutch_size × events_per_window) / fertile_months`, so
+    /// the two strategies produce different per-month rates and the
+    /// hyper-r ceiling stays bounded (clutch × events is a much
+    /// gentler upper bound than clutch × constant).
+    ///
+    /// Sampling derives this deterministically from existing species
+    /// traits — no new RNG draw. K-strategists get many small events
+    /// (long lifespan, individuals reproduce many times); r-strategists
+    /// get few big events (short life, one or two spawns total). See
+    /// `derive_population_biology`.
+    ///
+    /// Back-compat: value `<= 0` (legacy / test cases that construct
+    /// `PopulationBiology` literally) falls back to the legacy
+    /// `clutch_size / fertile_months` formula in
+    /// `PopulationDynamics::for_species`.
+    pub events_per_fertile_window: Real,
 }
 
 impl PopulationBiology {
