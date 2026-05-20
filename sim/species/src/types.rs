@@ -451,6 +451,33 @@ pub struct PopulationBiology {
     /// `clutch_size / fertile_months` formula in
     /// `PopulationDynamics::for_species`.
     pub events_per_fertile_window: Real,
+    /// Reproductive success: the per-event probability that a
+    /// fertile-cycle / reproductive attempt actually yields the
+    /// full clutch. Multiplied into the birth-rate formula
+    /// alongside `clutch_size × events_per_fertile_window` so
+    /// `realised_lifetime_offspring = clutch × events × success`.
+    ///
+    /// K-strategists invest heavily per offspring, have long
+    /// gestation, and many cycles fail to produce viable young —
+    /// real-human reproductive success is ~0.5%-1% per ovulatory
+    /// cycle (a few children over 30 years × 12 cycles/year). r-
+    /// strategists broadcast-spawn with very high per-event yield
+    /// (a salmon spawn produces ~all its eggs). Mapping:
+    /// `success = 0.005 + r_axis × 0.095`, range [0.005, 0.10].
+    ///
+    /// Without this factor, the prior calibration overshot real
+    /// human K-strategist birth rates by ~500×. The recruit-ceiling
+    /// clamp at `step_with_capacity` was hiding the inflation by
+    /// pinning per-tick recruits at `fertile × 5`. Now the
+    /// per-month rate falls in the realistic ~0.001-0.01 range for
+    /// K and the recruit-ceiling rarely fires.
+    ///
+    /// Back-compat: literal `PopulationBiology` constructions
+    /// (test fixtures, `core/src/nomads.rs`) leave this `Real::ZERO`;
+    /// the birth-rate consumer falls through to the
+    /// `clutch × events` formula without success-multiplier when
+    /// the field is ≤ 0.
+    pub reproductive_success: Real,
 }
 
 impl PopulationBiology {

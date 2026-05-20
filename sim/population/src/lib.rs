@@ -394,7 +394,32 @@ impl PopulationDynamics {
         // is well within range; this is the first of the two
         // overflow guards that together keep `fertile × birth_rate`
         // bounded for the whole derived rate chain.
-        let birth_rate = if biology.events_per_fertile_window > Real::ZERO {
+        // birth_rate now layers a `reproductive_success` factor on
+        // top of `clutch × events` so the per-month rate calibrates
+        // against real demography. K-strategist mammals land at
+        // ~0.001-0.01 births/fertile/month (real human ≈ 0.0005);
+        // r-strategist broadcast-spawners land at ~5-90 (real
+        // salmon spawn ~83 spread over their pre-death fertile
+        // window). Without success, the prior calibration
+        // overshot K rates by ~500× and the recruit-ceiling clamp
+        // was the load-bearing limiter.
+        //
+        // Three back-compat tiers:
+        //   - new biology (events>0 && success>0): full formula
+        //   - mid-tier (events>0, success=0): clutch × events / fertile_months
+        //     (matches PR #29 behaviour for hand-built test fixtures
+        //     that opt-in to events but haven't been migrated to
+        //     success yet)
+        //   - legacy (events=0): clutch / fertile_months
+        let birth_rate = if biology.events_per_fertile_window > Real::ZERO
+            && biology.reproductive_success > Real::ZERO
+        {
+            biology
+                .clutch_size
+                .saturating_mul(biology.events_per_fertile_window)
+                .saturating_mul(biology.reproductive_success)
+                / fertile_months
+        } else if biology.events_per_fertile_window > Real::ZERO {
             biology
                 .clutch_size
                 .saturating_mul(biology.events_per_fertile_window)
@@ -754,6 +779,7 @@ mod tests {
             // test invariants that pre-date the events_per_window
             // reformulation.
             events_per_fertile_window: Real::ZERO,
+            reproductive_success: Real::ZERO,
         }
     }
 
@@ -983,6 +1009,7 @@ mod tests {
                 Real::percent(90),
             ],
             events_per_fertile_window: Real::ZERO,
+            reproductive_success: Real::ZERO,
         };
         // K-strategist: clutch=1, lifespan=80yr, high survival.
         let k_bio = PopulationBiology {
@@ -999,6 +1026,7 @@ mod tests {
                 Real::percent(90),
             ],
             events_per_fertile_window: Real::ZERO,
+            reproductive_success: Real::ZERO,
         };
         let r_dyn = PopulationDynamics::for_species(
             &r_bio,
@@ -1128,6 +1156,7 @@ mod tests {
                 Real::percent(90),
             ],
             events_per_fertile_window: Real::from_int(2),
+            reproductive_success: Real::ZERO,
         };
         let dyn_ = PopulationDynamics::for_species(
             &biology,
@@ -1185,6 +1214,7 @@ mod tests {
                 Real::percent(90),
             ],
             events_per_fertile_window: Real::from_int(24),
+            reproductive_success: Real::ZERO,
         };
         // Semelparous (salmon-like): clutch = 192, events = 1 →
         // total lifetime offspring = 192 (same as above).
@@ -1202,6 +1232,7 @@ mod tests {
                 Real::percent(90),
             ],
             events_per_fertile_window: Real::ONE,
+            reproductive_success: Real::ZERO,
         };
         let lifespan = Real::from_int(4);
         let dyn_a = PopulationDynamics::for_species(
@@ -1236,6 +1267,7 @@ mod tests {
         // *same raw clutch*, different events → different rates.
         let iteroparous_eq = PopulationBiology {
             events_per_fertile_window: Real::from_int(24),
+            reproductive_success: Real::ZERO,
             ..semelparous
         };
         let semelparous_eq = semelparous;
@@ -1288,6 +1320,7 @@ mod tests {
                 Real::percent(90),
             ],
             events_per_fertile_window: Real::from_int(2),
+            reproductive_success: Real::ZERO,
         };
         let dyn_ = PopulationDynamics::for_species(
             &biology,
@@ -1307,5 +1340,54 @@ mod tests {
         // Q96.32 boundary, but never exit normally to NaN).
         // Touching `total()` exercises the same arithmetic chain.
         let _ = cohort.total();
+    }
+
+    #[test]
+    fn k_strategist_birth_rate_realistic_with_reproductive_success() {
+        // With the reproductive_success factor wired in, a human-
+        // shaped K-strategist (clutch=1, events=30, success=0.005,
+        // 30yr lifespan, fertile_fraction ≈ 0.3) should land at a
+        // per-month rate close to real human (~0.0005/mo per
+        // fertile woman, or 2-5 lifetime children over 30 years).
+        //
+        // Before this calibration the K rate was ~0.278/mo —
+        // overshooting by ~500×. The recruit-ceiling clamp at
+        // step_with_capacity was the load-bearing limiter.
+        //
+        // Target window: K birth_rate ∈ [0.001, 0.02] per fertile
+        // adult per month. Real human lower bound is ~0.0005, but
+        // we leave headroom for sociality + tech bonuses that
+        // realise effective fertility above the biological floor.
+        use sim_arith::Real;
+        let k_biology = PopulationBiology {
+            clutch_size: Real::ONE,
+            infant_fraction: Real::percent(15),
+            maturity_fraction: Real::percent(35),
+            eldership_fraction: Real::percent(15),
+            infant_survival: Real::percent(80),
+            juvenile_survival: Real::percent(95),
+            food_multipliers: [
+                Real::percent(30),
+                Real::percent(60),
+                Real::ONE,
+                Real::percent(90),
+            ],
+            events_per_fertile_window: Real::from_int(30),
+            reproductive_success: Real::from_ratio(5, 1000),
+        };
+        let lifespan = Real::from_int(30);
+        let dyn_k = PopulationDynamics::for_species(
+            &k_biology,
+            lifespan,
+            Real::percent(50),
+            Real::percent(50),
+        );
+        let lower = Real::from_ratio(1, 1000);
+        let upper = Real::from_ratio(2, 100);
+        assert!(
+            dyn_k.birth_rate >= lower && dyn_k.birth_rate <= upper,
+            "K-strategist birth_rate outside [0.001, 0.02] target window: got {:?}",
+            dyn_k.birth_rate
+        );
     }
 }

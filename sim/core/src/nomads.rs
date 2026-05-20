@@ -1147,6 +1147,7 @@ mod tests {
                 Real::from_ratio(9, 10),
             ],
             events_per_fertile_window: Real::ZERO,
+            reproductive_success: Real::ZERO,
         };
         let mut civ = sim_civ::Civ::new(1, 0, sim_arith::Pop::ZERO);
         // Seed an empty cohort for cell 0 so the deposit lands in
