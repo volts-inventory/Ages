@@ -84,6 +84,12 @@ pub(crate) fn physics_phase<E: Emitter>(
         Some(&laws.volcanism),
         Some(&laws.magnetic_reversal),
         Some(&laws.clouds),
+        // Sprint 5 Item 16 (v2): tidal heating from eccentric moon
+        // orbits. Per-moon `MoonHeating` is built in `build_laws` from
+        // `planet.moons` (mirroring the `MoonTide` adapter pattern);
+        // the orchestrator calls `apply_tidal_heating` per macro-step
+        // between `Tides` and chemistry.
+        Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
     );
     Ok(prev_state_for_measurements)
 }

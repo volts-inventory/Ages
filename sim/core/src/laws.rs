@@ -50,6 +50,19 @@ pub(crate) struct Laws {
     /// per-cell `cloud_fraction` + `cloud_type` fields the law
     /// authors.
     pub clouds: sim_physics::Clouds,
+    /// Sprint 5 Item 16 (v2): per-moon tidal-heating descriptors.
+    /// Mirrors `tides`/`moon_tides`: each `Moon` in `planet.moons`
+    /// gets projected onto a `MoonHeating` (rocky default; substrate
+    /// classification is a future refinement once worldgen tags moons
+    /// with their own composition). Empty for moonless planets — the
+    /// orchestrator call becomes a no-op.
+    pub moon_heating: Vec<sim_physics::MoonHeating>,
+    /// Sprint 5 Item 16 (v2): the planet's radius in Earth-radii,
+    /// passed alongside `moon_heating` so the orchestrator's tidal-
+    /// heating hook reads a consistent R⁵ value. Stored here rather
+    /// than fetched from `planet.radius` at call time so the
+    /// orchestrator's surface stays planet-agnostic.
+    pub planet_radius_earth_units: Real,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -196,6 +209,23 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         .collect();
     let tides = sim_physics::Tides::for_planet(moon_tides);
 
+    // Sprint 5 Item 16 (v2): per-moon tidal-heating descriptors.
+    // The lunar-bulge `tides` law moves water around; tidal heating
+    // is the *energy* side of the same coupling — eccentric orbits
+    // dissipate friction heat into the moon (and by extension the
+    // planet's temperature field). We default every moon to a rocky
+    // substrate (`k₂/Q ≈ 0.003`) as a v1 anchor — most rocky-planet
+    // moons in our reference set (Earth's Moon, Io, Mars's moons)
+    // are rocky. A future pass would let worldgen sample each moon's
+    // composition independently and choose `MoonHeating::icy` for
+    // Europa-class icy moons.
+    let moon_heating: Vec<sim_physics::MoonHeating> = planet
+        .moons
+        .iter()
+        .map(|m| sim_physics::MoonHeating::rocky(m.eccentricity, m.orbital_period_macros))
+        .collect();
+    let planet_radius_earth_units = planet.radius;
+
     // Planetary magnetic vector field. Strength comes from
     // the planet's `Magnetosphere` class (None / Weak / Strong);
     // direction is the axis-aligned dipole pattern (cos-latitude
@@ -288,6 +318,8 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         volcanism,
         magnetic_reversal,
         clouds,
+        moon_heating,
+        planet_radius_earth_units,
     }
 }
 

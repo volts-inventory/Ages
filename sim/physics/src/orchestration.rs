@@ -413,6 +413,15 @@ pub fn integrate_civ_step(
     volcanism: Option<&crate::volcanism::Volcanism>,
     magnetic_reversal: Option<&crate::magnetism::MagneticReversal>,
     clouds: Option<&crate::clouds::Clouds>,
+    // Sprint 5 Item 16 (v2): per-planet tidal heating from eccentric
+    // moon orbits. `(planet_radius_earth_units, &[MoonHeating])` —
+    // the orchestrator runs this once per macro-step, after the
+    // lunar-bulge `Tides` displacement and before the chemistry
+    // reaction step, so chemistry sees the post-tidal-heat
+    // temperature state. `None` (or an empty moon slice) is a
+    // no-op so existing call sites that don't yet wire it pay
+    // zero overhead.
+    tidal_heating: Option<(Real, &[crate::tidal_heating::MoonHeating])>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -459,6 +468,21 @@ pub fn integrate_civ_step(
                     orch_state.tides_water_drift
                 );
             }
+        }
+        // Sprint 5 Item 16 (v2): tidal heating from eccentric moon
+        // orbits. Runs immediately after the lunar-bulge `Tides`
+        // displacement so the same per-macro-step tidal-friction
+        // coupling that drives the bulge here injects its
+        // dissipated heat into the temperature field. By the time
+        // chemistry runs later in the macro-step, it sees the
+        // post-heating temperatures. Mass-conserving (energy-only),
+        // so no drift bookkeeping is needed.
+        if let Some((planet_radius_earth_units, moons)) = tidal_heating {
+            let _ = crate::tidal_heating::apply_tidal_heating(
+                state,
+                planet_radius_earth_units,
+                moons,
+            );
         }
         for _fluid_step in 0..cfg.fluid_substeps_per_macro {
             fluid.integrate(state, cfg.fluid_dt);
@@ -726,11 +750,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -783,7 +807,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);
