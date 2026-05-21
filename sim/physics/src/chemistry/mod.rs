@@ -5,11 +5,17 @@
 
 mod constants;
 mod reactions;
+mod redox;
 mod substance;
 mod substrate;
 
 pub use constants::*;
 pub use reactions::{BiofuelRegrowth, CombustionReaction, PhaseTransition};
+pub use redox::{
+    alt_oxidiser_combustion_energy, energy_yield_factor, oxidiser_ladder,
+    oxidiser_ladder_for_substrate, partition_chemoautotroph_growth, ChemoautotrophShare,
+    Oxidiser,
+};
 pub use substance::Substance;
 pub use substrate::{
     solvent_reaction_kinetics_prefactor, solvent_reaction_kinetics_prefactor_for_tag,

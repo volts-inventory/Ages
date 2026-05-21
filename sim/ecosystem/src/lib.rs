@@ -33,6 +33,7 @@
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
+use sim_physics::chemistry::{oxidiser_ladder, partition_chemoautotroph_growth, Oxidiser};
 use sim_species::{
     EcosystemRole, FunctionalResponse, Interaction, InteractionKind, InteractionMatrix,
     MutualismKind, ParasiteKind, ProducerMetabolism, SpeciesId,
@@ -66,6 +67,36 @@ pub const CONSUMER_DECAY_RATE: (i64, i64) = (1, 100);
 /// possible centrality (n × (n-1)).
 pub const KEYSTONE_CENTRALITY_THRESHOLD: (i64, i64) = (15, 100);
 
+/// Syntrophy partner-biomass floor (Sprint 2 Item 9). Mutualism
+/// pairs whose smaller partner falls below this absolute biomass
+/// drag *both* sides toward extinction at
+/// `SYNTROPHY_COLLAPSE_RATE` per tick. The floor is calibrated as a
+/// small absolute number rather than as a fraction of capacity so a
+/// pair with biomass `(1, 0.01)` reads "the 0.01 side is below the
+/// floor → the pair collapses" regardless of the producer pool size.
+pub const SYNTROPHY_MIN_PARTNER_BIOMASS: (i64, i64) = (1, 100);
+
+/// Per-tick fractional collapse applied to *both* sides of a
+/// Mutualism pair when one partner falls below
+/// `SYNTROPHY_MIN_PARTNER_BIOMASS`. 25% per tick is fast enough that
+/// the test's "within a few ticks" assertion holds, and slow enough
+/// that a transient dip below the floor (e.g. due to a single
+/// catastrophic predation event) doesn't trip the cascade on a single
+/// tick.
+pub const SYNTROPHY_COLLAPSE_RATE: (i64, i64) = (25, 100);
+
+/// Per-Chemoautotroph-species growth-demand baseline used by
+/// `partition_chemoautotrophs`. A Chemoautotroph wants to add up to
+/// this fraction of the producer carrying capacity per tick, scaled
+/// by its current biomass / capacity ratio so empty pools fill fast
+/// and saturated pools coast. Identical in shape to
+/// `PRODUCER_GROWTH_RATE` (which drives Photoautotrophs) but routed
+/// through `oxidiser_ladder` so the per-tick growth is also capped
+/// by oxidiser availability — a chemolithotroph on a CO2-poor
+/// hydrocarbon world can't grow even if biomass demand says it
+/// should.
+pub const CHEMOAUTOTROPH_GROWTH_RATE: (i64, i64) = (2, 100);
+
 /// One species' per-planet record. `species_id` is the dense per-
 /// planet index; `biomass` is the live pool (always ≥ 0); the
 /// other fields are configuration carried for the step.
@@ -90,38 +121,75 @@ pub struct PlanetEcosystem {
     /// Producer-tier carrying capacity. Producers grow logistically
     /// toward this value at `PRODUCER_GROWTH_RATE` per tick.
     pub producer_capacity: Real,
+    /// Substrate tag (`"aqueous" | "ammoniacal" | "hydrocarbon" |
+    /// "silicate"`) used to look up the oxidiser ladder when
+    /// partitioning Chemoautotroph growth. Defaults to `"aqueous"`
+    /// for back-compat with hand-built test fixtures.
+    pub substrate_tag: &'static str,
+    /// Live per-tick oxidiser ladder. Rebuilt each tick from
+    /// `oxidiser_ladder(substrate_tag)` so density depletions reset
+    /// on the next tick — the per-tick budget is a "what's available
+    /// this turn" pool, not a slow-leak persistent reservoir.
+    /// Exposed for tests that need to introspect the ladder
+    /// pre/post-tick.
+    pub current_oxidisers: Vec<Oxidiser>,
 }
 
 impl PlanetEcosystem {
     /// Construct a new ecosystem from a sampled species list and
     /// pre-built interaction matrix. Useful for tests that need a
     /// hand-tuned matrix; production code goes through
-    /// `sample_ecosystem`.
+    /// `sample_ecosystem`. Defaults to the Aqueous oxidiser ladder.
     #[must_use]
     pub fn new(
         species: Vec<EcoSpecies>,
         interactions: InteractionMatrix,
         producer_capacity: Real,
     ) -> Self {
+        Self::new_with_substrate(species, interactions, producer_capacity, "aqueous")
+    }
+
+    /// Like `new` but lets the caller pick the substrate that drives
+    /// the Chemoautotroph oxidiser-ladder partition. Required for
+    /// the Sprint 2 Item 9 hydrocarbon / silicate / ammoniacal
+    /// chemoautotroph tests.
+    #[must_use]
+    pub fn new_with_substrate(
+        species: Vec<EcoSpecies>,
+        interactions: InteractionMatrix,
+        producer_capacity: Real,
+        substrate_tag: &'static str,
+    ) -> Self {
         let map: BTreeMap<_, _> = species.into_iter().map(|s| (s.species_id, s)).collect();
+        let current_oxidisers = oxidiser_ladder(substrate_tag);
         Self {
             species: map,
             interactions,
             producer_capacity,
+            substrate_tag,
+            current_oxidisers,
         }
     }
 
-    /// Run one ecosystem tick. Three passes (each over `BTreeMap`):
+    /// Run one ecosystem tick. Five passes (each over `BTreeMap`):
     ///
-    /// 1. Producer logistic growth toward `producer_capacity`.
-    /// 2. Pairwise interactions: apply the per-pair delta computed
+    /// 1. Producer logistic growth toward `producer_capacity`
+    ///    (Photoautotroph + Mixotroph).
+    /// 2. Chemoautotroph partition through the substrate oxidiser
+    ///    ladder (Sprint 2 Item 9) — strongest-acceptor first.
+    /// 3. Pairwise interactions: apply the per-pair delta computed
     ///    by the pair's `FunctionalResponse`.
-    /// 3. Passive consumer decay, then enforce Lindeman pyramid
+    /// 4. Syntrophy enforcement on Mutualism pairs (Sprint 2 Item 9):
+    ///    if either side falls below `SYNTROPHY_MIN_PARTNER_BIOMASS`,
+    ///    drag *both* sides toward extinction.
+    /// 5. Passive consumer decay, then enforce Lindeman pyramid
     ///    caps (consumer ≤ 0.1 × producer, secondary ≤ 0.1 ×
     ///    primary, apex ≤ 0.1 × secondary).
     pub fn step(&mut self) {
         self.grow_producers();
+        self.partition_chemoautotrophs();
         self.apply_interactions();
+        self.enforce_syntrophy();
         self.decay_consumers();
         self.enforce_lindeman_pyramid();
         self.clamp_biomasses();
@@ -134,7 +202,12 @@ impl PlanetEcosystem {
             if !s.is_extant {
                 continue;
             }
-            if let EcosystemRole::Producer { .. } = s.role {
+            // Only Photoautotroph + Mixotroph drive off the logistic;
+            // Chemoautotroph growth runs through the oxidiser ladder.
+            if let EcosystemRole::Producer { metabolism } = s.role {
+                if matches!(metabolism, ProducerMetabolism::Chemoautotroph) {
+                    continue;
+                }
                 // Logistic: dB = r × B × (1 - B / K).
                 if cap > Real::ZERO {
                     let ratio = s.biomass / cap;
@@ -142,6 +215,112 @@ impl PlanetEcosystem {
                     let delta = growth_rate * s.biomass * slack;
                     s.biomass = s.biomass + delta;
                 }
+            }
+        }
+    }
+
+    /// Per-tick Chemoautotroph partition. Rebuilds the planet's
+    /// per-tick oxidiser ladder, collects each Chemoautotroph
+    /// species' growth demand (logistic shape, same coefficient as
+    /// Photoautotrophs), and walks the ladder greedy-strongest-first.
+    /// Iteration order is `BTreeMap`-stable so the first
+    /// Chemoautotroph (lowest `SpeciesId`) gets the strongest
+    /// available oxidiser. After this pass `current_oxidisers`
+    /// reflects the post-tick residual densities for diagnostics.
+    fn partition_chemoautotrophs(&mut self) {
+        // Reset the per-tick ladder.
+        self.current_oxidisers = oxidiser_ladder(self.substrate_tag);
+        let growth_rate = Real::from(CHEMOAUTOTROPH_GROWTH_RATE);
+        let cap = self.producer_capacity;
+
+        // Collect Chemoautotrophs in deterministic order, paired with
+        // their growth demand.
+        let mut species_indices: Vec<SpeciesId> = Vec::new();
+        let mut demands: Vec<Real> = Vec::new();
+        for (id, s) in &self.species {
+            if !s.is_extant {
+                continue;
+            }
+            if let EcosystemRole::Producer { metabolism } = s.role {
+                if matches!(metabolism, ProducerMetabolism::Chemoautotroph) {
+                    species_indices.push(*id);
+                    let demand = if cap > Real::ZERO {
+                        let ratio = s.biomass / cap;
+                        let slack = Real::ONE - ratio;
+                        growth_rate * s.biomass * slack
+                    } else {
+                        Real::ZERO
+                    };
+                    demands.push(demand);
+                }
+            }
+        }
+
+        if species_indices.is_empty() {
+            return;
+        }
+
+        let shares =
+            partition_chemoautotroph_growth(&mut self.current_oxidisers, &demands);
+        for share in &shares {
+            let id = species_indices[share.species_index];
+            if let Some(s) = self.species.get_mut(&id) {
+                s.biomass = s.biomass + share.growth_units;
+            }
+        }
+    }
+
+    /// Syntrophy enforcement (Sprint 2 Item 9). For each unordered
+    /// Mutualism pair (we treat `(a, b)` and `(b, a)` as one
+    /// relationship), if either side's biomass falls below
+    /// `SYNTROPHY_MIN_PARTNER_BIOMASS`, multiply *both* sides by
+    /// `(1 - SYNTROPHY_COLLAPSE_RATE)` for this tick. The
+    /// asymmetric form models the biology faithfully: a methanogen
+    /// without its H2-producer partner can't survive the niche even
+    /// if its own biomass started high.
+    ///
+    /// Pairs are deduplicated through a `BTreeSet<(min, max)>` so
+    /// the canonical interaction matrix's symmetric two-direction
+    /// storage doesn't double-apply the collapse.
+    pub fn enforce_syntrophy(&mut self) {
+        let floor = Real::from(SYNTROPHY_MIN_PARTNER_BIOMASS);
+        let collapse = Real::from(SYNTROPHY_COLLAPSE_RATE);
+        let survival = Real::ONE - collapse;
+
+        // Deduplicate symmetric pairs.
+        let mut pairs: BTreeSet<(SpeciesId, SpeciesId)> = BTreeSet::new();
+        for ((a, b), interaction) in &self.interactions.pairs {
+            if interaction.kind != InteractionKind::Mutualism {
+                continue;
+            }
+            let pair = if a <= b { (*a, *b) } else { (*b, *a) };
+            pairs.insert(pair);
+        }
+
+        for (a, b) in &pairs {
+            let ba = self
+                .species
+                .get(a)
+                .filter(|s| s.is_extant)
+                .map(|s| s.biomass)
+                .unwrap_or(Real::ZERO);
+            let bb = self
+                .species
+                .get(b)
+                .filter(|s| s.is_extant)
+                .map(|s| s.biomass)
+                .unwrap_or(Real::ZERO);
+            let weak_side_below = ba < floor || bb < floor;
+            if !weak_side_below {
+                continue;
+            }
+            // Drag both sides down. A side already at zero stays at
+            // zero (zero * survival = zero).
+            if let Some(s) = self.species.get_mut(a) {
+                s.biomass = s.biomass * survival;
+            }
+            if let Some(s) = self.species.get_mut(b) {
+                s.biomass = s.biomass * survival;
             }
         }
     }
