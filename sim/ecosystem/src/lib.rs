@@ -30,6 +30,9 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+pub mod hgt;
+pub use hgt::{step_hgt, HGT_BASE_RATE, HGT_INTERPOLATION};
+
 use protocol::{ExtinctionCause, SpeciesExtinct};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;

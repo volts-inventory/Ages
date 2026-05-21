@@ -580,6 +580,13 @@ impl Digest {
             // follow-up can grow ecosystem-side chapters (planet
             // species census) without changing the wire format.
             Event::SpeciesExtinct(_) => {}
+            // Sprint 3 Item 11a: per-tick microbial HGT trail
+            // surfaces in the event log only. Per-civ digest
+            // aggregation isn't meaningful — HGT happens between
+            // pre-civ Microbial species and never references a
+            // civ_id. A future ecosystem-side chapter (planet
+            // census, microbial trait drift) can roll these up.
+            Event::HorizontalGeneTransfer(_) => {}
         }
     }
 
