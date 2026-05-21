@@ -391,6 +391,7 @@ pub fn integrate_civ_step(
     vertical: Option<&crate::vertical::VerticalConvection>,
     weathering: Option<&crate::weathering::Weathering>,
     ice_albedo: Option<&crate::albedo::IceAlbedo>,
+    tectonics: Option<&crate::tectonics::Tectonics>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -547,6 +548,16 @@ pub fn integrate_civ_step(
             #[cfg(not(debug_assertions))]
             let _ = removed;
         }
+        // Tectonics + fluvial erosion (Sprint 4 Item 12). Runs after
+        // hydrology (so erosion reads post-precipitation water and
+        // vapour) and before chemistry (so any rock-cycle CO2 source
+        // landing in Item 12d sees post-tectonic surface state).
+        // Grouped with weathering as the rock-cycle band of the
+        // macro-step. No-ops when the plate roster is empty so tests
+        // that don't seed plates aren't affected.
+        if let Some(t) = tectonics {
+            t.integrate(state, cfg.heat_dt);
+        }
         for _heat_step in 0..cfg.heat_substeps_per_macro {
             heat.integrate(state, cfg.heat_dt);
         }
@@ -657,11 +668,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None,
+            None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None,
+            None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -714,7 +725,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None,
+                None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);
