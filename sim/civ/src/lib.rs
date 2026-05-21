@@ -62,7 +62,7 @@ pub use succession::pick_successor_centroid;
 use figures::{NameGrammar, NamedFigure};
 use sim_arith::Real;
 pub use sim_population::Cohort;
-use sim_population::PopulationDynamics;
+use sim_population::{LifecycleState, PopulationDynamics};
 use sim_recognition::ChannelKind;
 use std::collections::{BTreeMap, BTreeSet};
 use tech::ToolKind;
@@ -90,6 +90,17 @@ pub struct Civ {
     pub founded_tick: u64,
     pub cohort: Cohort,
     pub dynamics: PopulationDynamics,
+    /// Per-variant lifecycle state — caste headcounts for
+    /// `Eusocial`, biomass scalar for `Microbial` and `Modular`.
+    /// `LifecycleState::None` for the variants that read only the
+    /// 4-bracket `Cohort` (`Vertebrate`, `Aquatic`, `Insect`,
+    /// `Plant`). Initialised at founding by `configure_lifecycle_state`
+    /// from `species.lifecycle`; default is `None` for legacy
+    /// constructors that don't thread species in. Routed through
+    /// `step_for_lifecycle` in `capacity.rs` so a non-Vertebrate
+    /// species runs its real lifecycle's step in production rather
+    /// than the vertebrate 4-bracket step.
+    pub lifecycle_state: LifecycleState,
     /// Cohort-level observation summary. For each recognition
     /// template id, a running count of firings observed across the
     /// civ's lifetime. Cohort tracking is summary-only —

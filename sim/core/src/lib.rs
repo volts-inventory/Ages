@@ -668,6 +668,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         state.grid().width().saturating_mul(state.grid().height()),
                         species.cognition_topology,
                     );
+                    new_civ.configure_lifecycle_state(&species.lifecycle);
                     // Successor's territory sized to its own
                     // founding population, centred on its first
                     // figure's attention focus. Decoupled from
@@ -1089,6 +1090,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                             state.grid().width().saturating_mul(state.grid().height()),
                             species.cognition_topology,
                         );
+                        new_civ.configure_lifecycle_state(&species.lifecycle);
                         // Breakaway sized to its half-share of the
                         // parent's population; centred on the seized
                         // parent border cell (the rebellion seats itself
@@ -1955,6 +1957,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     state.grid().width().saturating_mul(state.grid().height()),
                     species.cognition_topology,
                 );
+                new_civ.configure_lifecycle_state(&species.lifecycle);
                 new_civ.territory_centroid = emerge_cell;
                 let target = target_cell_count(&new_civ, state.grid().n_cells());
                 // Emergent civ: forbid every active civ's claims so

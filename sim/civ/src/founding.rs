@@ -72,6 +72,7 @@ impl Civ {
             founded_tick,
             cohort,
             dynamics: sim_population::PopulationDynamics::earth_like_default(),
+            lifecycle_state: sim_population::LifecycleState::None,
             observations: BTreeMap::new(),
             intelligence,
             grammar,
@@ -200,6 +201,35 @@ impl Civ {
             figure
                 .hypothesizer
                 .set_falsification_trigger_ticks(falsification_ticks);
+        }
+    }
+
+    /// Initialise per-variant lifecycle state from the species'
+    /// `Lifecycle`. Seeds an empty caste roster for `Eusocial`,
+    /// zero biomass for `Microbial` / `Modular`, and
+    /// `LifecycleState::None` for the variants that read only the
+    /// 4-bracket cohort. The Eusocial caste roster is seeded with
+    /// the founder pop concentrated in the `Reproductive` caste;
+    /// sterile castes start at zero and the eusocial step routes
+    /// new births to the Reproductive caste (a future polish pass
+    /// can differentiate workers from new young). Idempotent —
+    /// safe to re-call when the species' lifecycle is known.
+    pub fn configure_lifecycle_state(&mut self, lifecycle: &sim_species::Lifecycle) {
+        use sim_arith::Pop;
+        use sim_population::LifecycleState;
+        self.lifecycle_state = LifecycleState::for_lifecycle(lifecycle);
+        match (&mut self.lifecycle_state, lifecycle) {
+            (LifecycleState::Eusocial(colony), sim_species::Lifecycle::Eusocial { .. }) => {
+                let founder = self.cohort.total();
+                colony
+                    .castes
+                    .insert(sim_species::CasteRole::Reproductive, founder);
+            }
+            (LifecycleState::Microbial(biomass), sim_species::Lifecycle::Microbial { .. })
+            | (LifecycleState::Modular(biomass), sim_species::Lifecycle::Modular) => {
+                *biomass = self.cohort.total().max(Pop::ZERO);
+            }
+            _ => {}
         }
     }
 
