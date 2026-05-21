@@ -430,6 +430,14 @@ pub fn integrate_civ_step(
     // doesn't escape this tick). `None` is a no-op for tests and
     // call sites that don't need atmospheric loss modelled.
     atmospheric_escape: Option<&crate::atmospheric_escape::PlanetEscapeParams>,
+    // Sprint 5 Item 15 / P0.2: Hadley / Ferrel / polar circulation
+    // cells. When provided, the orchestrator runs the angular-
+    // momentum jet kick once per macro-step after vertical
+    // convection (so the jets read coherent vertical-motion state)
+    // and before Coriolis would have re-deflected the result. The
+    // law no-ops on vacuum planets (its `has_atmosphere` flag is
+    // false) so call sites can pass `Some(&laws.hadley)` unconditionally.
+    hadley: Option<&crate::hadley::HadleyCirculation>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -634,6 +642,16 @@ pub fn integrate_civ_step(
         if let Some(v) = vertical {
             v.integrate(state, cfg.heat_dt);
         }
+        // Hadley / Ferrel / polar circulation cells (Sprint 5 Item 15
+        // / P0.2 wiring). Runs after vertical convection so the
+        // angular-momentum jet kick sees a coherent surface-vs-upper
+        // temperature gradient, and before clouds / EM so any
+        // downstream consumer of `(v_q, v_r)` reads the post-jet
+        // velocity. Vacuum planets short-circuit via the law's
+        // `has_atmosphere` flag.
+        if let Some(h) = hadley {
+            h.integrate(state, cfg.heat_dt);
+        }
         // Cloud microphysics (Sprint 5 Item 23). Runs after
         // vertical convection so the surface-vs-upper temperature
         // gap (the vertical-motion proxy clouds read) reflects
@@ -773,11 +791,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -830,7 +848,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);

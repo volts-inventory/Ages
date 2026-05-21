@@ -91,6 +91,11 @@ pub(crate) fn physics_phase<E: Emitter>(
         // between `Tides` and chemistry.
         Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
         Some(&laws.atmospheric_escape),
+        // P0.2: Hadley circulation. Built per-planet in `build_laws`
+        // via `HadleyCirculation::for_planet`; the orchestrator runs
+        // it after vertical convection so the jets spin up against
+        // a coherent surface-vs-upper temperature gradient.
+        Some(&laws.hadley),
     );
     Ok(prev_state_for_measurements)
 }

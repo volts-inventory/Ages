@@ -71,6 +71,16 @@ pub(crate) struct Laws {
     /// orchestrator can apply all four escape channels per
     /// macro-step without re-deriving them.
     pub atmospheric_escape: sim_physics::PlanetEscapeParams,
+    /// Sprint 5 Item 15 / P0.2: Hadley / Ferrel / polar circulation
+    /// cells. Pre-computed layout (`compute_hadley_layout`) plus the
+    /// `apply_hadley_circulation` step packaged as a `Law` so the
+    /// orchestrator can drop it into the macro-step pipeline. The
+    /// number of cells per hemisphere emerges from the planet's
+    /// rotation rate × radius via the Rossby deformation radius —
+    /// Earth-likes get three cells, slow rotators collapse to one,
+    /// rapid rotators get four-or-more. Vacuum planets short-circuit
+    /// via the law's `has_atmosphere` flag.
+    pub hadley: sim_physics::HadleyCirculation,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -307,6 +317,20 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // tuning can come later.
     let clouds = sim_physics::Clouds::earth_like();
 
+    // Hadley / Ferrel / polar circulation cells (Sprint 5 Item 15
+    // / P0.2). Layout emerges from rotation × radius via the Rossby
+    // deformation radius; the `apply_hadley_circulation` step inside
+    // `Law::integrate` reads the layout each macro-step and applies
+    // the angular-momentum-implied jet kick. Vacuum planets get
+    // `has_atmosphere = false` so the law no-ops on `Atmosphere::None`.
+    let hadley = sim_physics::HadleyCirculation::for_planet(
+        planet.day_length_hours,
+        planet.radius,
+        planet.gravity(),
+        i64::from(planet.atmosphere.scale_height_m()),
+        has_atmosphere,
+    );
+
     // Multi-channel atmospheric escape (Sprint 5 Item 17). Builds
     // the per-planet escape parameters from the sampled planet
     // properties: escape velocity from mass/radius, EUV / UV from
@@ -347,6 +371,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         moon_heating,
         planet_radius_earth_units,
         atmospheric_escape,
+        hadley,
     }
 }
 
