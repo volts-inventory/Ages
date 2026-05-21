@@ -29,7 +29,7 @@ pub struct Cell {
 /// `PhysicsState::substances`. The integer indices align with the
 /// `Substance` enum in `crate::chemistry`. Grows as new substances
 /// are authored — keep this in sync with the enum.
-pub const N_SUBSTANCES: usize = 7;
+pub const N_SUBSTANCES: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct PhysicsState {

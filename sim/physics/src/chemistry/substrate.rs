@@ -63,7 +63,7 @@ pub struct SolubilityProfile {
 /// Per-substrate dissolution table. Rough order-of-magnitude
 /// values keyed to the existing `Substance` enum
 /// (Water=0, Ice=1, Vapour=2, Fuel=3, Oxidiser=4, Ash=5,
-/// Fossil=6). Values are dimensionless propensities, not
+/// Fossil=6, CO2=7). Values are dimensionless propensities, not
 /// thermodynamic solubility constants — they parameterise how
 /// readily each substance enters the planet's solvent phase for
 /// the higher-level simulation, not Henry's-law equilibria.
@@ -80,23 +80,24 @@ pub fn solvent_solubility(substrate: &MetabolicSubstrate) -> SolubilityProfile {
         // represents the vapour-pressure-equilibrium leak), fuel
         // poorly (organics are mostly hydrophobic), oxidiser
         // appreciably (O2 dissolves), ash modestly, fossils very
-        // little (asphaltenes / kerogens are nearly insoluble).
-        MetabolicSubstrate::Aqueous => pct_arr([100, 0, 50, 5, 30, 40, 1]),
+        // little (asphaltenes / kerogens are nearly insoluble),
+        // CO2 appreciably (carbonic acid forms).
+        MetabolicSubstrate::Aqueous => pct_arr([100, 0, 50, 5, 30, 40, 1, 30]),
         // Liquid ammonia is moderately polar — dissolves water
         // (0.6, miscible with water in real chemistry) and a
         // moderate fraction of everything else (~0.3 baseline).
-        MetabolicSubstrate::Ammoniacal => pct_arr([60, 30, 30, 30, 30, 30, 30]),
+        MetabolicSubstrate::Ammoniacal => pct_arr([60, 30, 30, 30, 30, 30, 30, 30]),
         // Methane / ethane: nonpolar — dissolves fuel (organics)
         // very well (0.95), fossils well (0.8). Inorganic
         // substances barely dissolve (~0.05 baseline). Cryogenic
         // liquid hydrocarbon is a near-universal solvent for
         // organics and a near-universal non-solvent for
-        // everything else.
-        MetabolicSubstrate::Hydrocarbon => pct_arr([5, 5, 5, 95, 5, 5, 80]),
+        // everything else — including CO2.
+        MetabolicSubstrate::Hydrocarbon => pct_arr([5, 5, 5, 95, 5, 5, 80, 5]),
         // Molten silicate (magma): dissolves silicate minerals
         // (ash, ~0.4 — silicate analog) well; carries everything
         // else at ~0.1.
-        MetabolicSubstrate::Silicate => pct_arr([10, 10, 10, 10, 10, 40, 10]),
+        MetabolicSubstrate::Silicate => pct_arr([10, 10, 10, 10, 10, 40, 10, 10]),
     };
     let mut per_substance = [Real::ZERO; N_SUBSTANCES];
     let mut i = 0;

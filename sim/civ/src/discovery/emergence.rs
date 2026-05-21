@@ -327,6 +327,7 @@ fn field_label(field: Field) -> &'static str {
             sim_physics::Substance::Oxidiser => "oxidiser",
             sim_physics::Substance::Ash => "ash",
             sim_physics::Substance::Fossil => "fossil",
+            sim_physics::Substance::CO2 => "co2",
         },
         Field::MagneticMagnitude => "magnetic_magnitude",
         Field::WindMagnitude => "wind_magnitude",

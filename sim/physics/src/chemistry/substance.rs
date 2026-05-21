@@ -37,6 +37,17 @@ pub enum Substance {
     /// does not regenerate. The hydrocarbon-seep recognition template
     /// reads this directly to tag fossil-rich crust.
     Fossil = 6,
+    /// Atmospheric carbon dioxide — split out from `Vapour` so the
+    /// biogeochemical loop (Sprint 2 Item 6b) can move carbon between
+    /// the atmosphere and the biosphere independently of the water
+    /// cycle. Producers consume `CO2` proportional to their growth
+    /// (photosynthesis / chemosynthesis); consumers and decomposers
+    /// return `CO2` proportional to respiration + decomposition flux.
+    /// Combustion does **not** populate this channel — combustion's
+    /// gaseous byproduct stays bundled in `Ash` so the chemistry-only
+    /// mass-balance invariant (`2 fuel + 2 oxidiser → 2 ash`) is
+    /// preserved bit-for-bit. Biogeochem is the only mover of `CO2`.
+    CO2 = 7,
 }
 
 impl Substance {
@@ -47,4 +58,4 @@ impl Substance {
 
 /// Sanity check at compile time — `N_SUBSTANCES` must match the count
 /// of `Substance` variants currently authored.
-const _: () = assert!(N_SUBSTANCES == 7);
+const _: () = assert!(N_SUBSTANCES == 8);
