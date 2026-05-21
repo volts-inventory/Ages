@@ -219,6 +219,12 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // 0.90 so it sits just below tool / template discoveries
         // in the highlight reel.
         Event::SpeciesExtinct(_) => Some(0.90),
+        // HGT events are individually low-stakes — a single trait
+        // axis nudged 5% toward another microbe. The aggregate
+        // effect surfaces through downstream tolerance / dormancy
+        // shifts; the events themselves stay out of the highlight
+        // reel.
+        Event::HorizontalGeneTransfer(_) => None,
     }
 }
 

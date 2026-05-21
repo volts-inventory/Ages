@@ -198,6 +198,12 @@ pub enum Event {
     /// history / replay determinism but is skipped by subsequent
     /// ecosystem ticks.
     SpeciesExtinct(SpeciesExtinct),
+    /// Sprint 3 Item 11a — a horizontal-gene-transfer trial
+    /// succeeded between two co-located `Lifecycle::Microbial`
+    /// species. The recipient species' `trait_swapped` axis was
+    /// nudged a small fraction toward the donor's value. Emitted
+    /// in `(donor_id, recipient_id)`-sorted order per tick.
+    HorizontalGeneTransfer(HgtEvent),
     /// A relation almost crossed the inter-civ
     /// transmission gate but didn't quite — the comprehension
     /// score landed in the mythologization band so the relation's

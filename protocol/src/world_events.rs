@@ -243,6 +243,45 @@ pub struct SpeciesExtinct {
     pub cause: ExtinctionCause,
 }
 
+/// Per-trait identifier for the trait actually swapped by a
+/// `HorizontalGeneTransfer` event. Sprint 3 Item 11a swaps one of
+/// these four scalar trait axes between two co-located Microbial
+/// species per HGT trial. Extensible — additional axes can be
+/// appended without breaking the wire schema, since the variants
+/// are serialised as snake-case strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TraitName {
+    /// `Species::dormancy_capability` — tardigrade-grade dormancy
+    /// scalar in `[0, 1]`.
+    DormancyCapability,
+    /// `Species::tolerance.temp_range.0` — low end of the
+    /// temperature tolerance envelope.
+    TemperatureToleranceLow,
+    /// `Species::tolerance.temp_range.1` — high end of the
+    /// temperature tolerance envelope.
+    TemperatureToleranceHigh,
+    /// `Species::tolerance.radiation_max` — radiation-tolerance
+    /// ceiling.
+    RadiationMax,
+}
+
+/// Sprint 3 Item 11a — a horizontal-gene-transfer trial succeeded
+/// between two co-located `Lifecycle::Microbial` species. The
+/// recipient's `trait_swapped` axis was nudged toward the donor's
+/// value by a small fraction (the step does
+/// `recipient = recipient × 0.95 + donor × 0.05`). The species
+/// records keep the swap; this event carries the audit trail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HgtEvent {
+    pub tick: u64,
+    /// Donor species' dense per-planet id (`SpeciesId.0`).
+    pub donor_id: u32,
+    /// Recipient species' dense per-planet id (`SpeciesId.0`).
+    pub recipient_id: u32,
+    pub trait_swapped: TraitName,
+}
+
 /// Snapshot of the species' nomadic population per cell.
 /// Emitted on tick boundaries when the nomad pool's per-cell
 /// distribution changes meaningfully (births, civ absorption,
