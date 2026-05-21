@@ -66,6 +66,10 @@ impl Civ {
         };
         let mut cohort = stateless_cohort;
         cohort.civ_membership = Some(new_id);
+        // P1.3 — snapshot the founding cohort total before moving
+        // it into the struct literal so the dormant-pool resurrection
+        // cap is seeded against the right anchor.
+        let founding_total = cohort.total();
         Self {
             id: new_id,
             name: String::new(),
@@ -146,6 +150,12 @@ impl Civ {
             initial_producer_biomass: Real::ONE,
             ecological_resilience: Real::ONE,
             last_emitted_resilience: Real::ONE,
+            // P1.3 — refound civs start with a fresh dormant pool;
+            // a successor isn't carrying the parent's cryptobiotic
+            // reservoir. Anchor at the inherited stateless cohort's
+            // total so the recovery cap matches the founding cohort.
+            dormant_pool: sim_species::DormantPool::EMPTY,
+            pre_catastrophe_population: founding_total,
         }
     }
 
