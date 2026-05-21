@@ -8,7 +8,7 @@ use sim_arith::Real;
 use sim_physics::{
     chemistry::Chemistry, em::Electromagnetism, fluid::GravityFlow, heat::HeatConduction, Mechanics,
 };
-use sim_world::Atmosphere;
+use sim_world::{Atmosphere, Magnetosphere};
 
 /// All physics laws built for the run, bundled into one struct so
 /// the tick loop and per-phase helpers thread a single reference
@@ -63,6 +63,14 @@ pub(crate) struct Laws {
     /// than fetched from `planet.radius` at call time so the
     /// orchestrator's surface stays planet-agnostic.
     pub planet_radius_earth_units: Real,
+    /// Sprint 5 Item 17: multi-channel atmospheric escape
+    /// parameters (Jeans, hydrodynamic, photochemical, ion).
+    /// Derived from the sampled planet's escape velocity, the
+    /// host star's EUV / UV SED channels, and the planet's
+    /// magnetosphere class — bundled in a single struct so the
+    /// orchestrator can apply all four escape channels per
+    /// macro-step without re-deriving them.
+    pub atmospheric_escape: sim_physics::PlanetEscapeParams,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -299,6 +307,24 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // tuning can come later.
     let clouds = sim_physics::Clouds::earth_like();
 
+    // Multi-channel atmospheric escape (Sprint 5 Item 17). Builds
+    // the per-planet escape parameters from the sampled planet
+    // properties: escape velocity from mass/radius, EUV / UV from
+    // the host star's SED, magnetic strength from the magnetosphere
+    // class. The orchestrator applies the four channels (Jeans,
+    // hydrodynamic, photochemical, ion) once per macro-step after
+    // chemistry.
+    let atmospheric_escape = sim_physics::PlanetEscapeParams {
+        escape_velocity_km_s: planet.escape_velocity(),
+        euv_flux_w_m2: planet.star.euv_flux,
+        uv_flux_w_m2: planet.star.uv_flux,
+        magnetic_strength: match planet.magnetosphere {
+            Magnetosphere::None => Real::ZERO,
+            Magnetosphere::Weak => Real::ONE,
+            Magnetosphere::Strong => Real::from_int(3),
+        },
+    };
+
     Laws {
         fluid,
         heat,
@@ -320,6 +346,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         clouds,
         moon_heating,
         planet_radius_earth_units,
+        atmospheric_escape,
     }
 }
 

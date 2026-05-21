@@ -11,6 +11,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod albedo;
+pub mod atmospheric_escape;
 pub mod chemistry;
 pub mod clouds;
 pub mod coriolis;
@@ -40,6 +41,10 @@ pub mod wind;
 pub use albedo::{
     albedo_radiation_factor, base_albedo_for, effective_albedo_for, effective_albedo_slice,
     sigmoid_real, IceAlbedo,
+};
+pub use atmospheric_escape::{
+    atmospheric_escape_step, escape_rate_for, jeans_factor, EscapeChannels, PlanetEscapeParams,
+    ATMOSPHERIC_SUBSTANCES,
 };
 pub use chemistry::{Chemistry, Substance};
 pub use clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType, Clouds};

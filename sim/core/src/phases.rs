@@ -90,6 +90,7 @@ pub(crate) fn physics_phase<E: Emitter>(
         // the orchestrator calls `apply_tidal_heating` per macro-step
         // between `Tides` and chemistry.
         Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
+        Some(&laws.atmospheric_escape),
     );
     Ok(prev_state_for_measurements)
 }
