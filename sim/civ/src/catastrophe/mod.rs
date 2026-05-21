@@ -16,6 +16,7 @@ use crate::cosmology::Cosmology;
 use crate::Civ;
 use sim_arith::{Pop, Real};
 use sim_physics::{PhysicsState, Substance};
+use sim_species::{apply_catastrophe_with_dormancy, Species};
 use sim_world::Planet;
 
 use triggers::{asteroid_fires, disease_fires, ice_age_fires, solar_flare_fires, volcanic_fires};
@@ -72,6 +73,34 @@ pub struct CatastropheRecord {
     pub fraction_lost: Real,
 }
 
+/// Per-catastrophe severity factor ∈ [0, 1] for the dormancy
+/// damage-reduction formula. Sprint 2 Item 7b pins this at 1.0
+/// (full-severity catastrophes) for all five kinds; a future
+/// polish pass can expose a per-kind table if a follow-up wants
+/// shallow events to bypass dormancy benefit. Centralised here so
+/// the constant lives in one place.
+const DORMANCY_SEVERITY_FACTOR: Real = Real::ONE;
+
+/// Wrap `apply_catastrophe_with_dormancy` with the per-civ
+/// existing `apply_catastrophe_resistance` (tools soften the
+/// blow) then the per-species dormancy reduction (tardigrade-
+/// grade species shrug off catastrophes). Tools-first preserves
+/// the existing behaviour: the catastrophe-resistance test fixture
+/// is unaffected by dormancy because the fixture's species has
+/// `dormancy = 0`.
+fn apply_resistance_and_dormancy(
+    civ: &Civ,
+    species: &Species,
+    raw_frac: Real,
+) -> Real {
+    let after_tools = civ.apply_catastrophe_resistance(raw_frac);
+    apply_catastrophe_with_dormancy(
+        species.dormancy_capability,
+        after_tools,
+        DORMANCY_SEVERITY_FACTOR,
+    )
+}
+
 /// Per-tick catastrophe check. Mutates the civ (cohort + last_*
 /// timestamps) and the physics state (volcanic resets a cell).
 /// Returns the record so the caller can emit `CatastropheFired`
@@ -81,6 +110,7 @@ pub fn check_and_apply(
     civ: &mut Civ,
     state: &mut PhysicsState,
     planet: &Planet,
+    species: &Species,
     tick: u64,
 ) -> Option<CatastropheRecord> {
     if !civ.is_active() {
@@ -113,7 +143,7 @@ pub fn check_and_apply(
             // PermanentMasonry / DefensiveFortification
             // soften the blow via apply_catastrophe_resistance.
             let raw_frac = Real::from(VOLCANIC_POP_LOSS);
-            let frac = civ.apply_catastrophe_resistance(raw_frac);
+            let frac = apply_resistance_and_dormancy(civ, species, raw_frac);
             let cell_u32 = u32::try_from(cell).unwrap_or(u32::MAX);
             let lost_in_region = civ.drop_cell_pop(cell_u32, frac);
             // For civs without claimed_cells (legacy / tests),
@@ -156,7 +186,7 @@ pub fn check_and_apply(
         // resistance effect for healthcare-bearing civs.
         let base_frac = Real::from(DISEASE_POP_LOSS);
         let severity_frac = base_frac * disease_severity_factor(planet.biosphere);
-        let frac = civ.apply_catastrophe_resistance(severity_frac);
+        let frac = apply_resistance_and_dormancy(civ, species, severity_frac);
         let center_frac = frac * Real::from_int(2);
         let neighbor_frac = frac;
         let grid_w = state.grid().width();
@@ -210,7 +240,7 @@ pub fn check_and_apply(
         // aftermath. : catastrophe-resistance tools soften
         // the absolute loss (built shelter survives debris).
         let raw_frac = Real::from(ASTEROID_POP_LOSS);
-        let frac = civ.apply_catastrophe_resistance(raw_frac);
+        let frac = apply_resistance_and_dormancy(civ, species, raw_frac);
         let center_frac = frac * Real::from_int(2);
         let neighbor_frac = frac / Real::from_int(2);
         let grid_w = state.grid().width();
@@ -260,7 +290,7 @@ pub fn check_and_apply(
         // (advanced shielding / underground habitats / radiation
         // medicine).
         let raw_frac = Real::from(SOLAR_FLARE_POP_LOSS);
-        let frac = civ.apply_catastrophe_resistance(raw_frac);
+        let frac = apply_resistance_and_dormancy(civ, species, raw_frac);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
@@ -295,7 +325,7 @@ pub fn check_and_apply(
         let base_frac = Real::from(ICE_AGE_POP_LOSS);
         let severity_frac =
             (base_frac * ice_age_severity_factor(planet.mean_temperature)).min(Real::percent(60));
-        let frac = civ.apply_catastrophe_resistance(severity_frac);
+        let frac = apply_resistance_and_dormancy(civ, species, severity_frac);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
@@ -322,7 +352,27 @@ pub fn check_and_apply(
 mod tests {
     use super::*;
     use sim_physics::HexGrid;
-    use sim_world::Magnetosphere;
+    use sim_recognition::RecognitionLibrary;
+    use sim_world::{sample_planet, Magnetosphere};
+
+    /// Default test species — `dormancy_capability = 0` so all
+    /// existing pre-Sprint-2-Item-7b catastrophe assertions still
+    /// hold (no damage-reduction multiplier). Dormancy-specific
+    /// tests below construct their own species with explicit
+    /// `dormancy_capability`.
+    fn test_species() -> Species {
+        let planet = sample_planet(1);
+        let lib = RecognitionLibrary::earth_like_default();
+        let mut s = sim_species::derive(&planet, &lib);
+        s.dormancy_capability = Real::ZERO;
+        s
+    }
+
+    fn species_with_dormancy(dormancy: Real) -> Species {
+        let mut s = test_species();
+        s.dormancy_capability = dormancy;
+        s
+    }
 
     fn empty_state() -> PhysicsState {
         PhysicsState::new(HexGrid::new(4, 4))
@@ -379,7 +429,13 @@ mod tests {
     fn no_catastrophe_on_quiet_state() {
         let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let mut state = well_fed_state();
-        let r = check_and_apply(&mut civ, &mut state, &earth_like_planet(), 100);
+        let r = check_and_apply(
+            &mut civ,
+            &mut state,
+            &earth_like_planet(),
+            &test_species(),
+            100,
+        );
         assert!(r.is_none());
     }
 
@@ -389,7 +445,13 @@ mod tests {
         let mut state = well_fed_state();
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
-        let r = check_and_apply(&mut civ, &mut state, &earth_like_planet(), 50);
+        let r = check_and_apply(
+            &mut civ,
+            &mut state,
+            &earth_like_planet(),
+            &test_species(),
+            50,
+        );
         let rec = r.expect("volcanic should fire");
         assert_eq!(rec.kind, CatastropheKind::Volcanic);
         // Cell 0 fuel reset, temperature dropped, civ pop dropped.
@@ -408,7 +470,8 @@ mod tests {
         let mut state = well_fed_state();
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
-        check_and_apply(&mut civ, &mut state, &earth_like_planet(), 0);
+        let sp = test_species();
+        check_and_apply(&mut civ, &mut state, &earth_like_planet(), &sp, 0);
         // Re-set the trigger (in case the apply zeroed something).
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
@@ -417,6 +480,7 @@ mod tests {
             &mut civ,
             &mut state,
             &earth_like_planet(),
+            &sp,
             VOLCANIC_COOLDOWN_TICKS / 2,
         );
         assert!(r.is_none());
@@ -427,6 +491,7 @@ mod tests {
             &mut civ,
             &mut state,
             &earth_like_planet(),
+            &sp,
             VOLCANIC_COOLDOWN_TICKS + 50,
         );
         assert!(r.is_some());
@@ -445,6 +510,7 @@ mod tests {
             &mut civ,
             &mut state,
             &earth_like_planet(),
+            &test_species(),
             DISEASE_AGE_FLOOR_TICKS,
         );
         let rec = r.expect("disease should fire");
@@ -463,8 +529,69 @@ mod tests {
             &mut civ,
             &mut state,
             &earth_like_planet(),
+            &test_species(),
             DISEASE_AGE_FLOOR_TICKS - 1,
         );
         assert!(r.is_none());
+    }
+
+    /// Sprint 2 Item 7b spec test #1.
+    ///
+    /// Species with `dormancy = 0.9` takes ~10× less damage than
+    /// `dormancy = 0` from the same catastrophe. We exercise the
+    /// disease pathway because its fixture is the most stable:
+    /// known-firing trigger, no per-civ-shelter to confound the
+    /// loss math. The two civs are identical apart from the
+    /// species' dormancy trait.
+    #[test]
+    fn dormant_species_survives_catastrophe_at_reduced_rate() {
+        let baseline_pop = Pop::from_int(50);
+        let dormancy_high = Real::percent(90);
+
+        // Baseline run — dormancy = 0.
+        let mut civ_low = Civ::new(1, 0, baseline_pop);
+        let mut state_low = empty_state();
+        state_low.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
+        let rec_low = check_and_apply(
+            &mut civ_low,
+            &mut state_low,
+            &earth_like_planet(),
+            &species_with_dormancy(Real::ZERO),
+            DISEASE_AGE_FLOOR_TICKS,
+        )
+        .expect("baseline disease should fire");
+
+        // Dormant run — dormancy = 0.9, otherwise identical.
+        let mut civ_high = Civ::new(1, 0, baseline_pop);
+        let mut state_high = empty_state();
+        state_high.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
+        let rec_high = check_and_apply(
+            &mut civ_high,
+            &mut state_high,
+            &earth_like_planet(),
+            &species_with_dormancy(dormancy_high),
+            DISEASE_AGE_FLOOR_TICKS,
+        )
+        .expect("dormant disease should fire");
+
+        // Both should be the same `kind` (disease) — the dormancy
+        // multiplier only shrinks fraction_lost, not the trigger.
+        assert_eq!(rec_low.kind, CatastropheKind::Disease);
+        assert_eq!(rec_high.kind, CatastropheKind::Disease);
+
+        // Effective fraction should be ~10× smaller. Allow a small
+        // tolerance because both also pass through
+        // `apply_catastrophe_resistance` (which is 1.0 at zero
+        // tools) — the ratio is exactly
+        // `(1 - 0.9 × 1.0) / (1 - 0 × 1.0) = 0.10`.
+        let ratio = rec_high.fraction_lost / rec_low.fraction_lost;
+        // ~0.10 ± 1% — Q32.32 is exact for these magnitudes; the
+        // tolerance only protects against incidental future
+        // resistance bumps that future code paths might apply
+        // uniformly to both.
+        assert!(
+            ratio <= Real::percent(11) && ratio >= Real::percent(9),
+            "expected ~0.10× damage with dormancy=0.9, got ratio={ratio:?}",
+        );
     }
 }

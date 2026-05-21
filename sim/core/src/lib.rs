@@ -506,7 +506,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         let mut cat_events: Vec<(u32, catastrophe::CatastropheRecord)> = Vec::new();
         for civ in civs.iter_mut().filter(|c| c.is_active()) {
             let civ_id = civ.id;
-            if let Some(rec) = catastrophe::check_and_apply(civ, &mut state, &planet, tick) {
+            if let Some(rec) = catastrophe::check_and_apply(civ, &mut state, &planet, &species, tick) {
                 // M7: bump the civ's selection bias from the
                 // catastrophe's per-kind weights so survivors'
                 // trait distribution shifts toward the survival-
