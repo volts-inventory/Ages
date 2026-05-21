@@ -26,6 +26,7 @@ pub(crate) struct Laws {
     pub lorentz: sim_physics::Lorentz,
     pub coriolis: sim_physics::Coriolis,
     pub vertical: sim_physics::VerticalConvection,
+    pub weathering: sim_physics::Weathering,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -199,6 +200,13 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // atmosphere. Maintains a real lapse rate per cell.
     let vertical = sim_physics::VerticalConvection::earth_like();
 
+    // Carbon-silicate weathering thermostat. CO2 consumption
+    // accelerates with temperature + precipitation; balances
+    // Sprint 4's volcanism CO2 source so atmospheric CO2 (and
+    // through the greenhouse effect, surface T) holds at a
+    // habitable equilibrium instead of drifting toward Venus.
+    let weathering = sim_physics::Weathering::earth_like();
+
     Laws {
         fluid,
         heat,
@@ -212,6 +220,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         lorentz,
         coriolis,
         vertical,
+        weathering,
     }
 }
 

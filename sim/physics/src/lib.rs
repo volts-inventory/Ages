@@ -27,6 +27,7 @@ pub mod radiation;
 pub mod state;
 pub mod tides;
 pub mod vertical;
+pub mod weathering;
 pub mod wind;
 
 pub use chemistry::{Chemistry, Substance};
@@ -45,4 +46,5 @@ pub use radiation::Radiation;
 pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tides::{MoonTide, Tides};
 pub use vertical::VerticalConvection;
+pub use weathering::Weathering;
 pub use wind::Wind;
