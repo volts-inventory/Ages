@@ -798,6 +798,23 @@ impl Law for Tectonics {
                 state.elevation_mut().copy_from_slice(&elevation_out);
             }
         }
+
+        // ---- Airy isostasy (Sprint 4 Item 12c). ----
+        //
+        // Re-balance surface elevation against the post-tectonic /
+        // post-erosion / post-subduction crust thickness so a
+        // thickened column (convergent uplift) lifts and a thinned
+        // column (subduction consumption) sinks. The pass is a
+        // no-op when nothing changed since the previous one — see
+        // `isostasy::apply_isostasy` docs for the lazy-bake +
+        // delta-form details.
+        //
+        // Runs *after* every other tectonic sub-step so external
+        // elevation deltas (convergent kick, erosion redistribution,
+        // subduction clamp-to-zero) flow into the isostatic baseline
+        // this pass — they pass through unchanged while thickness
+        // changes get scaled by the Airy lift coefficient.
+        crate::isostasy::apply_isostasy(state);
     }
 }
 
