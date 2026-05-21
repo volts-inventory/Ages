@@ -314,6 +314,7 @@ dependencies = [
 name = "sim-ecosystem"
 version = "0.0.1"
 dependencies = [
+ "protocol",
  "rand",
  "rand_chacha",
  "sim-arith",

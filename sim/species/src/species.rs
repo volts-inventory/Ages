@@ -154,6 +154,15 @@ pub struct Species {
     /// hundreds of ticks (see `DormantPool::resurrect_step`).
     /// Sprint 2 Item 7b.
     pub dormancy_capability: Real,
+    /// True iff the species is still alive in the run. The
+    /// extinction rule (Sprint 2 Item 6a) flips this off when a
+    /// species' biomass / population pool stays below
+    /// `EXTINCTION_THRESHOLD` for `EXTINCTION_CONFIRMATION_TICKS`
+    /// in a row; the record stays in the per-planet registry for
+    /// history / replay determinism but is skipped by the
+    /// ecosystem step. Defaults to `true` for back-compat with
+    /// every existing literal `Species { ... }` construction.
+    pub is_extant: bool,
 }
 
 impl Species {

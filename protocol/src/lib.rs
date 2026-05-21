@@ -190,6 +190,14 @@ pub enum Event {
     /// which dissolution rule fired (drift, war misalignment, or
     /// trust erosion).
     AllianceDissolved(AllianceDissolved),
+    /// Sprint 2 Item 6a — the ecosystem step flagged a species
+    /// extinct after its biomass / population pool stayed below
+    /// `EXTINCTION_THRESHOLD` for
+    /// `EXTINCTION_CONFIRMATION_TICKS` consecutive ticks. The
+    /// species record stays in the per-planet registry for
+    /// history / replay determinism but is skipped by subsequent
+    /// ecosystem ticks.
+    SpeciesExtinct(SpeciesExtinct),
     /// A relation almost crossed the inter-civ
     /// transmission gate but didn't quite — the comprehension
     /// score landed in the mythologization band so the relation's
