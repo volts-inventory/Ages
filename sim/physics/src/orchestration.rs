@@ -411,6 +411,7 @@ pub fn integrate_civ_step(
     ice_albedo: Option<&crate::albedo::IceAlbedo>,
     tectonics: Option<&crate::tectonics::Tectonics>,
     volcanism: Option<&crate::volcanism::Volcanism>,
+    magnetic_reversal: Option<&crate::magnetism::MagneticReversal>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -619,6 +620,17 @@ pub fn integrate_civ_step(
         if let Some(l) = lorentz {
             l.integrate(state, cfg.em_dt);
         }
+        // Geomagnetic reversal Markov chain (Sprint 5 Item 20).
+        // Runs after Magnetism + Lorentz so any law in the same
+        // macro-step reads a coherent dipole envelope. The
+        // reversal law mutates the per-planet `dipole_state` /
+        // `dipole_strength` envelope, not the per-cell vector
+        // field directly; downstream couplings (cosmic-ray flux
+        // multiplier on species mutation, ion-channel escape)
+        // read the envelope via `state.cosmic_ray_ground_flux()`.
+        if let Some(mr) = magnetic_reversal {
+            mr.integrate(state, cfg.em_dt);
+        }
         if macro_step % chem_period == 0 {
             // Conservation invariant: combustion (1 fuel + 1
             // oxidiser → 2 ash), biofuel regrowth (2 ash → 1
@@ -701,11 +713,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -758,7 +770,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);

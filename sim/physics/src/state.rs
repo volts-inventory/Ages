@@ -11,6 +11,7 @@
 //! sub-step. M1b adds charge and per-substance density vectors.
 
 use crate::grid::{CellId, HexGrid};
+use crate::magnetism::DipoleState;
 use sim_arith::Real;
 
 /// A view of a single cell's M1a state. Returned by lookups; not the
@@ -175,6 +176,38 @@ pub struct PhysicsState {
     /// separated from isostasy-induced changes. Empty until the
     /// first `apply_isostasy` pass bakes it.
     last_thickness: Vec<Real>,
+    /// Geomagnetic dipole state machine (Sprint 5 Item 20). A
+    /// Markov chain over `{Normal, Reversing, Reversed}`: from a
+    /// stable polarity the law trials a rare reversal event each
+    /// tick; once started, the reversal completes after a fixed
+    /// window (`reversal_duration_ticks`) and flips the stable
+    /// polarity. The state itself doesn't affect the per-cell
+    /// `(B_q, B_r, B_z)` vector field directly — it scales the
+    /// `dipole_strength` envelope below, which the `Magnetism`
+    /// law could read on a future refactor to weaken the per-
+    /// cell vectors during the reversal window.
+    dipole_state: DipoleState,
+    /// Envelope multiplier on the per-cell magnetic field
+    /// strength (Sprint 5 Item 20). 1.0 = full strength (stable
+    /// polarity); during a reversal this decays linearly to a
+    /// floor (~0.1) at the midpoint of the reversal window and
+    /// ramps back up as the new polarity locks in. Read by
+    /// `cosmic_ray_ground_flux()` for the inverse-coupling
+    /// accessor; a future refactor can also scale the per-cell
+    /// vectors in `Magnetism::integrate` by this value to make
+    /// the weakening visible to recognition templates.
+    dipole_strength: Real,
+    /// Tick at which the *current* reversal began (Sprint 5 Item
+    /// 20). `None` when the dipole sits in a stable state
+    /// (`Normal` or `Reversed`). Set on the trial-success
+    /// transition; cleared on the reversal-complete transition.
+    reversal_start_tick: Option<u64>,
+    /// Tick at which the previous reversal *completed* (Sprint
+    /// 5 Item 20). Used by diagnostics and any future law that
+    /// wants to gate on "time since last polarity flip" (e.g.
+    /// post-reversal cosmic-ray-driven mutation pulses). `0`
+    /// before the first reversal of a run.
+    last_reversal_tick: u64,
 }
 
 impl PhysicsState {
@@ -223,6 +256,14 @@ impl PhysicsState {
             // isostatic baseline.
             h_base: Vec::new(),
             last_thickness: Vec::new(),
+            // Sprint 5 Item 20: fresh planet starts on Normal
+            // polarity at full dipole strength with no in-flight
+            // reversal. `last_reversal_tick` stays 0 until the
+            // first reversal completes.
+            dipole_state: DipoleState::Normal,
+            dipole_strength: Real::ONE,
+            reversal_start_tick: None,
+            last_reversal_tick: 0,
             grid,
         }
     }
@@ -571,6 +612,85 @@ impl PhysicsState {
     /// by Item 12d volcanism to drain it once that law lands.
     pub fn subducted_mass_mut(&mut self) -> &mut Real {
         &mut self.subducted_mass
+    }
+
+    /// Current geomagnetic dipole state (Sprint 5 Item 20). One of
+    /// `Normal`, `Reversing`, `Reversed`. Mutated by
+    /// `MagneticReversal::integrate`.
+    #[must_use]
+    pub fn dipole_state(&self) -> DipoleState {
+        self.dipole_state
+    }
+
+    /// Mutable accessor for the dipole state. Only the
+    /// `MagneticReversal` law and tests forcing a known polarity
+    /// should touch this.
+    pub fn dipole_state_mut(&mut self) -> &mut DipoleState {
+        &mut self.dipole_state
+    }
+
+    /// Per-planet envelope multiplier on the magnetic field
+    /// strength (Sprint 5 Item 20). 1.0 in stable states; decays
+    /// to a floor (~0.1) at the midpoint of a reversal window and
+    /// ramps back up. Read by `cosmic_ray_ground_flux()`.
+    #[must_use]
+    pub fn dipole_strength(&self) -> Real {
+        self.dipole_strength
+    }
+
+    /// Mutable accessor for the dipole-strength envelope. Same
+    /// isolation rationale as `dipole_state_mut` — only the
+    /// reversal law writes through this path.
+    pub fn dipole_strength_mut(&mut self) -> &mut Real {
+        &mut self.dipole_strength
+    }
+
+    /// Tick the *current* reversal began at, or `None` when the
+    /// dipole sits in a stable polarity (Sprint 5 Item 20).
+    #[must_use]
+    pub fn reversal_start_tick(&self) -> Option<u64> {
+        self.reversal_start_tick
+    }
+
+    /// Mutable accessor for `reversal_start_tick`. Written by the
+    /// reversal law on the trial-success edge and cleared on the
+    /// reversal-complete edge.
+    pub fn reversal_start_tick_mut(&mut self) -> &mut Option<u64> {
+        &mut self.reversal_start_tick
+    }
+
+    /// Tick at which the *previous* reversal completed (Sprint 5
+    /// Item 20). `0` before the first reversal of a run. Diagnostics
+    /// and tests can use the gap between successive values to
+    /// estimate the realised inter-reversal period.
+    #[must_use]
+    pub fn last_reversal_tick(&self) -> u64 {
+        self.last_reversal_tick
+    }
+
+    /// Mutable accessor for `last_reversal_tick`. Written by the
+    /// reversal law when a reversal window closes.
+    pub fn last_reversal_tick_mut(&mut self) -> &mut u64 {
+        &mut self.last_reversal_tick
+    }
+
+    /// Cosmic-ray ground flux multiplier (Sprint 5 Item 20).
+    /// Inverse-coupled to `dipole_strength`: a strong dipole
+    /// shields the surface (low flux), a weak / vanishing
+    /// dipole during a reversal lets cosmic rays through
+    /// (high flux). Functional form: `1 / (strength + 0.1)`.
+    /// The `+ 0.1` floor keeps the multiplier finite when the
+    /// dipole drops to zero mid-reversal. At `strength = 1` the
+    /// multiplier is `1 / 1.1 ≈ 0.91`; at `strength = 0.1` it is
+    /// `1 / 0.2 = 5.0` — a ~5× surface-flux amplification during
+    /// the deepest part of a reversal window.
+    ///
+    /// Read by Item 11 (species drift) for mutation-rate
+    /// coupling and by Item 17 (atmospheric escape) for ion-
+    /// channel modulation; pure accessor with no side effects.
+    #[must_use]
+    pub fn cosmic_ray_ground_flux(&self) -> Real {
+        Real::ONE / (self.dipole_strength + Real::from_ratio(1, 10))
     }
 }
 
