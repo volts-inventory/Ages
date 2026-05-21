@@ -341,7 +341,7 @@ mod tests {
             manipulation_modes: Vec::new(),
             perceivable_templates: BTreeSet::new(),
             t0_loss: Real::from_ratio(1, 10),
-            cognition_topology: CognitionTopology::Distributed,
+            cognition_topology: CognitionTopology::DistributedRedundant,
             habitat: Habitat::Aquatic,
             discovered_templates: BTreeMap::new(),
             next_discovered_template_id: 1000,
