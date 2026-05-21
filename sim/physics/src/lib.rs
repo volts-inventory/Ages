@@ -30,6 +30,7 @@ pub mod orchestration;
 pub mod radiation;
 pub mod state;
 pub mod tectonics;
+pub mod tidal_heating;
 pub mod tides;
 pub mod vertical;
 pub mod volcanism;
@@ -61,6 +62,10 @@ pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorSta
 pub use radiation::Radiation;
 pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tectonics::{CrustType, Plate, Tectonics};
+pub use tidal_heating::{
+    apply_tidal_heating, distribute_heat_to_cells, k2_over_q_icy, k2_over_q_rocky,
+    love_number_rocky, moon_tidal_heat_rate, q_factor_icy, q_factor_rocky, MoonHeating,
+};
 pub use tides::{MoonTide, Tides};
 pub use vertical::VerticalConvection;
 pub use volcanism::{Volcanism, VolcanismEmission};
