@@ -51,11 +51,16 @@
 //!
 //! `omega.0 / .1 / .2` on the law are the planetary rotation
 //! magnitudes about the (x, y, z) world axes. For a planet whose
-//! spin axis is the local-z axis (the usual case) only
+//! spin axis is exactly the world-z axis (zero axial tilt) only
 //! `omega.2` is nonzero — but per-cell components `Ω_y` and
-//! `Ω_z` are still derived from it by `cos(φ)` / `sin(φ)`. The
-//! `omega.0` slot is reserved for tilted-axis worlds where the
-//! spin vector carries a permanent zonal component.
+//! `Ω_z` are still derived from it by `cos(φ)` / `sin(φ)`. P1.6
+//! decomposes `|Ω|` across the world (x, z) axes by the planet's
+//! axial tilt: `omega.0 = |Ω| · sin(tilt)` carries the
+//! equatorial-plane component for tilted-axis worlds and
+//! `omega.2 = |Ω| · cos(tilt)` is the reduced pole-aligned
+//! component. `omega.1` stays zero in the canonical reference
+//! frame (the tilt is fully described by the x and z
+//! components).
 //!
 //! ## Coupling to vertical convection
 //!
@@ -78,9 +83,11 @@ use sim_arith::Real;
 /// Planetary rotation 3-vector. Components are about the world
 /// (x, y, z) axes; per-cell local-frame components are derived
 /// from `omega.2` by latitude (`Ω_y_local = omega.2 · cos(φ)`,
-/// `Ω_z_local = omega.2 · sin(φ)`). `omega.0` carries any
-/// permanent zonal-axis component (tilted-axis worlds); `omega.1`
-/// is reserved for future use and zero on Earth-like planets.
+/// `Ω_z_local = omega.2 · sin(φ)`). `omega.0` carries the
+/// equatorial-plane component for tilted-axis worlds
+/// (`|Ω| · sin(tilt)`); `omega.1` is zero in the canonical
+/// reference frame (a non-zero tilt is fully captured by the
+/// (x, z) pair).
 #[derive(Debug, Clone, Copy)]
 pub struct Coriolis {
     /// Planetary rotation rate vector `(Ω_x, Ω_y, Ω_z)` at the
@@ -90,8 +97,14 @@ pub struct Coriolis {
     /// here in the same way the previous scalar `coriolis_k`
     /// was. Earth-like default has `omega = (0, 0, 0.001)`:
     /// only `omega.2` is nonzero because the spin axis points
-    /// out of the cylinder. Per-cell `Ω_y` / `Ω_z` are derived
-    /// from `omega.2` by `cos(φ)` / `sin(φ)`.
+    /// out of the cylinder (zero-tilt default). For tilted-axis
+    /// worlds (`Coriolis::for_planet` with non-zero
+    /// `axial_tilt_deg`) `|Ω|` distributes across the (x, z)
+    /// pair: `omega.0 = |Ω| · sin(tilt)` and
+    /// `omega.2 = |Ω| · cos(tilt)`. Per-cell `Ω_y` / `Ω_z` are
+    /// then derived from `omega.2` by `cos(φ)` / `sin(φ)`;
+    /// `omega.0` enters the cross-product directly as a
+    /// latitude-independent zonal bias.
     pub omega: (Real, Real, Real),
     /// Vacuum guard. `false` for `Atmosphere::None` —
     /// no medium means no fluid for Coriolis to deflect. The
@@ -112,16 +125,32 @@ impl Coriolis {
         }
     }
 
-    /// Build from a planet's rotation rate. For now we
-    /// derive a single multiplicative scale from the day-length
-    /// (faster spinners → stronger Coriolis); the actual
-    /// `omega.2` is the product of a base coefficient and
-    /// `24 / day_length_hours` so an Earth-day planet gets the
-    /// default `0.001`, a 12-hour planet gets 2× that, and a
-    /// 48-hour planet gets half. `omega.0` and `omega.1` stay
-    /// zero (axis-aligned with local-z).
+    /// Build from a planet's rotation rate and axial tilt.
+    ///
+    /// The omega *magnitude* is derived from day-length as before
+    /// (faster spinners → larger |Ω|); an Earth-day planet gets
+    /// `|Ω| = 0.001`, a 12-hour planet gets 2× that, a 48-hour
+    /// planet gets half. P1.6 then decomposes that magnitude
+    /// across the world (x, z) axes by the planet's axial tilt:
+    ///
+    /// ```text
+    ///   omega.0 = |Ω| · sin(tilt_rad)   // equatorial-plane component
+    ///   omega.1 = 0                     // reserved (canonical frame)
+    ///   omega.2 = |Ω| · cos(tilt_rad)   // pole-aligned component
+    /// ```
+    ///
+    /// At zero tilt the spin axis is the world-z axis and the
+    /// previous Earth-default `omega = (0, 0, 0.001)` is exactly
+    /// reproduced. Earth's 23.4° tilt gives `omega.0 ≈ 0.397·|Ω|`
+    /// and `omega.2 ≈ 0.918·|Ω|` — a non-trivial 3D Ω that lets
+    /// the existing `F = -2 Ω × v` cross-product produce
+    /// seasonal-style Hadley shifts on tilted worlds.
     #[must_use]
-    pub fn for_planet(day_length_hours: Real, has_atmosphere: bool) -> Self {
+    pub fn for_planet(
+        day_length_hours: Real,
+        axial_tilt_deg: Real,
+        has_atmosphere: bool,
+    ) -> Self {
         let base = Real::from_ratio(1, 1_000);
         // Reference: Earth = 24 h. Avoid divide-by-zero on a
         // pathological zero-length day by clamping to >= 1 h.
@@ -131,9 +160,23 @@ impl Coriolis {
         } else {
             day_length_hours
         };
-        let scale = base * ref_hours / dl;
+        let omega_magnitude = base * ref_hours / dl;
+        // Convert tilt from degrees to radians: tilt_rad = deg · π / 180.
+        // Clamp to [0, 90] so worldgen edge cases stay in the
+        // physically meaningful range (a planet "tilted past 90°"
+        // is just a retrograde-spin planet — outside this v1 scope).
+        let tilt_deg = axial_tilt_deg
+            .max(Real::ZERO)
+            .min(Real::from_int(90));
+        let tilt_rad = tilt_deg * sim_arith::transcendental::pi() / Real::from_int(180);
+        let sin_tilt = sin(tilt_rad);
+        let cos_tilt = cos(tilt_rad);
         Self {
-            omega: (Real::ZERO, Real::ZERO, scale),
+            omega: (
+                omega_magnitude * sin_tilt,
+                Real::ZERO,
+                omega_magnitude * cos_tilt,
+            ),
             has_atmosphere,
         }
     }
@@ -389,6 +432,131 @@ mod tests {
             "Coriolis must couple VerticalConvection's v_w into the \
              horizontal field (proving it reads 3D Ω, not just Ω_z): \
              u_after={u_after:?}"
+        );
+    }
+
+    /// P1.6: a zero-tilt world reproduces the pre-P1.6 default
+    /// exactly — `omega.0` ≈ 0 and `omega.2` is the full
+    /// day-length-derived magnitude.
+    #[test]
+    fn zero_tilt_yields_pure_z_omega() {
+        let day_length = Real::from_int(24);
+        let tilt = Real::ZERO;
+        let c = Coriolis::for_planet(day_length, tilt, true);
+        let expected_magnitude = Real::from_ratio(1, 1_000);
+        // sin(0) = 0 exactly in our transcendental; omega.0 must
+        // be (numerically) zero.
+        assert!(
+            c.omega.0.abs() <= Real::from_ratio(1, 1_000_000),
+            "zero-tilt world must have omega.0 ≈ 0: omega.0={:?}",
+            c.omega.0,
+        );
+        // cos(0) = 1, so omega.2 must equal the full magnitude
+        // (the bare day-length scale).
+        let diff = (c.omega.2 - expected_magnitude).abs();
+        assert!(
+            diff <= Real::from_ratio(1, 1_000_000),
+            "zero-tilt world omega.2 must equal |Ω|: omega.2={:?}, expected={:?}",
+            c.omega.2,
+            expected_magnitude,
+        );
+        // omega.1 is always zero in the canonical frame.
+        assert_eq!(c.omega.1, Real::ZERO);
+    }
+
+    /// P1.6: an Earth-like 23.4° tilt distributes |Ω| across
+    /// (x, z). sin(23.4°) ≈ 0.397, cos(23.4°) ≈ 0.918.
+    #[test]
+    fn earth_like_tilt_distributes_omega_into_x_and_z() {
+        let day_length = Real::from_int(24);
+        // Use 23.4° = 234/10. `from_ratio` keeps the fractional
+        // part exact in Q32.32.
+        let tilt = Real::from_ratio(234, 10);
+        let c = Coriolis::for_planet(day_length, tilt, true);
+        let magnitude = Real::from_ratio(1, 1_000);
+        // Expected ratios from the polynomial sin/cos:
+        //   sin(23.4°) ≈ 0.3971
+        //   cos(23.4°) ≈ 0.9178
+        // The Q32.32 polynomial approximation contributes ~1e-4
+        // relative error; multiplying by `magnitude = 0.001`
+        // reduces the absolute error to the ~1e-7 level. Use a
+        // generous absolute tolerance of 2e-5 (2 × 10^-5) — far
+        // larger than the expected approximation error but
+        // small enough that a wrong decomposition fails loudly.
+        let expected_x = magnitude * Real::from_ratio(397, 1_000);
+        let expected_z = magnitude * Real::from_ratio(918, 1_000);
+        let tol = Real::from_ratio(2, 100_000);
+        assert!(
+            (c.omega.0 - expected_x).abs() <= tol,
+            "23.4° tilt: omega.0 ≈ 0.397·|Ω| expected; got omega.0={:?}, expected={:?}",
+            c.omega.0,
+            expected_x,
+        );
+        assert!(
+            (c.omega.2 - expected_z).abs() <= tol,
+            "23.4° tilt: omega.2 ≈ 0.918·|Ω| expected; got omega.2={:?}, expected={:?}",
+            c.omega.2,
+            expected_z,
+        );
+        // Strict positivity: a non-zero tilt must produce a
+        // non-zero zonal axis component (this is the bug P1.6
+        // fixes — `omega.0 = 0` regardless of tilt).
+        assert!(
+            c.omega.0 > Real::ZERO,
+            "tilted-axis world must have omega.0 > 0: omega.0={:?}",
+            c.omega.0,
+        );
+    }
+
+    /// P1.6: vertical-velocity parcel on a tilted-axis world
+    /// feels deflection from the new `omega.0` (Ω_x) component
+    /// via `Δv = +2 Ω_x · w` — i.e. the v-component of horizontal
+    /// velocity gets kicked. Item 22's vertical-Coriolis test
+    /// only exercised `omega.2` (via `Ω_y_local`); this test
+    /// confirms the omega.0 path is also live.
+    #[test]
+    fn tilted_axis_world_has_x_axis_coriolis_term() {
+        // Pick a cell on the equator (latitude row r = half_h) so
+        // sin(φ) = 0 and cos(φ) = 1 in local frame. That kills
+        // the Ω_z_local contribution to Δv (the `-two_dt_oz * u`
+        // term is zero because u = 0). Δv then comes entirely
+        // from `+two_dt_ox * w` — the omega.0 path — so any
+        // non-zero v_r after a tick must come from the tilt.
+        let mut state = PhysicsState::new(HexGrid::new(3, 5));
+        let equator = state.grid().cell_id(crate::grid::Axial::new(1, 2)).0 as usize;
+        // Seed pure vertical motion.
+        state.fluid_velocity_w_mut()[equator] = Real::ONE;
+        assert_eq!(state.fluid_velocity().0[equator], Real::ZERO);
+        assert_eq!(state.fluid_velocity().1[equator], Real::ZERO);
+        // Build a tilted-axis world. We pick equal omega.0 and
+        // omega.2 (corresponds to a 45° tilt) and use a strong
+        // magnitude so the integer-tick effect is visible
+        // without thousands of iterations. Construct the struct
+        // directly (rather than via `for_planet`) because we
+        // want a magnitude well above the Q32.32 LSB for a
+        // single tick at `dt = 1`.
+        let strong = Real::percent(10);
+        let c = Coriolis {
+            omega: (strong, Real::ZERO, strong),
+            has_atmosphere: true,
+        };
+        c.integrate(&mut state, Real::ONE);
+        let v_after = state.fluid_velocity().1[equator];
+        // Δv = -2Ω_z_local · u + 2Ω_x · w
+        //    = -2·(omega.2·sin(0))·0  +  2·omega.0·1
+        //    =  2 · omega.0
+        // With omega.0 > 0 and w = 1, v_r should turn positive.
+        assert!(
+            v_after > Real::ZERO,
+            "tilted-axis world: vertical parcel must be deflected by \
+             omega.0 into +v_r at the equator: v_after={v_after:?}"
+        );
+        // Sanity-check the magnitude: Δv ≈ 2·omega.0·dt = 0.2.
+        let expected = Real::from_int(2) * strong;
+        let diff = (v_after - expected).abs();
+        assert!(
+            diff <= Real::from_ratio(1, 1_000),
+            "tilted-axis ΔV ≈ 2·omega.0·dt = 0.2 expected; got v_after={v_after:?}",
         );
     }
 }
