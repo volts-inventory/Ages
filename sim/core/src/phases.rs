@@ -78,6 +78,7 @@ pub(crate) fn physics_phase<E: Emitter>(
         Some(&laws.lorentz),
         Some(&laws.coriolis),
         Some(&laws.vertical),
+        Some(&laws.weathering),
     );
     Ok(prev_state_for_measurements)
 }

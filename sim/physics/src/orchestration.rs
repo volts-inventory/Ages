@@ -227,6 +227,12 @@ pub struct OrchestratorState {
     /// Signed cumulative drift of `Σ over all substances` across all
     /// `Chemistry::integrate` calls since this state was constructed.
     chemistry_substance_drift: Real,
+    /// Cumulative CO2 mass removed by `Weathering::integrate` since
+    /// this state was constructed. Always non-negative (weathering
+    /// is a one-sided sink); used to offset the chemistry-substance
+    /// mass invariant so weathering's intentional removal doesn't
+    /// register as a "leak." Mutated only in debug builds.
+    weathering_co2_removed: Real,
 }
 
 impl Default for OrchestratorState {
@@ -246,6 +252,7 @@ impl OrchestratorState {
             tides_water_drift: Real::ZERO,
             hydrology_drift: Real::ZERO,
             chemistry_substance_drift: Real::ZERO,
+            weathering_co2_removed: Real::ZERO,
         }
     }
 
@@ -280,6 +287,16 @@ impl OrchestratorState {
     #[must_use]
     pub fn chemistry_substance_drift(&self) -> Real {
         self.chemistry_substance_drift
+    }
+
+    /// Cumulative CO2 mass removed by all `Weathering::integrate`
+    /// calls since construction. Non-negative. Zero in release
+    /// builds. Used by the chemistry-mass invariant to offset
+    /// weathering's intentional one-sided removal so the assertion
+    /// continues to flag *unintentional* mass leaks.
+    #[must_use]
+    pub fn weathering_co2_removed(&self) -> Real {
+        self.weathering_co2_removed
     }
 }
 
@@ -372,6 +389,7 @@ pub fn integrate_civ_step(
     lorentz: Option<&crate::lorentz::Lorentz>,
     coriolis: Option<&crate::coriolis::Coriolis>,
     vertical: Option<&crate::vertical::VerticalConvection>,
+    weathering: Option<&crate::weathering::Weathering>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -493,6 +511,27 @@ pub fn integrate_civ_step(
                 );
             }
         }
+        // Carbon-silicate weathering thermostat. Runs after
+        // hydrology (so it reads post-evap/precip water and
+        // vapour) and before chemistry (so chemistry sees the
+        // post-weathering CO2 state). Weathering is a *one-sided*
+        // sink on `Substance::CO2`: intentional removal, not a
+        // leak. The orchestrator accumulates the total removed
+        // mass per tick so the chemistry-substance-mass invariant
+        // below can offset it; without that offset the invariant
+        // would trip the moment the first volcanism source (Item
+        // 12d) lands and chemistry sees a non-zero `pre - post`
+        // delta on CO2 that's actually weathering's bookkeeping.
+        if let Some(w) = weathering {
+            let removed = w.integrate(state, cfg.heat_dt);
+            #[cfg(debug_assertions)]
+            {
+                orch_state.weathering_co2_removed =
+                    orch_state.weathering_co2_removed + removed;
+            }
+            #[cfg(not(debug_assertions))]
+            let _ = removed;
+        }
         for _heat_step in 0..cfg.heat_substeps_per_macro {
             heat.integrate(state, cfg.heat_dt);
         }
@@ -603,11 +642,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None,
+            None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None,
+            None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -660,7 +699,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None,
+                None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);
