@@ -1160,6 +1160,30 @@ pub fn sample_ecosystem(planet_seed: u64, producer_capacity: Real) -> PlanetEcos
     PlanetEcosystem::new(species, interactions, producer_capacity)
 }
 
+/// Same as [`sample_ecosystem`] but lets the caller pin the substrate
+/// tag that drives the Chemoautotroph oxidiser-ladder partition. The
+/// production callsite in `sim-core::run` derives the tag from
+/// `planet.metabolic_substrate.tag()` so the per-planet ecosystem
+/// matches the planet's solvent chemistry; tests + back-compat go
+/// through the existing `sample_ecosystem` (which pins to `"aqueous"`).
+///
+/// The seed XOR uses a different discriminator
+/// (`0xEC05_0001_5751_1F00`) than the legacy `sample_ecosystem`
+/// (`0xEC05_5751_1F00_0BA1`) so the two namespaces don't alias each
+/// other — sim-core's production stream gets its own deterministic
+/// draw that won't collide with the legacy unit-test stream.
+#[must_use]
+pub fn sample_ecosystem_with_substrate(
+    planet_seed: u64,
+    substrate_tag: &'static str,
+    producer_capacity: Real,
+) -> PlanetEcosystem {
+    let mut eco = sample_ecosystem(planet_seed ^ 0xEC05_0001_5751_1F00, producer_capacity);
+    eco.substrate_tag = substrate_tag;
+    eco.current_oxidisers = oxidiser_ladder(substrate_tag);
+    eco
+}
+
 /// Build a canonical interaction matrix from a sampled species list.
 ///
 /// Wiring rules:

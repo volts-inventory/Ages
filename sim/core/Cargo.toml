@@ -13,6 +13,7 @@ workspace = true
 protocol.workspace = true
 sim-arith.workspace = true
 sim-civ.workspace = true
+sim-ecosystem.workspace = true
 sim-events.workspace = true
 sim-physics.workspace = true
 sim-recognition.workspace = true
