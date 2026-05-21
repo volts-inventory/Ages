@@ -288,8 +288,15 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
 
     // Coriolis deflection from the planet's rotation rate.
     // Faster spinners get stronger Coriolis (proportional to
-    // 1/day_length).
-    let coriolis = sim_physics::Coriolis::for_planet(planet.day_length_hours, has_atmosphere);
+    // 1/day_length). P1.6: axial tilt decomposes |Ω| across the
+    // (x, z) world axes — tilted-axis worlds get non-trivial
+    // 3D Coriolis (Ω_x ≠ 0) and the seasonal Hadley shift that
+    // the original plan promised.
+    let coriolis = sim_physics::Coriolis::for_planet(
+        planet.day_length_hours,
+        planet.axial_tilt_deg,
+        has_atmosphere,
+    );
 
     // Vertical convection between surface and upper
     // atmosphere. Maintains a real lapse rate per cell.
