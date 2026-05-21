@@ -2,8 +2,8 @@
 //! rise and fall within it.
 
 use crate::types::{
-    CognitionAxes, CognitionTopology, DynamicTool, Habitat, Lifecycle, Manipulation, Modality,
-    PopulationBiology, ToleranceEnvelope,
+    CognitionAxes, CognitionTopology, DynamicTool, EcosystemRole, Habitat, Lifecycle, Manipulation,
+    Modality, PopulationBiology, ToleranceEnvelope,
 };
 use sim_arith::Real;
 use std::collections::{BTreeMap, BTreeSet};
@@ -141,6 +141,18 @@ pub struct Species {
     /// `sim_population::lifecycle_step` for the per-variant
     /// dynamics.
     pub lifecycle: Lifecycle,
+    /// Trophic / functional role in the planet's multi-species
+    /// ecosystem. Drives the per-tick ecosystem step (Lindeman
+    /// pyramid + functional-response delta) and worldgen
+    /// role-distribution constraints. Civ-bearing species are
+    /// always a consumer tier with cognition ≥ 0.3.
+    ///
+    /// Back-compat: literal `Species { ... }` constructors that
+    /// pre-date the ecosystem layer can default this to
+    /// `EcosystemRole::PrimaryConsumer` — every existing downstream
+    /// civ formula treats the run's single species as an
+    /// implicit herbivore-equivalent.
+    pub role: EcosystemRole,
 }
 
 impl Species {
