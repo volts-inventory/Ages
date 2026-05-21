@@ -730,3 +730,53 @@ fn red_giant_phase_renders_inner_planets_uninhabitable() {
         zams.to_f64_for_display(),
     );
 }
+
+#[test]
+fn close_massive_moon_samples_synchronous_locking() {
+    // Sprint 5 Item 24 — Rule 1. A close, massive first moon
+    // (mass > 0.1 Earth-moon ratios, orbital period < 100 days)
+    // locks the planet's rotation: synchronous tidal capture.
+    //
+    // Mass = 50 corresponds to 0.50 of Earth's moon (well above
+    // the 0.10 threshold); period = 28 macro-steps is the
+    // Earth-Moon-like close orbit (well under the 100-day cap).
+    let moons = vec![Moon {
+        mass_relative_x100: 50,
+        orbital_period_macros: 28,
+        inclination_deg_x10: 51,
+        eccentricity: Real::ZERO,
+    }];
+    // Day length irrelevant to Rule 1 — pick an Earth-like 24h
+    // to confirm the moon-driven branch fires regardless of rotation.
+    let state = crate::sampling::sample_locking_state(
+        42,
+        &moons,
+        Real::from_int(24),
+    );
+    assert_eq!(state, LockingState::Synchronous);
+}
+
+#[test]
+fn mercury_analog_samples_3_2_resonance() {
+    // Sprint 5 Item 24 — Rule 2. A planet whose rotation : moon-
+    // orbit ratio sits at ≈ 3:2 (Mercury-style spin-orbit
+    // resonance) lands in `Resonance { p: 3, q: 2 }`.
+    //
+    // No close massive moon — period 200 macros (well past the
+    // 100-day "close" cap) skips Rule 1. Day length 7200h
+    // (= 300 days × 24h) over orbital_period_hours = 200×24 =
+    // 4800h gives ratio = 7200 / 4800 = 1.5 exactly — the 3:2
+    // spin-orbit resonance.
+    let moons = vec![Moon {
+        mass_relative_x100: 5, // below the 0.10 Rule-1 mass cap
+        orbital_period_macros: 200,
+        inclination_deg_x10: 0,
+        eccentricity: Real::ZERO,
+    }];
+    let day_length = Real::from_int(7_200);
+    // Rule 2 has higher priority than Rule 3, so any seed works
+    // — the ratio match fires before the jitter check runs. Use a
+    // deterministic seed for stable test output.
+    let state = crate::sampling::sample_locking_state(1, &moons, day_length);
+    assert_eq!(state, LockingState::Resonance { p: 3, q: 2 });
+}

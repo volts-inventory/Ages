@@ -12,6 +12,14 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
 
+/// SplitMix64 salt for the locking-state jitter stream (Sprint 5
+/// Item 24). Distinct from the main `ChaCha20Rng` draw sequence so
+/// the planet-wide locking decision doesn't disturb byte-replay of
+/// the other worldgen draws — the locking state is a *post-process*
+/// classifier over already-sampled moon + rotation fields rather
+/// than an entry in the linear draw order.
+const LOCKING_SALT: u64 = 0x4C6F_636B_696E_6721; // "Locking!" ASCII
+
 /// Sample a deterministic Planet from a seed. Same seed → identical
 /// Planet bit-for-bit. All quantities are in SI units.
 ///
@@ -422,6 +430,14 @@ pub fn sample_planet(seed: u64) -> Planet {
     // (categorical-crust, substrate); ±10% jitter then normalise.
     let crustal_composition = sample_crustal_composition(crust, metabolic_substrate, &mut rng);
 
+    // Sprint 5 Item 24: tidal-locking regime sampled from the
+    // already-drawn moon + rotation fields. The classifier inspects
+    // `moons[0]` (if present) for a close-massive-moon synchronous
+    // capture, and the day_length / moon-orbital-period ratio for
+    // Mercury-style spin-orbit resonances; ~5% of remaining planets
+    // get a Resonance assignment by SplitMix64 jitter for variety.
+    let locking_state = sample_locking_state(seed, &moons, day_length_hours);
+
     Planet {
         seed,
         name,
@@ -454,9 +470,111 @@ pub fn sample_planet(seed: u64) -> Planet {
         // [-0.05, +0.05]. RNG draw of an i64 in [-50, 50] divided
         // by 1000 — gives 5% relative drift on freeze/boil points.
         substrate_perturbation: Real::from_ratio(rng.gen_range(-50_i64..=50_i64), 1000),
-        locking_state: LockingState::FreeRotator,
+        locking_state,
         star,
     }
+}
+
+/// Classify a planet's tidal-locking regime from its sampled moon
+/// list + rotation rate. Worldgen runs this once at planet creation
+/// (Sprint 5 Item 24); the per-tick dynamics in `tidal_locking.rs`
+/// (Item 19) then reads `Planet::locking_state` to drive
+/// eccentricity damping + sub-stellar-point behaviour.
+///
+/// Heuristic, in priority order:
+///
+/// 1. **Synchronous** if the planet has a close, massive first moon
+///    (mass > 0.1 Earth-moon ratios and orbital period under 100
+///    macro-steps / days). Such a moon's tidal torque locks the
+///    planet's rotation to the moon's orbit, giving one face
+///    perpetually moon-ward (the same dynamics that locked Earth's
+///    moon to Earth, run in reverse for a sufficiently dominant
+///    satellite).
+///
+/// 2. **Resonance { 3, 2 }** or **Resonance { 2, 3 }** if
+///    `day_length / orbital_period_hours` lands close to 1.5 or
+///    ~0.667 — Mercury-style spin-orbit resonances where the
+///    rotation period sits at a small-integer ratio of the orbital
+///    period. The "orbital period" here is the *first moon's*
+///    period (Earth-Moon-like coupling); on moonless worlds the
+///    resonance check is skipped.
+///
+/// 3. **Resonance { 3, 2 }** for ~5% of remaining planets via a
+///    SplitMix64 jitter on the seed (variety: keeps a small slice
+///    of the population in spin-orbit resonance regardless of the
+///    deterministic heuristic).
+///
+/// 4. **FreeRotator** otherwise. Earth's regime — slow tidal
+///    dissipation, no locked rotation.
+///
+/// The jitter uses a SplitMix64 finaliser salted with
+/// `LOCKING_SALT` so the per-planet decision is deterministic in
+/// the seed but doesn't touch the main `ChaCha20Rng` draw sequence
+/// (byte-replay of the other worldgen fields stays stable).
+pub(crate) fn sample_locking_state(
+    seed: u64,
+    moons: &[Moon],
+    day_length_hours: Real,
+) -> LockingState {
+    // Rule 1 — close massive first moon → Synchronous.
+    // Mass threshold: mass_relative_x100 > 10 corresponds to mass
+    // ratio > 0.10 (Earth's moon = 100). Period threshold:
+    // orbital_period_macros < 100 (≈ 100 days) is "close orbit".
+    if let Some(first) = moons.first() {
+        if first.mass_relative_x100 > 10 && first.orbital_period_macros < 100 {
+            return LockingState::Synchronous;
+        }
+    }
+
+    // Rule 2 — Mercury-style 3:2 or 2:3 spin-orbit resonance.
+    // The "orbital period" is the first moon's period lifted into
+    // hours via the 1 macro-step ≈ 1 day convention. On moonless
+    // worlds we skip this check (no orbital coupling to compare
+    // against the rotation rate).
+    if let Some(first) = moons.first() {
+        let orbital_period_hours =
+            Real::from_int(i64::from(first.orbital_period_macros) * 24);
+        if orbital_period_hours > Real::ZERO {
+            let ratio = day_length_hours / orbital_period_hours;
+            // Tolerance band ±5% around the target ratio. Wider
+            // than strict equality (the sampled fields are integer
+            // multiples of 1 hour / 1 day, so a 3:2 ratio rarely
+            // falls exactly on 1.500); narrower than 10% so we
+            // don't over-claim resonance.
+            let three_halves = Real::from_ratio(3, 2);
+            let two_thirds = Real::from_ratio(2, 3);
+            let tol = Real::from_ratio(5, 100);
+            if (ratio - three_halves).abs() < tol {
+                return LockingState::Resonance { p: 3, q: 2 };
+            }
+            if (ratio - two_thirds).abs() < tol {
+                return LockingState::Resonance { p: 2, q: 3 };
+            }
+        }
+    }
+
+    // Rule 3 — ~5% variety jitter via SplitMix64. Salted seed
+    // → uniform u64; compare against `u64::MAX / 20` to fire
+    // exactly 5% of the time on average without touching the
+    // main ChaCha draw sequence.
+    let jitter = splitmix64(seed.wrapping_add(LOCKING_SALT));
+    if jitter < (u64::MAX / 20) {
+        return LockingState::Resonance { p: 3, q: 2 };
+    }
+
+    // Rule 4 — default. Earth's regime.
+    LockingState::FreeRotator
+}
+
+/// SplitMix64 finaliser. Standard four-step pattern (the same
+/// shape used in `ecosystem::hgt::splitmix64_for` and
+/// `physics::tectonics`). Deterministic, no RNG state — folds a
+/// 64-bit input to a uniformly-distributed 64-bit output.
+#[inline]
+fn splitmix64(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// Per-seed atmospheric composition. Each `(Atmosphere,
