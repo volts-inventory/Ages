@@ -390,6 +390,7 @@ pub fn integrate_civ_step(
     coriolis: Option<&crate::coriolis::Coriolis>,
     vertical: Option<&crate::vertical::VerticalConvection>,
     weathering: Option<&crate::weathering::Weathering>,
+    ice_albedo: Option<&crate::albedo::IceAlbedo>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -439,6 +440,20 @@ pub fn integrate_civ_step(
         }
         for _fluid_step in 0..cfg.fluid_substeps_per_macro {
             fluid.integrate(state, cfg.fluid_dt);
+        }
+        // Ice-albedo update runs before radiation so each
+        // macro-step's per-cell albedo reflects the freshest
+        // surface temperature. Source order:
+        //   ice_albedo (updates snow / sea-ice fractions)
+        //     → radiation (reads them via the effective-albedo
+        //       slice)
+        //     → heat diffusion
+        // Closes the positive-feedback loop that drives the
+        // snowball bifurcation: cold cells grow ice, ice
+        // raises albedo, higher albedo lowers radiative
+        // equilibrium temperature, lower T grows more ice.
+        if let Some(ia) = ice_albedo {
+            ia.integrate(state, cfg.heat_dt);
         }
         // Radiative balance runs once per macro-step before
         // diffusion. Source (radiation) → diffusion (heat) → reaction
@@ -642,11 +657,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None,
+            None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None,
+            None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -699,7 +714,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None,
+                None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);
