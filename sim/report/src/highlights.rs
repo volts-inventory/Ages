@@ -214,6 +214,11 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // civ tools. Score 0.95 puts them alongside first tech
         // unlocks and conflict resolutions in the highlight reel.
         Event::TemplateDiscovered(_) | Event::ToolDiscovered(_) => Some(0.95),
+        // Species extinction is a structural ecosystem beat —
+        // genuinely consequential for the planet's biota. Pin it at
+        // 0.90 so it sits just below tool / template discoveries
+        // in the highlight reel.
+        Event::SpeciesExtinct(_) => Some(0.90),
     }
 }
 

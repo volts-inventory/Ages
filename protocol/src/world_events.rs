@@ -205,6 +205,44 @@ pub struct SpeciesCosmologyBias {
     pub hierarchical_q32: i64,
 }
 
+/// Cause of a `SpeciesExtinct` event. Sprint 2 Item 6a emits
+/// `PopulationCollapse` only — biomass dropped below the threshold
+/// for the confirmation window. `KeystoneCascade` and `Catastrophe`
+/// wire up in later items (keystone removal cascades; catastrophe
+/// kill triggers); declared here so the wire schema is stable and
+/// downstream consumers can switch on the cause without a schema
+/// migration when the later causes start emitting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtinctionCause {
+    /// Biomass / population pool fell below
+    /// `EXTINCTION_THRESHOLD` for
+    /// `EXTINCTION_CONFIRMATION_TICKS` consecutive ticks.
+    PopulationCollapse,
+    /// Extinction propagated from the loss of a keystone the
+    /// species depended on (food web disconnection). Reserved for
+    /// future wiring; not emitted by Sprint 2 Item 6a.
+    KeystoneCascade,
+    /// Single-tick wipe from a catastrophe whose lethality cleared
+    /// the species' tolerance envelope. Reserved for future
+    /// wiring; not emitted by Sprint 2 Item 6a.
+    Catastrophe,
+}
+
+/// A species was flagged extinct by the ecosystem step. The species
+/// record stays in the per-planet registry for history / replay
+/// determinism but is skipped by subsequent ecosystem ticks. Sprint
+/// 2 Item 6a always emits `cause = PopulationCollapse`; future
+/// items wire in the other causes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SpeciesExtinct {
+    pub tick: u64,
+    /// Dense per-planet species id (`SpeciesId.0`). Matches the
+    /// ids used in the ecosystem step / interaction matrix.
+    pub species_id: u32,
+    pub cause: ExtinctionCause,
+}
+
 /// Snapshot of the species' nomadic population per cell.
 /// Emitted on tick boundaries when the nomad pool's per-cell
 /// distribution changes meaningfully (births, civ absorption,

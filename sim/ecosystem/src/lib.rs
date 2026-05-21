@@ -30,6 +30,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+use protocol::{ExtinctionCause, SpeciesExtinct};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
@@ -97,6 +98,22 @@ pub const SYNTROPHY_COLLAPSE_RATE: (i64, i64) = (25, 100);
 /// should.
 pub const CHEMOAUTOTROPH_GROWTH_RATE: (i64, i64) = (2, 100);
 
+/// Biomass floor below which a species is considered to be
+/// collapsing. Expressed as a fraction of the planet's
+/// `producer_capacity` so the threshold scales with planet size:
+/// `0.001 × capacity`. Sprint 2 Item 6a — paired with
+/// `EXTINCTION_CONFIRMATION_TICKS` so a single bad tick can't kill
+/// a species, but a sustained collapse does.
+pub const EXTINCTION_THRESHOLD_FRAC: (i64, i64) = (1, 1000);
+
+/// Number of consecutive ticks the per-species biomass must sit
+/// below `EXTINCTION_THRESHOLD_FRAC × producer_capacity` before the
+/// species is flagged extinct. `12` on monthly cadence ≈ one
+/// sim-year — long enough that a single seasonal trough doesn't
+/// trigger extinction, short enough that an actual collapse converts
+/// to an extinction event within the run.
+pub const EXTINCTION_CONFIRMATION_TICKS: u64 = 12;
+
 /// One species' per-planet record. `species_id` is the dense per-
 /// planet index; `biomass` is the live pool (always ≥ 0); the
 /// other fields are configuration carried for the step.
@@ -110,6 +127,16 @@ pub struct EcoSpecies {
     /// step. Extinction (Item 6a) flips this off without removing
     /// the record.
     pub is_extant: bool,
+    /// Consecutive-tick counter for the extinction rule. Each
+    /// `step` increments this when `biomass <
+    /// EXTINCTION_THRESHOLD_FRAC × producer_capacity` and resets it
+    /// otherwise; when the streak reaches
+    /// `EXTINCTION_CONFIRMATION_TICKS` the species is flagged
+    /// extinct (`is_extant = false`) and emits a `SpeciesExtinct`
+    /// event with `cause = PopulationCollapse`. Resets to `0` once
+    /// extinction fires so the field stays bounded and can be
+    /// re-used if a future rewilding rule restores `is_extant`.
+    pub low_biomass_streak: u64,
 }
 
 /// Per-planet ecosystem state. Owned by the higher-level world
@@ -171,7 +198,9 @@ impl PlanetEcosystem {
         }
     }
 
-    /// Run one ecosystem tick. Five passes (each over `BTreeMap`):
+    /// Run one ecosystem tick. Convenience wrapper that discards
+    /// any extinction events; callers that want the event stream
+    /// should use `step_at_tick`. Six passes (each over `BTreeMap`):
     ///
     /// 1. Producer logistic growth toward `producer_capacity`
     ///    (Photoautotroph + Mixotroph).
@@ -185,7 +214,22 @@ impl PlanetEcosystem {
     /// 5. Passive consumer decay, then enforce Lindeman pyramid
     ///    caps (consumer ≤ 0.1 × producer, secondary ≤ 0.1 ×
     ///    primary, apex ≤ 0.1 × secondary).
+    /// 6. Extinction sweep (Sprint 2 Item 6a): each species whose
+    ///    biomass sits below `EXTINCTION_THRESHOLD_FRAC ×
+    ///    producer_capacity` for `EXTINCTION_CONFIRMATION_TICKS`
+    ///    consecutive ticks is flagged `is_extant = false` and the
+    ///    matching `SpeciesExtinct` event is returned by
+    ///    `step_at_tick`.
     pub fn step(&mut self) {
+        let _ = self.step_at_tick(0);
+    }
+
+    /// Same as `step` but carries the current sim tick and returns
+    /// the list of `SpeciesExtinct` events that fired this tick.
+    /// The caller is expected to forward these to its `Emitter`.
+    /// Returned in `SpeciesId` order (the underlying `BTreeMap`
+    /// iteration) so the event sequence is deterministic.
+    pub fn step_at_tick(&mut self, tick: u64) -> Vec<SpeciesExtinct> {
         self.grow_producers();
         self.partition_chemoautotrophs();
         self.apply_interactions();
@@ -193,6 +237,7 @@ impl PlanetEcosystem {
         self.decay_consumers();
         self.enforce_lindeman_pyramid();
         self.clamp_biomasses();
+        self.detect_extinctions(tick)
     }
 
     fn grow_producers(&mut self) {
@@ -446,6 +491,47 @@ impl PlanetEcosystem {
         }
     }
 
+    /// Per-species low-biomass streak counter. Once a species has
+    /// been below the absolute threshold (`EXTINCTION_THRESHOLD_FRAC
+    /// × producer_capacity`) for `EXTINCTION_CONFIRMATION_TICKS` in
+    /// a row, flip `is_extant = false` and emit a
+    /// `SpeciesExtinct { cause = PopulationCollapse }`. The species
+    /// stays in `self.species` for history / replay determinism;
+    /// later passes of `apply_interactions` / `grow_producers` /
+    /// `decay_consumers` skip it via the `is_extant` guard.
+    ///
+    /// Iteration order is `BTreeMap`-deterministic so the event
+    /// stream is byte-stable across rebuilds.
+    fn detect_extinctions(&mut self, tick: u64) -> Vec<SpeciesExtinct> {
+        let threshold =
+            Real::from(EXTINCTION_THRESHOLD_FRAC) * self.producer_capacity;
+        let mut events = Vec::new();
+        for s in self.species.values_mut() {
+            if !s.is_extant {
+                // Already extinct — keep the streak at zero so a
+                // future rewilding (not implemented this PR) starts
+                // fresh.
+                s.low_biomass_streak = 0;
+                continue;
+            }
+            if s.biomass < threshold {
+                s.low_biomass_streak = s.low_biomass_streak.saturating_add(1);
+                if s.low_biomass_streak >= EXTINCTION_CONFIRMATION_TICKS {
+                    s.is_extant = false;
+                    s.low_biomass_streak = 0;
+                    events.push(SpeciesExtinct {
+                        tick,
+                        species_id: s.species_id.0,
+                        cause: ExtinctionCause::PopulationCollapse,
+                    });
+                }
+            } else {
+                s.low_biomass_streak = 0;
+            }
+        }
+        events
+    }
+
     /// Sum of biomasses for all extant species whose role tier
     /// matches `tier`.
     #[must_use]
@@ -697,6 +783,7 @@ pub fn sample_ecosystem(planet_seed: u64, producer_capacity: Real) -> PlanetEcos
             role,
             biomass,
             is_extant: true,
+            low_biomass_streak: 0,
         });
         *next_id += 1;
     };

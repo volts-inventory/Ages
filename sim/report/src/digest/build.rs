@@ -574,6 +574,12 @@ impl Digest {
             // yet (the chapter could grow `alliances_formed` /
             // `alliances_dissolved` counters in a follow-up).
             Event::AllianceFormed(_) | Event::AllianceDissolved(_) => {}
+            // Sprint 2 Item 6a: extinction events surface in the
+            // event log + highlights stream. Per-civ digest
+            // aggregation is not in scope for the rule itself; a
+            // follow-up can grow ecosystem-side chapters (planet
+            // species census) without changing the wire format.
+            Event::SpeciesExtinct(_) => {}
         }
     }
 

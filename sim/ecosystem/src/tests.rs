@@ -143,12 +143,14 @@ fn predator_prey_pair_exhibits_lotka_volterra_cycles() {
             },
             biomass: Real::from_int(800),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: pred_id,
             role: EcosystemRole::PrimaryConsumer,
-            biomass: Real::from_int(5),
+            biomass: Real::from_int(50),
             is_extant: true,
+            low_biomass_streak: 0,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -157,7 +159,10 @@ fn predator_prey_pair_exhibits_lotka_volterra_cycles() {
     // Lindeman cap so the predator's growth is rate-limited by the
     // functional response, not by the cap binding immediately —
     // otherwise both biomasses sit pinned at the pyramid ceiling
-    // and never oscillate.
+    // and never oscillate. Predator initial biomass = 50 keeps
+    // it well above the extinction threshold (`0.001 × 10_000 =
+    // 10`) at the start; the LV trough is also above 10, so the
+    // species never accumulates a confirmation-window streak.
     matrix.insert(
         pred_id,
         prey_id,
@@ -222,6 +227,7 @@ fn keystone_species_removal_causes_cascade_disproportionate_to_biomass() {
                 },
                 biomass: Real::from_int(10),
                 is_extant: true,
+                low_biomass_streak: 0,
             });
         }
         for (i, id) in peripherals.iter().enumerate() {
@@ -233,6 +239,7 @@ fn keystone_species_removal_causes_cascade_disproportionate_to_biomass() {
                 role: EcosystemRole::PrimaryConsumer,
                 biomass: Real::from_int(20),
                 is_extant: true,
+                low_biomass_streak: 0,
             });
         }
         let mut matrix = InteractionMatrix::new();
@@ -317,18 +324,21 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             },
             biomass: Real::ZERO,
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: primary,
             role: EcosystemRole::PrimaryConsumer,
             biomass: Real::from_int(100),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: secondary,
             role: EcosystemRole::SecondaryConsumer,
             biomass: Real::from_int(10),
             is_extant: true,
+            low_biomass_streak: 0,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -391,18 +401,21 @@ fn competition_pair_excludes_at_equilibrium() {
             },
             biomass: Real::from_int(500),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: strong,
             role: EcosystemRole::PrimaryConsumer,
             biomass: Real::from_int(40),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: weak,
             role: EcosystemRole::PrimaryConsumer,
             biomass: Real::from_int(5),
             is_extant: true,
+            low_biomass_streak: 0,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -539,6 +552,7 @@ fn chemolithotroph_species_partition_by_reduction_potential() {
             },
             biomass: Real::from_int(100),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: chemo_b,
@@ -547,6 +561,7 @@ fn chemolithotroph_species_partition_by_reduction_potential() {
             },
             biomass: Real::from_int(100),
             is_extant: true,
+            low_biomass_streak: 0,
         },
     ];
     let mut eco = PlanetEcosystem::new_with_substrate(
@@ -616,6 +631,7 @@ fn syntrophy_pair_extinction_when_separated() {
             },
             biomass: Real::from_int(50),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: mutualist_b,
@@ -624,6 +640,7 @@ fn syntrophy_pair_extinction_when_separated() {
             },
             biomass: Real::from_int(50),
             is_extant: true,
+            low_biomass_streak: 0,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -760,18 +777,21 @@ fn lindeman_pyramid_enforcement_caps_overgrown_consumers() {
             },
             biomass: Real::from_int(100),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: primary,
             role: EcosystemRole::PrimaryConsumer,
             biomass: Real::from_int(50),
             is_extant: true,
+            low_biomass_streak: 0,
         },
         EcoSpecies {
             species_id: secondary,
             role: EcosystemRole::SecondaryConsumer,
             biomass: Real::from_int(30),
             is_extant: true,
+            low_biomass_streak: 0,
         },
     ];
     let mut eco = PlanetEcosystem::new(
@@ -788,5 +808,335 @@ fn lindeman_pyramid_enforcement_caps_overgrown_consumers() {
     assert!(
         s <= Real::from_int(1),
         "secondary not capped: {s:?} (primary={p:?})"
+    );
+}
+
+// ===== Sprint 2 Item 6a — extinction rule tests =====
+
+/// Build a deterministic 3-species web (producer + two primary
+/// consumers) hand-tuned so it's healthy enough that no species
+/// goes extinct on its own. Returned with `producer_capacity` =
+/// `1000` so the extinction threshold (`0.001 × 1000 = 1.0`) is
+/// well-defined.
+fn three_species_web() -> PlanetEcosystem {
+    let prod = SpeciesId(0);
+    let a = SpeciesId(1);
+    let b = SpeciesId(2);
+    let species = vec![
+        EcoSpecies {
+            species_id: prod,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: Real::from_int(500),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: a,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(30),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: b,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(30),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+    ];
+    let mut matrix = InteractionMatrix::new();
+    matrix.insert(
+        a,
+        prod,
+        Interaction {
+            kind: InteractionKind::Predation,
+            strength: Real::from((2, 100)),
+            functional_response: FunctionalResponse::Saturating,
+        },
+    );
+    matrix.insert(
+        b,
+        prod,
+        Interaction {
+            kind: InteractionKind::Predation,
+            strength: Real::from((2, 100)),
+            functional_response: FunctionalResponse::Saturating,
+        },
+    );
+    PlanetEcosystem::new(species, matrix, Real::from_int(1000))
+}
+
+#[test]
+fn extinct_species_stops_contributing_to_ecosystem() {
+    // Three-species web. Force one consumer to zero biomass and
+    // hold it there long enough that the extinction rule fires;
+    // assert the remaining two species evolve identically to a
+    // hand-built two-species web from the same starting state.
+    let mut eco_three = three_species_web();
+    let killed = SpeciesId(1);
+
+    // Force the killed species' biomass to zero each tick for
+    // long enough that it crosses the confirmation threshold. The
+    // detector increments a streak; after EXTINCTION_CONFIRMATION_TICKS
+    // it flips `is_extant = false`.
+    for tick in 0..(EXTINCTION_CONFIRMATION_TICKS + 2) {
+        if let Some(s) = eco_three.species.get_mut(&killed) {
+            s.biomass = Real::ZERO;
+        }
+        let _ = eco_three.step_at_tick(tick);
+    }
+    assert!(
+        !eco_three.species.get(&killed).unwrap().is_extant,
+        "killed species should be flagged extinct after {EXTINCTION_CONFIRMATION_TICKS} ticks at zero biomass",
+    );
+    // Extinct species stays in the registry — does NOT get removed.
+    assert!(
+        eco_three.species.contains_key(&killed),
+        "extinct species should remain in the registry for history / replay determinism",
+    );
+
+    // Build a two-species web with the same starting biomasses
+    // for the survivors and step it the same number of ticks.
+    // The survivor biomasses in the three-species web (with the
+    // killed species sitting extinct) should match the two-species
+    // web bit-for-bit.
+    let prod = SpeciesId(0);
+    let survivor = SpeciesId(2);
+    let species_two = vec![
+        EcoSpecies {
+            species_id: prod,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: eco_three.species.get(&prod).unwrap().biomass,
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: survivor,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: eco_three.species.get(&survivor).unwrap().biomass,
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+    ];
+    let mut matrix_two = InteractionMatrix::new();
+    matrix_two.insert(
+        survivor,
+        prod,
+        Interaction {
+            kind: InteractionKind::Predation,
+            strength: Real::from((2, 100)),
+            functional_response: FunctionalResponse::Saturating,
+        },
+    );
+    let mut eco_two = PlanetEcosystem::new(species_two, matrix_two, Real::from_int(1000));
+
+    // Run both ecosystems forward for a stretch and compare the
+    // surviving species. The extinct species is skipped by every
+    // sub-pass, so it can't contribute to deltas — the survivors'
+    // trajectories must match.
+    for tick in 100..200 {
+        let _ = eco_three.step_at_tick(tick);
+        let _ = eco_two.step_at_tick(tick);
+    }
+    let three_prod_b = eco_three.species.get(&prod).unwrap().biomass;
+    let three_surv_b = eco_three.species.get(&survivor).unwrap().biomass;
+    let two_prod_b = eco_two.species.get(&prod).unwrap().biomass;
+    let two_surv_b = eco_two.species.get(&survivor).unwrap().biomass;
+    assert_eq!(
+        three_prod_b, two_prod_b,
+        "producer biomass diverged with extinct species in registry"
+    );
+    assert_eq!(
+        three_surv_b, two_surv_b,
+        "survivor biomass diverged with extinct species in registry"
+    );
+    // The extinct species' biomass also must not climb back up via
+    // grow_producers / interaction deltas — the `is_extant` guard
+    // should keep it at zero.
+    assert_eq!(
+        eco_three.species.get(&killed).unwrap().biomass,
+        Real::ZERO,
+        "extinct species' biomass leaked back into the simulation",
+    );
+}
+
+#[test]
+fn extinction_cascade_from_keystone_removal() {
+    // A keystone producer feeds three obligate primary consumers.
+    // Knock the keystone's biomass to zero (mimicking a removal /
+    // single-tick wipe); at least one dependent species should also
+    // go extinct within a reasonable number of ticks.
+    let keystone = SpeciesId(0);
+    let dep_a = SpeciesId(1);
+    let dep_b = SpeciesId(2);
+    let dep_c = SpeciesId(3);
+    let species = vec![
+        EcoSpecies {
+            species_id: keystone,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: Real::from_int(100),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: dep_a,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(5),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: dep_b,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(5),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: dep_c,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(5),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+    ];
+    let mut matrix = InteractionMatrix::new();
+    for c in [dep_a, dep_b, dep_c] {
+        matrix.insert(
+            c,
+            keystone,
+            Interaction {
+                kind: InteractionKind::Predation,
+                strength: Real::from((5, 100)),
+                functional_response: FunctionalResponse::Saturating,
+            },
+        );
+    }
+    // Capacity = 1000 → threshold = 1.0. The keystone is flagged
+    // extinct directly (catastrophe analogue) — its biomass goes
+    // to zero and `is_extant = false` so subsequent ticks skip
+    // it entirely (no regrowth, no predation contribution).
+    let mut eco = PlanetEcosystem::new(species, matrix, Real::from_int(1000));
+    {
+        let k = eco.species.get_mut(&keystone).unwrap();
+        k.biomass = Real::ZERO;
+        k.is_extant = false;
+    }
+
+    // Step forward long enough for the dependents to starve. With
+    // CONSUMER_DECAY_RATE = 1% per tick and no producer to feed
+    // off, the dependents collapse exponentially; once a dependent
+    // crosses the extinction threshold (~1.0) it must sit there for
+    // EXTINCTION_CONFIRMATION_TICKS before extinction fires. The
+    // exponential decay from initial=5 to <1 takes ~160 ticks, plus
+    // 12 more for confirmation, so 2000 is comfortable headroom.
+    let mut cascade_extinctions = 0usize;
+    for tick in 0..2000 {
+        let events = eco.step_at_tick(tick);
+        for ev in events {
+            assert_ne!(
+                ev.species_id, keystone.0,
+                "keystone was flagged extinct manually; should not re-emit",
+            );
+            cascade_extinctions += 1;
+        }
+        if cascade_extinctions > 0 {
+            break;
+        }
+    }
+    assert!(
+        cascade_extinctions >= 1,
+        "removing the keystone should cascade to at least one dependent extinction, got {cascade_extinctions}",
+    );
+}
+
+#[test]
+fn extinction_event_emits_on_pool_collapse() {
+    // Drive a single species below the extinction threshold for
+    // the full confirmation window. Capture every emitted event;
+    // assert exactly one SpeciesExtinct event surfaces with the
+    // matching species_id and the default cause.
+    let prod = SpeciesId(0);
+    let target = SpeciesId(1);
+    let species = vec![
+        EcoSpecies {
+            species_id: prod,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: Real::from_int(500),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: target,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(30),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+    ];
+    let matrix = InteractionMatrix::new();
+    let mut eco = PlanetEcosystem::new(species, matrix, Real::from_int(1000));
+
+    let mut all_events: Vec<SpeciesExtinct> = Vec::new();
+    // First EXTINCTION_CONFIRMATION_TICKS - 1 ticks the target
+    // sits below threshold but no event fires yet (streak hasn't
+    // reached confirmation). On the confirmation tick the event
+    // fires exactly once.
+    for tick in 0..(EXTINCTION_CONFIRMATION_TICKS + 5) {
+        // Force the target below the threshold every tick.
+        if let Some(s) = eco.species.get_mut(&target) {
+            if s.is_extant {
+                s.biomass = Real::ZERO;
+            }
+        }
+        let mut events = eco.step_at_tick(tick);
+        all_events.append(&mut events);
+    }
+
+    let matching: Vec<&SpeciesExtinct> = all_events
+        .iter()
+        .filter(|e| e.species_id == target.0)
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one SpeciesExtinct event for the target species, got {} (all={:?})",
+        matching.len(),
+        all_events,
+    );
+    let ev = matching[0];
+    assert_eq!(ev.species_id, target.0);
+    assert_eq!(
+        ev.cause,
+        ExtinctionCause::PopulationCollapse,
+        "Sprint 2 Item 6a always emits PopulationCollapse; other causes wire up later",
+    );
+    // Event tick should land on the confirmation boundary: the
+    // detector flips on the tick the streak first reaches
+    // EXTINCTION_CONFIRMATION_TICKS. Since the streak increments
+    // once per call starting from 0 and the first call is at
+    // `tick = 0`, the EXTINCTION_CONFIRMATION_TICKS-th call is
+    // `tick = EXTINCTION_CONFIRMATION_TICKS - 1`.
+    assert_eq!(
+        ev.tick,
+        EXTINCTION_CONFIRMATION_TICKS - 1,
+        "extinction event tick should land on the confirmation boundary",
+    );
+
+    // Subsequent steps should not re-emit (the species is already
+    // flagged extinct and the streak resets to zero on flip).
+    let later_events = eco.step_at_tick(1_000);
+    assert!(
+        later_events.is_empty(),
+        "extinct species should not emit a second event",
     );
 }
