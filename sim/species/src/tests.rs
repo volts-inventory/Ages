@@ -323,3 +323,151 @@ fn cognition_axes_diverge_from_scalar() {
          from_scalar_with_seed must perturb per-axis"
     );
 }
+
+// ---------------------------------------------------------------
+// Sprint 2 Item 7b — dormancy_capability + DormantPool tests.
+// ---------------------------------------------------------------
+
+#[test]
+fn dormancy_field_is_present_and_in_range() {
+    // Every sampled species has `dormancy_capability` ∈ [0, 1].
+    for seed in 0..256u64 {
+        let s = fixture(seed);
+        assert!(
+            s.dormancy_capability >= Real::ZERO && s.dormancy_capability <= Real::ONE,
+            "seed {seed}: dormancy_capability {:?} out of [0, 1]",
+            s.dormancy_capability,
+        );
+    }
+}
+
+#[test]
+fn dormancy_derivation_is_deterministic() {
+    let a = fixture(7);
+    let b = fixture(7);
+    assert_eq!(a.dormancy_capability, b.dormancy_capability);
+}
+
+#[test]
+fn apply_catastrophe_with_dormancy_zero_is_identity() {
+    let base = Real::percent(40);
+    let out = apply_catastrophe_with_dormancy(Real::ZERO, base, Real::ONE);
+    assert_eq!(out, base);
+}
+
+#[test]
+fn apply_catastrophe_with_dormancy_full_zeroes_damage() {
+    let base = Real::percent(40);
+    let out = apply_catastrophe_with_dormancy(Real::ONE, base, Real::ONE);
+    assert_eq!(out, Real::ZERO);
+}
+
+#[test]
+fn dormant_species_survives_catastrophe_at_reduced_rate() {
+    // Sprint 2 Item 7b spec test #1 — species-crate variant via
+    // the synthetic helper. (The catastrophe-crate variant in
+    // sim/civ/src/catastrophe/mod.rs covers the wired pipeline.)
+    let base = Real::percent(40);
+    let low = apply_catastrophe_with_dormancy(Real::ZERO, base, Real::ONE);
+    let high = apply_catastrophe_with_dormancy(Real::percent(90), base, Real::ONE);
+    // dormancy=0.9 → effective = base × 0.10. low / high = 10×.
+    assert_eq!(low, base);
+    assert_eq!(high, base * Real::percent(10));
+    let ratio = high / low;
+    // Q32.32 representation of 0.10 (= 10 / 100) isn't exact; use
+    // a tight tolerance band around 10%.
+    let tol = Real::from_ratio(1, 10_000);
+    assert!(
+        (ratio - Real::percent(10)).abs() <= tol,
+        "expected ratio ≈ 0.10, got {ratio:?}",
+    );
+}
+
+#[test]
+fn dormant_pool_resurrect_step_respects_target_cap() {
+    // Q32.32 representation of 1% is not exact, so use a small
+    // tolerance for the magnitudes derived from it.
+    let tol = Real::from_ratio(1, 1_000_000);
+
+    let mut pool = DormantPool {
+        population: Real::from_int(100),
+        entered_tick: 0,
+    };
+    let mut active = Real::from_int(950);
+    let target = Real::from_int(1000);
+    // 1% of 100 = 1.0; but the headroom is 50, so revive ≈ 1.0
+    // (well under the cap).
+    let revived = pool.resurrect_step(&mut active, target);
+    assert!(
+        (revived - Real::ONE).abs() <= tol,
+        "expected revived ≈ 1.0, got {revived:?}",
+    );
+    assert!(
+        (active - Real::from_int(951)).abs() <= tol,
+        "expected active ≈ 951, got {active:?}",
+    );
+    assert!(
+        (pool.population - Real::from_int(99)).abs() <= tol,
+        "expected pool ≈ 99, got {:?}",
+        pool.population,
+    );
+
+    // Now move active to one below the target: the next revive
+    // should clamp to the remaining headroom.
+    active = Real::from_int(999) + Real::from_ratio(5, 10);
+    let revived = pool.resurrect_step(&mut active, target);
+    // headroom = 0.5, revive_want ≈ 0.99 — clamp to 0.5.
+    assert!(
+        (revived - Real::from_ratio(5, 10)).abs() <= tol,
+        "expected revived ≈ 0.5, got {revived:?}",
+    );
+    assert!(
+        (active - target).abs() <= tol,
+        "expected active ≈ target, got {active:?}",
+    );
+}
+
+#[test]
+fn dormant_pool_resurrect_step_is_noop_when_empty() {
+    let mut pool = DormantPool::EMPTY;
+    let mut active = Real::from_int(10);
+    let revived = pool.resurrect_step(&mut active, Real::from_int(100));
+    assert_eq!(revived, Real::ZERO);
+    assert_eq!(active, Real::from_int(10));
+}
+
+#[test]
+fn seed_bank_resurrection_repopulates_post_extinction_event() {
+    // Sprint 2 Item 7b spec test #2.
+    //
+    // A catastrophic extinction has reduced the active population
+    // to a token survivor; the seed-bank dormant pool holds the
+    // 1000 individuals that crypto-bio'd through it. Over 500
+    // ticks of resurrection at 1%/tick we want the active pool to
+    // recover to ≥99% of the pre-event level (target = 1000).
+    let pre_event = Real::from_int(1000);
+    let mut pool = DormantPool {
+        population: Real::from_int(1000),
+        entered_tick: 0,
+    };
+    let mut active = Real::from_int(1);
+    for _ in 0..500 {
+        pool.resurrect_step(&mut active, pre_event);
+    }
+    // After 500 ticks at 1%/tick, the geometric-decay reserve has
+    // released 1 − 0.99^500 ≈ 0.9934 of its mass into the active
+    // pool. With an initial active of 1, the active should be at
+    // least 99% of pre_event.
+    let bound = pre_event * Real::percent(99);
+    assert!(
+        active >= bound,
+        "seed-bank failed to recover: active={active:?} bound={bound:?}",
+    );
+    // Conservation: pool + active ≤ pre_event + initial_active
+    // (no creation). With initial active = 1, this is ≤ 1001.
+    let total = active + pool.population;
+    assert!(
+        total <= Real::from_int(1001),
+        "conservation violated: total={total:?} > 1001",
+    );
+}

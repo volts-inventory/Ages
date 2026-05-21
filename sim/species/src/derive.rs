@@ -105,6 +105,16 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
     // generalists / extremophiles within the substrate.
     let tolerance = derive_tolerance_envelope(planet.seed, planet.metabolic_substrate);
 
+    // Dormancy capability sample (Sprint 2 Item 7b). Drawn from
+    // the same per-seed stream as the other species traits so
+    // replay stays bit-identical. The distribution is skewed
+    // strongly toward 0 — most species cannot enter cryptobiosis;
+    // tardigrade-grade dormancy is rare. We square the unit sample
+    // so the median lands near 0.25 and 0.9+ values only appear
+    // for the top decile of seeds.
+    let raw_dormancy = sample_unit(&mut rng);
+    let dormancy_capability = raw_dormancy * raw_dormancy;
+
     Species {
         seed: planet.seed,
         name,
@@ -142,19 +152,8 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         initial_cosmology,
         biology,
         tolerance,
-        // Default to Vertebrate for back-compat. Sprint 2 Item 7
-        // ships the enum + per-variant step routing; the next
-        // pass wires the r/K + habitat traits into a lifecycle
-        // sampler so r=1 broadcast-spawners route through
-        // `Aquatic { semelparous: true }`, social insects through
-        // `Eusocial`, etc.
         lifecycle: Lifecycle::Vertebrate,
-        // The legacy single-species `derive` produces the civ-
-        // bearing species — a PrimaryConsumer (herbivore-equivalent)
-        // by default. The multi-species ecosystem layer
-        // (`sim_ecosystem`) samples a full per-planet species
-        // distribution with the canonical role mix; this entry
-        // point preserves the v1 single-species story.
         role: EcosystemRole::PrimaryConsumer,
+        dormancy_capability,
     }
 }

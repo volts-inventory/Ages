@@ -491,6 +491,89 @@ impl InteractionMatrix {
     }
 }
 
+/// Dormant-population reservoir. Sprint 2 Item 7b: tardigrade-grade
+/// species that survive catastrophes enter a dormant state from
+/// which they slowly re-emerge over hundreds of ticks.
+///
+/// `population` is the surviving-but-dormant reservoir that the
+/// per-tick resurrection step drains back into the active cohort
+/// at a slow rate (default 1%/tick). `entered_tick` records the
+/// catastrophe tick the pool was created on, for telemetry and
+/// future age-based decay (deeply dormant pools can decay
+/// independently if a follow-up wants that). Both fields are
+/// deterministic Q32.32 / u64 — no float, no HashMap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DormantPool {
+    pub population: Real,
+    pub entered_tick: u64,
+}
+
+impl DormantPool {
+    /// Empty pool — no reserve, never entered.
+    pub const EMPTY: Self = Self {
+        population: Real::ZERO,
+        entered_tick: 0,
+    };
+
+    /// Per-tick fractional revive rate. 1% per tick → ~99% of the
+    /// reserve flows back into the active population over 500
+    /// ticks (1 - 0.99^500 ≈ 0.9934). Deterministic Real
+    /// arithmetic; see `resurrect_step`.
+    pub fn revive_rate() -> Real {
+        Real::percent(1)
+    }
+
+    /// Drain one tick's worth of dormant reserve back into the
+    /// active population, capped at `pre_event_target` so the
+    /// active pool never exceeds the pre-catastrophe level it is
+    /// recovering toward.
+    ///
+    /// Returns the revived amount actually transferred this tick.
+    /// Mutates `self.population` (drains the reserve) and
+    /// `active_population` (adds to the active cohort).
+    pub fn resurrect_step(&mut self, active_population: &mut Real, pre_event_target: Real) -> Real {
+        if self.population <= Real::ZERO {
+            return Real::ZERO;
+        }
+        let want = self.population * Self::revive_rate();
+        // Cap by the headroom remaining toward the pre-event
+        // target — never let the active pool overshoot what the
+        // species had before the catastrophe.
+        let headroom = (pre_event_target - *active_population).max(Real::ZERO);
+        let revived = want.min(headroom).min(self.population);
+        if revived <= Real::ZERO {
+            return Real::ZERO;
+        }
+        self.population = (self.population - revived).max(Real::ZERO);
+        *active_population = *active_population + revived;
+        revived
+    }
+}
+
+/// Apply a catastrophe's base damage to a species, returning the
+/// realised effective damage after dormancy reduction.
+///
+/// `effective_damage = base_damage × (1 − dormancy × severity_factor)`
+///
+/// `severity_factor ∈ [0, 1]` controls how much of the dormancy
+/// trait actually buys survival for a given catastrophe — 1.0 for
+/// full-severity catastrophes (the default this sprint), lower for
+/// shallow events (a future polish pass can expose this per-
+/// catastrophe). At `dormancy = 0` the reduction term is 0 so
+/// `effective = base`; at `dormancy = 1, severity = 1` the term is
+/// 1 so `effective = 0`. Bounds are not clamped here — callers
+/// already constrain `dormancy` to `[0, 1]` at sampling time, and
+/// `severity_factor` to `[0, 1]` at the call site, so the
+/// reduction term stays in `[0, 1]` by construction.
+pub fn apply_catastrophe_with_dormancy(
+    dormancy: Real,
+    base_damage: Real,
+    severity_factor: Real,
+) -> Real {
+    let reduction = dormancy * severity_factor;
+    base_damage * (Real::ONE - reduction)
+}
+
 /// Species habitat domain. See `Species::habitat`.
 ///
 /// The first four (Aquatic / Terrestrial / Amphibious / Airborne)

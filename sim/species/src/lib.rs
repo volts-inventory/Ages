@@ -30,10 +30,11 @@ pub use sampling::{
 };
 pub use species::Species;
 pub use types::{
-    CasteRole, CognitionAxes, CognitionTopology, DynamicTool, DynamicToolEffects, EcosystemRole,
-    Fission, FunctionalResponse, Habitat, Interaction, InteractionKind, InteractionMatrix,
-    Lifecycle, Manipulation, ManipulationKind, Modality, ModalityKind, MutualismKind, ParasiteKind,
-    PopulationBiology, ProducerMetabolism, SpeciesId, ToleranceEnvelope, DYNAMIC_TOOL_ID_START,
+    apply_catastrophe_with_dormancy, CasteRole, CognitionAxes, CognitionTopology, DormantPool,
+    DynamicTool, DynamicToolEffects, EcosystemRole, Fission, FunctionalResponse, Habitat,
+    Interaction, InteractionKind, InteractionMatrix, Lifecycle, Manipulation, ManipulationKind,
+    Modality, ModalityKind, MutualismKind, ParasiteKind, PopulationBiology, ProducerMetabolism,
+    SpeciesId, ToleranceEnvelope, DYNAMIC_TOOL_ID_START,
 };
 
 #[cfg(test)]

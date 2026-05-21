@@ -146,13 +146,14 @@ pub struct Species {
     /// pyramid + functional-response delta) and worldgen
     /// role-distribution constraints. Civ-bearing species are
     /// always a consumer tier with cognition ≥ 0.3.
-    ///
-    /// Back-compat: literal `Species { ... }` constructors that
-    /// pre-date the ecosystem layer can default this to
-    /// `EcosystemRole::PrimaryConsumer` — every existing downstream
-    /// civ formula treats the run's single species as an
-    /// implicit herbivore-equivalent.
     pub role: EcosystemRole,
+    /// Tardigrade-grade dormancy capability ∈ [0, 1]. A species
+    /// with `dormancy = 0.9` takes ~10× less damage from
+    /// catastrophes at full severity than one with `dormancy = 0`,
+    /// and seeds a dormant population reservoir that revives over
+    /// hundreds of ticks (see `DormantPool::resurrect_step`).
+    /// Sprint 2 Item 7b.
+    pub dormancy_capability: Real,
 }
 
 impl Species {
