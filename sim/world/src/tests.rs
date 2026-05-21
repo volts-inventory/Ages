@@ -780,3 +780,97 @@ fn mercury_analog_samples_3_2_resonance() {
     let state = crate::sampling::sample_locking_state(1, &moons, day_length);
     assert_eq!(state, LockingState::Resonance { p: 3, q: 2 });
 }
+
+#[test]
+fn young_star_high_euv_drives_hydrodynamic_atmosphere_loss() {
+    // Per Item 18a: the EUV channel decays with main-sequence
+    // age following a `t^(-1.5)` power law. A young G dwarf
+    // (~1 Myr) must emit dramatically more ionising flux than
+    // the same star at 5 Gyr — the difference Item 17 needs
+    // to drive hydrodynamic escape of light volatiles from
+    // a primordial atmosphere.
+    //
+    // With EUV_DECAY_GYR = 0.1 Gyr (saturation timescale):
+    // - age 0.001 Gyr → factor = (1 + 0.01)^(-1.5) ≈ 0.985
+    // - age 5 Gyr     → factor = (1 + 50)^(-1.5) ≈ 0.00275
+    // ratio ≈ 358× — well above the assertion floor of 10.
+    let zams = Real::from_int(1_361);
+    let lifetime = SpectralType::G.nominal_lifetime_gyr();
+    let young = Star::with_age(
+        SpectralType::G,
+        zams,
+        Real::from_ratio(1, 1_000),
+        lifetime,
+    );
+    let old = Star::with_age(SpectralType::G, zams, Real::from_int(5), lifetime);
+    let young_euv = young.euv_flux.to_f64_for_display();
+    let old_euv = old.euv_flux.to_f64_for_display();
+    assert!(
+        old_euv > 0.0,
+        "old-star EUV must remain positive (got {old_euv})",
+    );
+    let ratio = young_euv / old_euv;
+    assert!(
+        ratio > 10.0,
+        "young/old EUV ratio must exceed 10× (got {ratio:.2}; \
+         young {young_euv} W/m², old {old_euv} W/m²)",
+    );
+    // And the absolute young-star EUV must be substantial —
+    // at least near the SED-derived base (the decay factor
+    // at age 0.001 Gyr is ≈ 0.985, so we expect ≈ 13.4 W/m²
+    // for a Sun-on-Earth ZAMS G dwarf with 1% EUV fraction).
+    assert!(
+        young_euv > 10.0,
+        "young G-dwarf EUV at planet must exceed 10 W/m² \
+         (got {young_euv})",
+    );
+}
+
+#[test]
+fn euv_decay_follows_t_to_minus_1_5() {
+    // Verify the curve shape at three age points. The formula
+    // is `euv = base × (1 + age / 0.1)^(-1.5)`. We probe the
+    // ratio across age pairs and confirm it matches the
+    // closed-form expectation within Q32.32 / transcendental
+    // accuracy.
+    //
+    // Reference values (computed exactly):
+    // - factor(0.0)   = 1.0
+    // - factor(0.1)   = 2.0^(-1.5)   ≈ 0.353553
+    // - factor(1.0)   = 11.0^(-1.5)  ≈ 0.027437
+    // - factor(10.0)  = 101.0^(-1.5) ≈ 0.000985
+    let zams = Real::from_int(1_361);
+    let lifetime = SpectralType::G.nominal_lifetime_gyr();
+    let base_euv = Star::new(SpectralType::G, zams).euv_flux.to_f64_for_display();
+
+    let at = |age: Real| -> f64 {
+        Star::with_age(SpectralType::G, zams, age, lifetime)
+            .euv_flux
+            .to_f64_for_display()
+    };
+
+    let f0_1 = at(Real::from_ratio(1, 10)) / base_euv;
+    let f1 = at(Real::ONE) / base_euv;
+    let f10 = at(Real::from_int(10)) / base_euv;
+
+    // 2^(-1.5) ≈ 0.353553. Allow 2% tolerance (the workspace
+    // `pow` is `exp(b · ln(a))` and accumulates a few LSBs of
+    // error in Q32.32).
+    assert!(
+        (f0_1 - 0.353_553).abs() < 0.01,
+        "factor at age=0.1 Gyr expected ≈ 0.3536, got {f0_1}",
+    );
+    // 11^(-1.5) ≈ 0.027437.
+    assert!(
+        (f1 - 0.027_437).abs() < 0.002,
+        "factor at age=1.0 Gyr expected ≈ 0.0274, got {f1}",
+    );
+    // 101^(-1.5) ≈ 0.000985.
+    assert!(
+        (f10 - 0.000_985).abs() < 0.000_2,
+        "factor at age=10 Gyr expected ≈ 0.000985, got {f10}",
+    );
+    // Monotonic decay: each later age must have less EUV.
+    assert!(f0_1 > f1, "EUV must decay monotonically: f(0.1) > f(1)");
+    assert!(f1 > f10, "EUV must decay monotonically: f(1) > f(10)");
+}
