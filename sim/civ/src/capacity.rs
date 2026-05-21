@@ -147,11 +147,27 @@ impl Civ {
     /// dynamics. Replaces the M2-era `step_population` that ignored
     /// capacity; callers thread the current `PhysicsState` so
     /// capacity tracks ecosystem changes mid-run.
-    pub fn step_population_with_capacity(&mut self, state: &sim_physics::PhysicsState) {
+    ///
+    /// Routes through `step_for_lifecycle` so a species'
+    /// `Lifecycle` variant (Vertebrate, Insect, Eusocial, …) picks
+    /// the matching per-tick step. `Vertebrate` falls through to
+    /// the legacy `step_with_capacity` bit-for-bit so existing
+    /// Vertebrate-species runs reproduce byte-for-byte.
+    pub fn step_population_with_capacity(
+        &mut self,
+        state: &sim_physics::PhysicsState,
+        species: &sim_species::Species,
+    ) {
         let cap = self.carrying_capacity(state);
         self.dynamics.mortality_reduction = self.tool_mortality_reduction_per_bracket();
         self.dynamics.birth_rate_multiplier = Real::ONE + self.tool_fertility_bonus();
-        self.dynamics.step_with_capacity(&mut self.cohort, cap);
+        sim_population::lifecycle::step_for_lifecycle(
+            &species.lifecycle,
+            &mut self.lifecycle_state,
+            &self.dynamics,
+            &mut self.cohort,
+            cap,
+        );
     }
 
     /// season-aware population step. Same dynamics as
@@ -168,7 +184,13 @@ impl Civ {
         let cap = self.seasonal_carrying_capacity(state, tick, planet);
         // Re-derive dynamics so tech changes take effect each tick.
         self.dynamics = crate::dynamics_for_civ(self, species, planet);
-        self.dynamics.step_with_capacity(&mut self.cohort, cap);
+        sim_population::lifecycle::step_for_lifecycle(
+            &species.lifecycle,
+            &mut self.lifecycle_state,
+            &self.dynamics,
+            &mut self.cohort,
+            cap,
+        );
     }
 
     /// per-cell capacity. Same fuel-density formula as the
@@ -251,7 +273,13 @@ impl Civ {
         for cell in cells {
             let cap = self.cell_capacity(state, cell, tick, planet);
             if let Some(cohort) = self.region_cohorts.get_mut(&cell) {
-                self.dynamics.step_with_capacity(cohort, cap);
+                sim_population::lifecycle::step_for_lifecycle(
+                    &species.lifecycle,
+                    &mut self.lifecycle_state,
+                    &self.dynamics,
+                    cohort,
+                    cap,
+                );
             }
         }
         // Re-sum each bracket independently so the civ-level

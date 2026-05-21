@@ -117,6 +117,7 @@ impl Civ {
             founded_tick,
             cohort: Cohort::with_civ(initial_population, id),
             dynamics: PopulationDynamics::earth_like_default(),
+            lifecycle_state: sim_population::LifecycleState::None,
             observations: BTreeMap::new(),
             intelligence,
             grammar,

@@ -33,7 +33,7 @@ pub mod lifecycle;
 
 pub use lifecycle::{
     step_aquatic, step_eusocial, step_for_lifecycle, step_insect, step_microbial, step_modular,
-    step_plant, EusocialColony,
+    step_plant, EusocialColony, LifecycleState,
 };
 
 /// 4-bracket population cohort. Replaces the earlier scalar

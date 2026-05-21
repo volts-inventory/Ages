@@ -901,3 +901,169 @@ fn acentric_species_retains_knowledge_across_generations_better() {
          acentric={acentric_decay:?} centralized={centralized_decay:?}",
     );
 }
+
+// P0.3 — Lifecycle dispatch wired into the production civ tick.
+//
+// `step_population_with_capacity` (and its per-cell sibling) now
+// route through `sim_population::lifecycle::step_for_lifecycle`,
+// so non-Vertebrate species run their topology-specific step
+// rather than the legacy 4-bracket cohort. The three tests below
+// pin the three properties the dispatch must satisfy:
+//
+//  1. Vertebrate behaviour is preserved bit-for-bit.
+//  2. Insect-species dynamics differ from Vertebrate-species
+//     dynamics under identical params.
+//  3. Eusocial colonies only reproduce via the Reproductive caste
+//     — Worker headcount does not grow from births.
+
+/// Vertebrate-species trajectory is unchanged post-dispatch. Two
+/// identical civs — one stepped through the new
+/// `step_population_with_capacity` (which now routes through
+/// `step_for_lifecycle`), one stepped through the raw
+/// `PopulationDynamics::step_with_capacity` — must produce
+/// bit-identical bracket counts over 100 ticks.
+#[test]
+fn vertebrate_civ_dynamics_unchanged_post_dispatch() {
+    use sim_recognition::RecognitionLibrary;
+    use sim_world::sample_planet;
+    let planet = sample_planet(1);
+    let lib = RecognitionLibrary::earth_like_default();
+    let mut species = sim_species::derive(&planet, &lib);
+    species.lifecycle = sim_species::Lifecycle::Vertebrate;
+
+    let mut civ = Civ::new(1, 0, Pop::from_int(1_000));
+    civ.configure_lifecycle_state(&species.lifecycle);
+    let state = well_fed_state();
+
+    // Mirror cohort + dynamics — the "via legacy" baseline.
+    let mut mirror_cohort = civ.cohort.clone();
+    let mirror_dynamics = civ.dynamics.clone();
+    let cap = civ.carrying_capacity(&state);
+
+    for _ in 0..100 {
+        civ.step_population_with_capacity(&state, &species);
+        mirror_dynamics.step_with_capacity(&mut mirror_cohort, cap);
+    }
+
+    assert_eq!(
+        civ.cohort.infant, mirror_cohort.infant,
+        "Vertebrate dispatch must match legacy step bit-for-bit (infant)"
+    );
+    assert_eq!(
+        civ.cohort.juvenile, mirror_cohort.juvenile,
+        "Vertebrate dispatch must match legacy step bit-for-bit (juvenile)"
+    );
+    assert_eq!(
+        civ.cohort.fertile, mirror_cohort.fertile,
+        "Vertebrate dispatch must match legacy step bit-for-bit (fertile)"
+    );
+    assert_eq!(
+        civ.cohort.elder, mirror_cohort.elder,
+        "Vertebrate dispatch must match legacy step bit-for-bit (elder)"
+    );
+}
+
+/// Insect-species and Vertebrate-species civs with identical
+/// starting conditions diverge under the dispatch. The Insect
+/// branch adds an extra adult-mortality term (5% per tick) on top
+/// of the legacy step, so the adult (fertile) bracket must trail
+/// the Vertebrate baseline after a few hundred ticks.
+#[test]
+fn insect_civ_distinct_dynamics_from_vertebrate() {
+    use sim_recognition::RecognitionLibrary;
+    use sim_world::sample_planet;
+    let planet = sample_planet(1);
+    let lib = RecognitionLibrary::earth_like_default();
+    let mut insect = sim_species::derive(&planet, &lib);
+    insect.lifecycle = sim_species::Lifecycle::Insect;
+    let mut vertebrate = insect.clone();
+    vertebrate.lifecycle = sim_species::Lifecycle::Vertebrate;
+
+    let mut insect_civ = Civ::new(1, 0, Pop::from_int(1_000));
+    insect_civ.configure_lifecycle_state(&insect.lifecycle);
+    let mut vert_civ = Civ::new(2, 0, Pop::from_int(1_000));
+    vert_civ.configure_lifecycle_state(&vertebrate.lifecycle);
+    let state = well_fed_state();
+
+    // Both civs see identical capacity / dynamics; only the
+    // `Lifecycle` differs.
+    for _ in 0..200 {
+        insect_civ.step_population_with_capacity(&state, &insect);
+        vert_civ.step_population_with_capacity(&state, &vertebrate);
+    }
+
+    let insect_fertile = insect_civ.cohort.fertile;
+    let vert_fertile = vert_civ.cohort.fertile;
+    assert!(
+        insect_fertile < vert_fertile,
+        "Insect adult-mortality term must drag fertile below Vertebrate: \
+         insect={insect_fertile:?} vert={vert_fertile:?}"
+    );
+    // Totals should also differ — confirms the dispatch ran a
+    // different code path, not just rounding noise.
+    assert_ne!(
+        insect_civ.cohort.total(),
+        vert_civ.cohort.total(),
+        "Insect and Vertebrate trajectories must diverge under dispatch"
+    );
+}
+
+/// Eusocial colony: Worker caste must not grow from reproduction.
+/// Seed Reproductive=10 + Worker=100, step under generous
+/// capacity, and assert Worker headcount never exceeds the
+/// initial 100 — only the Reproductive caste produces offspring,
+/// and births land in Reproductive (not Worker).
+#[test]
+fn eusocial_civ_only_reproductive_caste_breeds() {
+    use sim_population::LifecycleState;
+    use sim_recognition::RecognitionLibrary;
+    use sim_species::CasteRole;
+    use sim_world::sample_planet;
+    let planet = sample_planet(1);
+    let lib = RecognitionLibrary::earth_like_default();
+    let mut species = sim_species::derive(&planet, &lib);
+    species.lifecycle = sim_species::Lifecycle::Eusocial {
+        castes: vec![CasteRole::Reproductive, CasteRole::Worker],
+    };
+
+    let mut civ = Civ::new(1, 0, Pop::from_int(110));
+    // Override the default founder-into-Reproductive seeding with
+    // an explicit Reproductive=10 + Worker=100 split.
+    civ.lifecycle_state = LifecycleState::for_lifecycle(&species.lifecycle);
+    if let Some(colony) = civ.lifecycle_state.eusocial_mut() {
+        colony.castes.insert(CasteRole::Reproductive, Pop::from_int(10));
+        colony.castes.insert(CasteRole::Worker, Pop::from_int(100));
+    }
+    let initial_worker = if let LifecycleState::Eusocial(c) = &civ.lifecycle_state {
+        c.caste(CasteRole::Worker)
+    } else {
+        panic!("expected Eusocial state");
+    };
+    assert_eq!(initial_worker, Pop::from_int(100));
+
+    let state = well_fed_state();
+    for _ in 0..120 {
+        civ.step_population_with_capacity(&state, &species);
+    }
+
+    let final_worker = if let LifecycleState::Eusocial(c) = &civ.lifecycle_state {
+        c.caste(CasteRole::Worker)
+    } else {
+        panic!("expected Eusocial state");
+    };
+    assert!(
+        final_worker <= initial_worker,
+        "Worker caste must not grow via reproduction: initial={initial_worker:?} final={final_worker:?}"
+    );
+    // Reproductive caste should hold ≥ initial 10 (births offset
+    // survival decay under abundant food).
+    let final_repro = if let LifecycleState::Eusocial(c) = &civ.lifecycle_state {
+        c.caste(CasteRole::Reproductive)
+    } else {
+        panic!("expected Eusocial state");
+    };
+    assert!(
+        final_repro >= Pop::from_int(10),
+        "Reproductive caste should grow from births: {final_repro:?}"
+    );
+}

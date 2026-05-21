@@ -21,21 +21,106 @@ use sim_arith::{Pop, Real};
 use sim_species::{CasteRole, Fission, Lifecycle};
 use std::collections::BTreeMap;
 
+/// Per-civ variant-specific lifecycle state. Lives alongside the
+/// civ's 4-bracket `Cohort` so the `step_for_lifecycle` dispatcher
+/// can drive variants that need state outside the cohort —
+/// `Eusocial` per-caste headcount, `Microbial` / `Modular` single
+/// biomass. The default `None` variant covers `Vertebrate`,
+/// `Aquatic`, `Insect`, and `Plant`, which read the 4-bracket
+/// cohort directly.
+///
+/// Deterministic: `EusocialColony` uses `BTreeMap` internally so
+/// iteration order is stable across rebuilds; the biomass variants
+/// are scalar `Pop`.
+#[derive(Debug, Clone)]
+pub enum LifecycleState {
+    /// Variants that read only the 4-bracket `Cohort` keep this.
+    /// Vertebrate, Aquatic, Insect, and Plant land here.
+    None,
+    /// Per-caste headcount for `Lifecycle::Eusocial`.
+    Eusocial(EusocialColony),
+    /// Single biomass scalar for `Lifecycle::Microbial`.
+    Microbial(Pop),
+    /// Single biomass scalar for `Lifecycle::Modular`.
+    Modular(Pop),
+}
+
+impl Default for LifecycleState {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl LifecycleState {
+    /// Construct the matching default state for a `Lifecycle`. For
+    /// Eusocial, seeds the caste roster from the variant's
+    /// declared castes (each starting at zero pop — the caller
+    /// must seed real headcounts via `configure_lifecycle_state`).
+    /// For Microbial / Modular, seeds biomass to zero. The
+    /// Vertebrate / Aquatic / Insect / Plant arms yield `None`.
+    #[must_use]
+    pub fn for_lifecycle(lifecycle: &Lifecycle) -> Self {
+        match lifecycle {
+            Lifecycle::Eusocial { castes } => {
+                let seed: Vec<(CasteRole, Pop)> =
+                    castes.iter().map(|r| (*r, Pop::ZERO)).collect();
+                Self::Eusocial(EusocialColony::new(&seed))
+            }
+            Lifecycle::Microbial { .. } => Self::Microbial(Pop::ZERO),
+            Lifecycle::Modular => Self::Modular(Pop::ZERO),
+            _ => Self::None,
+        }
+    }
+
+    /// Mutable access to the Eusocial colony if this is the
+    /// Eusocial variant. Used by callers seeding initial caste
+    /// headcounts.
+    #[must_use]
+    pub fn eusocial_mut(&mut self) -> Option<&mut EusocialColony> {
+        if let Self::Eusocial(c) = self {
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    /// Mutable access to the Microbial biomass if applicable.
+    #[must_use]
+    pub fn microbial_mut(&mut self) -> Option<&mut Pop> {
+        if let Self::Microbial(p) = self {
+            Some(p)
+        } else {
+            None
+        }
+    }
+
+    /// Mutable access to the Modular biomass if applicable.
+    #[must_use]
+    pub fn modular_mut(&mut self) -> Option<&mut Pop> {
+        if let Self::Modular(p) = self {
+            Some(p)
+        } else {
+            None
+        }
+    }
+}
+
 /// Step a cohort one tick under its species' `Lifecycle` variant.
 ///
 /// Dispatches to the per-variant step function. For `Vertebrate`
 /// the call is bit-identical to `dynamics.step_with_capacity` so
 /// existing downstream consumers stay unaffected.
 ///
-/// For non-Vertebrate variants requiring additional per-species
-/// state (Eusocial caste counts, Microbial biomass, Modular
-/// biomass), use the variant-specific `step_*` helpers directly.
-/// This convenience dispatcher provides the minimal-correct
-/// behaviour: it routes Eusocial / Microbial / Modular through the
-/// vertebrate path (since they require state outside `Cohort`),
-/// while Aquatic / Insect / Plant get their dedicated step.
+/// Eusocial / Microbial / Modular use the per-variant state in
+/// `lifecycle_state`; the caller owns that storage. When the
+/// supplied `lifecycle_state` doesn't match the `Lifecycle`
+/// variant (e.g. a `LifecycleState::None` for an Eusocial
+/// species), the dispatcher falls through to the vertebrate
+/// 4-bracket step so a partially-wired call still produces a
+/// well-defined trajectory rather than panicking.
 pub fn step_for_lifecycle(
     lifecycle: &Lifecycle,
+    lifecycle_state: &mut LifecycleState,
     dynamics: &PopulationDynamics,
     cohort: &mut Cohort,
     capacity: Pop,
@@ -53,16 +138,26 @@ pub fn step_for_lifecycle(
         Lifecycle::Plant => {
             step_plant(dynamics, cohort, capacity);
         }
-        // Eusocial / Microbial / Modular need state outside `Cohort`
-        // (per-caste pop maps, biomass scalars). Callers that want
-        // those dynamics should invoke the dedicated step helpers
-        // (`step_eusocial`, `step_microbial`, `step_modular`)
-        // directly; the convenience dispatcher falls through to
-        // the vertebrate step so an incomplete wiring still
-        // produces a well-defined trajectory rather than a
-        // panic.
-        Lifecycle::Eusocial { .. } | Lifecycle::Microbial { .. } | Lifecycle::Modular => {
-            dynamics.step_with_capacity(cohort, capacity);
+        Lifecycle::Eusocial { .. } => {
+            if let LifecycleState::Eusocial(colony) = lifecycle_state {
+                step_eusocial(colony, dynamics, capacity);
+            } else {
+                dynamics.step_with_capacity(cohort, capacity);
+            }
+        }
+        Lifecycle::Microbial { fission_strategy } => {
+            if let LifecycleState::Microbial(biomass) = lifecycle_state {
+                step_microbial(*fission_strategy, biomass, capacity);
+            } else {
+                dynamics.step_with_capacity(cohort, capacity);
+            }
+        }
+        Lifecycle::Modular => {
+            if let LifecycleState::Modular(biomass) = lifecycle_state {
+                step_modular(biomass, capacity);
+            } else {
+                dynamics.step_with_capacity(cohort, capacity);
+            }
         }
     }
 }
@@ -408,8 +503,15 @@ mod tests {
         );
         let mut cohort = Cohort::new(Pop::from_int(100));
         let lifecycle = Lifecycle::Aquatic { semelparous: true };
+        let mut state = LifecycleState::for_lifecycle(&lifecycle);
         let before_fertile = cohort.fertile;
-        step_for_lifecycle(&lifecycle, &dyn_, &mut cohort, Pop::from_int(1_000_000));
+        step_for_lifecycle(
+            &lifecycle,
+            &mut state,
+            &dyn_,
+            &mut cohort,
+            Pop::from_int(1_000_000),
+        );
         // Parents drop to zero (or near zero — promotions from
         // juveniles are absent on the first tick).
         assert!(
@@ -510,15 +612,19 @@ mod tests {
         vert.elder = Pop::from_int(100);
         let mut plant = Cohort::empty();
         plant.elder = Pop::from_int(100);
+        let mut vert_state = LifecycleState::None;
+        let mut plant_state = LifecycleState::None;
         for _ in 0..6 {
             step_for_lifecycle(
                 &Lifecycle::Vertebrate,
+                &mut vert_state,
                 &dyn_,
                 &mut vert,
                 Pop::from_int(1_000_000),
             );
             step_for_lifecycle(
                 &Lifecycle::Plant,
+                &mut plant_state,
                 &dyn_,
                 &mut plant,
                 Pop::from_int(1_000_000),
@@ -565,9 +671,11 @@ mod tests {
         );
         let mut via_lifecycle = Cohort::new(Pop::from_int(100));
         let mut via_legacy = Cohort::new(Pop::from_int(100));
+        let mut state = LifecycleState::None;
         for _ in 0..30 {
             step_for_lifecycle(
                 &Lifecycle::Vertebrate,
+                &mut state,
                 &dyn_,
                 &mut via_lifecycle,
                 Pop::from_int(10_000),
@@ -595,15 +703,19 @@ mod tests {
         aquatic.juvenile = Pop::from_int(1_000);
         let mut vert = Cohort::empty();
         vert.juvenile = Pop::from_int(1_000);
+        let mut aq_state = LifecycleState::None;
+        let mut vt_state = LifecycleState::None;
         for _ in 0..6 {
             step_for_lifecycle(
                 &Lifecycle::Aquatic { semelparous: false },
+                &mut aq_state,
                 &dyn_,
                 &mut aquatic,
                 Pop::from_int(1_000_000),
             );
             step_for_lifecycle(
                 &Lifecycle::Vertebrate,
+                &mut vt_state,
                 &dyn_,
                 &mut vert,
                 Pop::from_int(1_000_000),
