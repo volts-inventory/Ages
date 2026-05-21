@@ -12,6 +12,7 @@
 
 pub mod albedo;
 pub mod chemistry;
+pub mod clouds;
 pub mod coriolis;
 pub mod em;
 pub mod fluid;
@@ -39,6 +40,7 @@ pub use albedo::{
     sigmoid_real, IceAlbedo,
 };
 pub use chemistry::{Chemistry, Substance};
+pub use clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType, Clouds};
 pub use coriolis::Coriolis;
 pub use em::Electromagnetism;
 pub use fluid::GravityFlow;
