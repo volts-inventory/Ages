@@ -58,7 +58,7 @@ pub(crate) struct Laws {
 /// shapes fixed, parametric values vary).
 pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     let mechanics = Mechanics {
-        gravity: planet.gravity,
+        gravity: planet.gravity(),
     };
     let fluid = GravityFlow::from_mechanics(mechanics);
 

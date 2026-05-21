@@ -393,7 +393,10 @@ mod tests {
         Planet {
             seed: 0,
             name: "TestPlanet".to_string(),
-            gravity: Real::from_int(10),
+            // Earth-like mass/radius → derived gravity ≈ 9.81 m/s²
+            // (Sprint 5 Item 21).
+            mass: Real::ONE,
+            radius: Real::ONE,
             composition: sim_world::Composition::Rocky,
             mean_temperature: Real::from_int(288),
             temperature_gradient: Real::from_int(20),
