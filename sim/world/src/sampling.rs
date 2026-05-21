@@ -310,6 +310,30 @@ pub fn sample_planet(seed: u64) -> Planet {
     // Stellar irradiance in W/m² at the planet (Earth ≈ 1361).
     let stellar_luminosity = Real::from_int(rng.gen_range(200..=3_000));
 
+    // Planet orbital distance in AU (Earth = 1.0). Sampled per
+    // substrate as a small AU band: aqueous worlds cluster near
+    // 1 AU (the canonical liquid-water habitable distance);
+    // ammoniacal / hydrocarbon worlds sit further out (cold
+    // chemistry favours wider orbits); silicate worlds run hot
+    // and close-in. The integer × 100 → ratio path keeps the
+    // deterministic draw integer-only. Item 18 / P1.4: this is
+    // consulted against `star.hz_inner_edge_au()` /
+    // `hz_outer_edge_au()` in `habitability::cell_habitability`
+    // so stellar-evolution-driven HZ migration can drift biome
+    // classes outside the HZ as the star ages.
+    let (orbit_au_lo_x100, orbit_au_hi_x100): (i64, i64) = match metabolic_substrate {
+        // Aqueous: 0.85-1.15 AU (Earth-band).
+        MetabolicSubstrate::Aqueous => (85, 115),
+        // Ammoniacal: 1.5-3.5 AU (cold outer worlds).
+        MetabolicSubstrate::Ammoniacal => (150, 350),
+        // Hydrocarbon: 5.0-15.0 AU (Titan-band).
+        MetabolicSubstrate::Hydrocarbon => (500, 1_500),
+        // Silicate: 0.30-0.80 AU (hot inner worlds).
+        MetabolicSubstrate::Silicate => (30, 80),
+    };
+    let orbit_au_x100 = rng.gen_range(orbit_au_lo_x100..=orbit_au_hi_x100);
+    let orbital_distance_au = Real::from_ratio(orbit_au_x100, 100);
+
     // Spectral class. Realistic galactic frequencies skew
     // heavily toward M dwarfs, but the simulation biases the
     // distribution slightly toward middleweight stars (K/G/F)
@@ -438,6 +462,16 @@ pub fn sample_planet(seed: u64) -> Planet {
     // get a Resonance assignment by SplitMix64 jitter for variety.
     let locking_state = sample_locking_state(seed, &moons, day_length_hours);
 
+    // P1.4: one-shot biosphere-class downgrade if the sampled
+    // orbital distance lands outside the star's habitable zone.
+    // `cell_habitability` reads the same HZ edges per tick, but
+    // a planet that started life well outside the HZ (e.g. a hot
+    // silicate world inside the inner edge, or a cold hydrocarbon
+    // world far past the outer edge) starts at a degraded biosphere
+    // tier. The per-tick `cell_habitability` scalar then continues
+    // to drift as the star ages and the HZ edges migrate.
+    let biosphere = apply_hz_biosphere_drift(biosphere, &star, orbital_distance_au);
+
     Planet {
         seed,
         name,
@@ -459,6 +493,7 @@ pub fn sample_planet(seed: u64) -> Planet {
         crust,
         crustal_composition,
         stellar_luminosity,
+        orbital_distance_au,
         moon_count,
         moons,
         orbital_eccentricity_x100,
@@ -472,6 +507,42 @@ pub fn sample_planet(seed: u64) -> Planet {
         substrate_perturbation: Real::from_ratio(rng.gen_range(-50_i64..=50_i64), 1000),
         locking_state,
         star,
+    }
+}
+
+/// One-shot biosphere-class downgrade for planets sampled outside
+/// the habitable zone. Reads the star's HZ edges via
+/// `habitability::hz_factor` against the planet's orbital distance;
+/// if the factor falls below `0.5` the categorical `BiosphereClass`
+/// drops by one tier:
+///
+/// - `HyperBiodiverse → Lush`
+/// - `Lush → Sparse`
+/// - `Sparse → None`
+/// - `None → None`
+///
+/// P1.4: this is the worldgen-time application of the HZ migration
+/// gate. The per-tick `cell_habitability` scalar continues to drift
+/// with the star's age (since `Star::hz_inner_edge_au` /
+/// `hz_outer_edge_au` read the age-adjusted bolometric luminosity);
+/// the categorical biosphere class only drops once at sampling
+/// because it's a `Copy` enum on the `Planet` and the per-tick
+/// physics doesn't yet rewrite planet metadata. Per-tick categorical
+/// drift is documented as a follow-up.
+pub(crate) fn apply_hz_biosphere_drift(
+    biosphere: crate::BiosphereClass,
+    star: &crate::Star,
+    orbital_distance_au: Real,
+) -> crate::BiosphereClass {
+    use crate::BiosphereClass;
+    let factor = crate::habitability::hz_factor(star, orbital_distance_au);
+    if factor >= Real::from_ratio(5, 10) {
+        return biosphere;
+    }
+    match biosphere {
+        BiosphereClass::HyperBiodiverse => BiosphereClass::Lush,
+        BiosphereClass::Lush => BiosphereClass::Sparse,
+        BiosphereClass::Sparse | BiosphereClass::None => BiosphereClass::None,
     }
 }
 

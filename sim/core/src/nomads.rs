@@ -1106,6 +1106,7 @@ mod tests {
             magnetosphere: Magnetosphere::Strong,
             crust: Crust::Basaltic,
             stellar_luminosity: Real::ONE,
+            orbital_distance_au: Real::ONE,
             moon_count: 1,
             moons: vec![],
             orbital_eccentricity_x100: 5,

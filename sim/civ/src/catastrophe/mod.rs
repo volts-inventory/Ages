@@ -608,6 +608,7 @@ mod tests {
             magnetosphere: Magnetosphere::Strong,
             crust: sim_world::Crust::Basaltic,
             stellar_luminosity: Real::from_int(1361),
+            orbital_distance_au: Real::ONE,
             moon_count: 1,
             moons: vec![sim_world::Moon {
                 mass_relative_x100: 100,

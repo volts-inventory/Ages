@@ -117,6 +117,16 @@ pub struct Planet {
     /// Stellar irradiance at the planet's orbit, in W/m²
     /// (Earth ≈ 1361 W/m²). Range ~200 to ~3000.
     pub stellar_luminosity: Real,
+    /// Planet's orbital distance from its host star in AU
+    /// (Earth = 1.0 AU). Used together with `star.hz_inner_edge_au()`
+    /// / `star.hz_outer_edge_au()` to compute the HZ habitability
+    /// factor in `habitability::cell_habitability`: a planet pushed
+    /// inside the inner edge by stellar-evolution-driven luminosity
+    /// drift bakes, while one pushed past the outer edge freezes.
+    /// Sampled per planet from substrate-aware ranges in
+    /// `sample_planet`; the worldgen default is 1.0 AU so synthetic
+    /// test planets remain inside a G-dwarf's HZ.
+    pub orbital_distance_au: Real,
     /// Moon count. An earlier single-moon tides law treated any
     /// non-zero count as one Earth-like cycle; the current
     /// per-moon list lets multi-moon planets get spring/neap

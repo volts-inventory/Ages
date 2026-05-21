@@ -205,6 +205,7 @@ mod tests {
             crust: Crust::Basaltic,
             crustal_composition: CrustalComposition::empty(),
             stellar_luminosity: Real::from_int(1_361),
+            orbital_distance_au: Real::ONE,
             moon_count: 1,
             moons: vec![moon_with_e(Real::from_ratio(5, 100))],
             orbital_eccentricity_x100: 2,
