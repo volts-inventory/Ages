@@ -317,9 +317,12 @@ dependencies = [
  "protocol",
  "rand",
  "rand_chacha",
+ "serde_json",
  "sim-arith",
  "sim-physics",
+ "sim-recognition",
  "sim-species",
+ "sim-world",
 ]
 
 [[package]]
