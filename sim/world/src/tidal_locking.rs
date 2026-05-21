@@ -187,7 +187,8 @@ mod tests {
         Planet {
             seed: 1,
             name: String::from("test"),
-            gravity: Real::from_int(10),
+            mass: Real::ONE,
+            radius: Real::ONE,
             composition: Composition::Rocky,
             mean_temperature: Real::from_int(288),
             temperature_gradient: Real::from_int(20),
@@ -213,6 +214,7 @@ mod tests {
             metabolic_substrate: MetabolicSubstrate::Aqueous,
             substrate_perturbation: Real::ZERO,
             locking_state,
+            star: crate::Star::new(crate::SpectralType::G, Real::from_int(1_361)),
         }
     }
 

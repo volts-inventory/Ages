@@ -6,7 +6,7 @@
 
 use crate::{
     Atmosphere, AtmosphericComposition, BiosphereClass, Composition, Crust, CrustalComposition,
-    LockingState, Magnetosphere, MetabolicSubstrate, Moon, Planet,
+    LockingState, Magnetosphere, MetabolicSubstrate, Moon, Planet, SpectralType, Star,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -302,6 +302,50 @@ pub fn sample_planet(seed: u64) -> Planet {
     // Stellar irradiance in W/m² at the planet (Earth ≈ 1361).
     let stellar_luminosity = Real::from_int(rng.gen_range(200..=3_000));
 
+    // Spectral class. Realistic galactic frequencies skew
+    // heavily toward M dwarfs, but the simulation biases the
+    // distribution slightly toward middleweight stars (K/G/F)
+    // so the typical seed lands a star with a habitable-zone
+    // wide enough to host the sampled planet without driving
+    // every run into M-dwarf-locked-rotator territory.
+    //
+    // Distribution (out of 1000):
+    //   M: 600 (60%)
+    //   K: 200 (20%)
+    //   G: 120 (12%)
+    //   F:  50 (5%)
+    //   A:  30 (3%)
+    let spectral_type = match rng.gen_range(0..1_000) {
+        0..=599 => SpectralType::M,
+        600..=799 => SpectralType::K,
+        800..=919 => SpectralType::G,
+        920..=969 => SpectralType::F,
+        _ => SpectralType::A,
+    };
+
+    // Main-sequence age in Gyr. Sample uniformly within
+    // `[0, 0.9 × lifetime)` so most planets sit comfortably in
+    // the mid-MS band (no red-giant runs by default; tests
+    // that need post-MS stars construct via `Star::with_age`).
+    let lifetime_gyr = spectral_type.nominal_lifetime_gyr();
+    // Express lifetime as an integer Gyr × 10 to give the age
+    // sampler enough resolution without leaving Q32.32.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let lifetime_int_x10 = (lifetime_gyr.to_f64_for_display() * 10.0) as i64;
+    let max_age_x10 = (lifetime_int_x10 * 9) / 10;
+    let age_x10 = if max_age_x10 > 0 {
+        rng.gen_range(0..max_age_x10)
+    } else {
+        0
+    };
+    let age_gyr = Real::from_ratio(age_x10, 10);
+
+    // Build the star with age-adjusted luminosity. The
+    // ZAMS bolometric irradiance at the planet is the
+    // sampled `stellar_luminosity`; `Star::with_age` applies
+    // the per-age scale factor + SED fractions.
+    let star = Star::with_age(spectral_type, stellar_luminosity, age_gyr, lifetime_gyr);
+
     // Crust mineral profile. Biased toward Basaltic (the Earth-
     // adjacent default) so most seeds remain familiar; the four
     // exotic variants give the rare seed a genuinely different
@@ -410,15 +454,8 @@ pub fn sample_planet(seed: u64) -> Planet {
         // [-0.05, +0.05]. RNG draw of an i64 in [-50, 50] divided
         // by 1000 — gives 5% relative drift on freeze/boil points.
         substrate_perturbation: Real::from_ratio(rng.gen_range(-50_i64..=50_i64), 1000),
-        // Tidal-locking regime. Item 19 (this PR) introduces the
-        // enum + per-tick dynamics with `FreeRotator` as the back-
-        // compat default; Item 24 will add the proper sampler that
-        // examines moon mass + orbital period + day length and
-        // picks {Synchronous, Resonance(p,q), FreeRotator}. Until
-        // then every sampled planet defaults to FreeRotator (slow
-        // tidal damping of eccentricity, sub-stellar point rotates
-        // with macro_step).
         locking_state: LockingState::FreeRotator,
+        star,
     }
 }
 

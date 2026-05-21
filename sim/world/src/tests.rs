@@ -1,4 +1,5 @@
 use super::*;
+use crate::star::{SpectralType, Star};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
@@ -179,6 +180,7 @@ fn synthetic_planet(
         metabolic_substrate: MetabolicSubstrate::Aqueous,
         substrate_perturbation: Real::ZERO,
         locking_state: LockingState::FreeRotator,
+        star: Star::new(SpectralType::G, Real::from_int(1_361)),
     }
 }
 
@@ -486,6 +488,8 @@ fn mr_planet(mass: Real, radius: Real, substrate: MetabolicSubstrate) -> Planet 
         orbital_period_months: 12,
         metabolic_substrate: substrate,
         substrate_perturbation: Real::ZERO,
+        locking_state: crate::LockingState::FreeRotator,
+        star: crate::Star::new(crate::SpectralType::G, Real::from_int(1_361)),
     }
 }
 
@@ -625,3 +629,104 @@ fn mass_radius_relation_per_substrate_yields_correct_density() {
     assert!(d_am > d_hc);
 }
 
+// Sprint 5 Item 18 — stellar variability tests.
+
+#[test]
+fn m_dwarf_flare_rate_100x_g_dwarf() {
+    // Per Item 18 spec: M dwarfs flare ~100× as often as G
+    // dwarfs (chromospheric activity scales with convective-
+    // envelope dynamo strength + surface-area fraction). The
+    // ratio is pinned via `SpectralType::flare_rate_per_tick`
+    // returning 100.0 for M and 1.0 for G.
+    let m_rate = SpectralType::M.flare_rate_per_tick();
+    let g_rate = SpectralType::G.flare_rate_per_tick();
+    assert_eq!(m_rate, Real::from_int(100));
+    assert_eq!(g_rate, Real::ONE);
+    // Ratio M/G = 100.
+    let ratio = m_rate / g_rate;
+    assert_eq!(
+        ratio,
+        Real::from_int(100),
+        "M dwarf flare rate must be exactly 100× G dwarf baseline",
+    );
+    // Sanity-check the ordering across the full series:
+    // M > K > G > F > A.
+    assert!(SpectralType::M.flare_rate_per_tick() > SpectralType::K.flare_rate_per_tick());
+    assert!(SpectralType::K.flare_rate_per_tick() > SpectralType::G.flare_rate_per_tick());
+    assert!(SpectralType::G.flare_rate_per_tick() > SpectralType::F.flare_rate_per_tick());
+    assert!(SpectralType::F.flare_rate_per_tick() > SpectralType::A.flare_rate_per_tick());
+}
+
+#[test]
+fn habitable_zone_edge_migrates_outward_over_gyr() {
+    // The HZ inner edge migrates **outward** with stellar age
+    // because main-sequence luminosity drifts up over time
+    // (faint-young-sun → bright-old-sun). Compare a young G
+    // dwarf at age 0 Gyr against the same star at age 5 Gyr
+    // (half-lifetime). Both at the same ZAMS irradiance —
+    // only `main_sequence_age_gyr` differs.
+    let zams = Real::from_int(1_361);
+    let lifetime = SpectralType::G.nominal_lifetime_gyr();
+    let young = Star::with_age(SpectralType::G, zams, Real::ZERO, lifetime);
+    let older = Star::with_age(SpectralType::G, zams, Real::from_int(5), lifetime);
+    // The older star must have a higher bolometric luminosity
+    // (since luminosity drift on the MS is monotonically up).
+    assert!(
+        older.bolometric_luminosity > young.bolometric_luminosity,
+        "MS luminosity drift must be monotonically up: young {} ≥ older {}",
+        young.bolometric_luminosity.to_f64_for_display(),
+        older.bolometric_luminosity.to_f64_for_display(),
+    );
+    // And consequently the HZ inner edge must have moved
+    // **outward** (larger AU) — the inner edge scales as
+    // sqrt(L), so a higher-L star pushes the inner boundary
+    // to a larger orbital distance.
+    let young_inner = young.hz_inner_edge_au();
+    let older_inner = older.hz_inner_edge_au();
+    assert!(
+        older_inner > young_inner,
+        "HZ inner edge must migrate outward as star ages: young inner {} AU vs older inner {} AU",
+        young_inner.to_f64_for_display(),
+        older_inner.to_f64_for_display(),
+    );
+    // Outer edge migrates outward too (sqrt(L) scaling).
+    assert!(older.hz_outer_edge_au() > young.hz_outer_edge_au());
+}
+
+#[test]
+fn red_giant_phase_renders_inner_planets_uninhabitable() {
+    // At `age >= 0.95 × lifetime` the star enters the red-
+    // giant ramp: bolometric luminosity climbs from ~1.4×
+    // ZAMS up to ~1000× ZAMS over the final 5% of lifetime.
+    // The HZ inner edge migrates so far out that any planet
+    // orbiting at an Earth-like 1-AU-equivalent distance
+    // (HZ inner edge < 1 AU on the MS) is left **inside**
+    // the new inner edge — i.e. uninhabitable, in the boiled-
+    // out / runaway-greenhouse band.
+    //
+    // Concretely: at 0.99 × lifetime the bolometric scale is
+    // 0.8 of the way through the red-giant ramp, giving a
+    // factor around 800× ZAMS. The HZ inner edge then sits
+    // at ~0.95 × sqrt(800) ≈ 26.9 AU — well beyond any
+    // MS-era 1-AU-equivalent orbit.
+    let zams = Real::from_int(1_361);
+    let lifetime = Real::from_int(10);
+    let age = Real::from_ratio(99, 10);
+    let star = Star::with_age(SpectralType::G, zams, age, lifetime);
+    assert!(star.is_red_giant(), "0.99 × lifetime must be in the red-giant phase");
+    // Inner edge has migrated far past 1 AU.
+    let inner_au = star.hz_inner_edge_au();
+    assert!(
+        inner_au > Real::ONE,
+        "red-giant HZ inner edge {} AU must exceed 1-AU-equivalent",
+        inner_au.to_f64_for_display(),
+    );
+    // Bolometric luminosity has ramped up by orders of
+    // magnitude (well beyond the MS-drift ceiling of ~1.4×).
+    assert!(
+        star.bolometric_luminosity > zams.saturating_mul(Real::from_int(10)),
+        "red-giant bolometric {} W/m² must exceed 10× ZAMS {} W/m²",
+        star.bolometric_luminosity.to_f64_for_display(),
+        zams.to_f64_for_display(),
+    );
+}

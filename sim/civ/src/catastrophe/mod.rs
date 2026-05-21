@@ -427,6 +427,7 @@ mod tests {
             metabolic_substrate: sim_world::MetabolicSubstrate::Aqueous,
             substrate_perturbation: Real::ZERO,
             locking_state: sim_world::LockingState::FreeRotator,
+            star: sim_world::Star::new(sim_world::SpectralType::G, Real::from_int(1_361)),
         }
     }
 
