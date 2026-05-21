@@ -202,6 +202,25 @@ pub fn attempt_period_for_cognition(cognition: Real) -> u64 {
     u64::try_from(clamped).unwrap_or(20)
 }
 
+/// `attempt_period_for_cognition` with the species'
+/// `CognitionTopology` multiplier applied. DistributedRedundant
+/// shrinks the period by 0.7 (parallel sensing); Acentric
+/// stretches by 5.0 (very slow individual cognition);
+/// Centralized and Collective stay at the cognition-only
+/// baseline.
+#[must_use]
+pub fn attempt_period_for_cognition_and_topology(
+    cognition: Real,
+    topology: sim_species::CognitionTopology,
+) -> u64 {
+    let base = attempt_period_for_cognition(cognition);
+    let scaled = Real::from_int(i64::try_from(base).unwrap_or(i64::MAX))
+        * topology.attempt_period_multiplier();
+    let raw: i64 = scaled.raw().to_num();
+    let clamped = raw.max(5);
+    u64::try_from(clamped).unwrap_or(base)
+}
+
 /// Scale a baseline `attempt_period` by the planet's metabolism so
 /// slow-substrate worlds stretch the hypothesis-attempt cadence to
 /// match their stretched biological time. Inverse relationship:

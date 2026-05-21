@@ -631,12 +631,13 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         new_civ.inherit_lineage_from(parent_civ);
                     }
                     new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
-                    new_civ.configure_substrate(
+                    new_civ.configure_substrate_with_topology(
                         species.habitat,
                         new_civ.effective_cognition(&species),
                         new_civ.effective_sociality(&species),
                         planet.metabolic_substrate.metabolism(),
                         state.grid().width().saturating_mul(state.grid().height()),
+                        species.cognition_topology,
                     );
                     // Successor's territory sized to its own
                     // founding population, centred on its first
@@ -733,6 +734,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     // linguistic distance + age decay + tier.
                     // Decay constant derives from species.
                     let decay_ticks = species.transmission_decay_ticks();
+                    let comm_speed = species.communication_speed_multiplier();
                     let (transmissions, mythologizations) =
                         if let Some(parent_civ) = civs.iter().find(|c| c.id == parent_id) {
                             transmission::transmit_from_parent(
@@ -740,6 +742,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                                 parent_civ,
                                 tick,
                                 decay_ticks,
+                                comm_speed,
                             )
                         } else {
                             (Vec::new(), Vec::new())
@@ -1049,12 +1052,13 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                             new_civ.last_emitted_cohesion = new_civ.cohesion;
                         }
                         new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
-                        new_civ.configure_substrate(
+                        new_civ.configure_substrate_with_topology(
                             species.habitat,
                             new_civ.effective_cognition(&species),
                             new_civ.effective_sociality(&species),
                             planet.metabolic_substrate.metabolism(),
                             state.grid().width().saturating_mul(state.grid().height()),
+                            species.cognition_topology,
                         );
                         // Breakaway sized to its half-share of the
                         // parent's population; centred on the seized
@@ -1141,11 +1145,13 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         let (transmissions, mythologizations) = {
                             let parent_civ = &civs[parent_idx];
                             let decay_ticks = species.transmission_decay_ticks();
+                            let comm_speed = species.communication_speed_multiplier();
                             transmission::transmit_from_parent(
                                 &mut new_civ,
                                 parent_civ,
                                 tick,
                                 decay_ticks,
+                                comm_speed,
                             )
                         };
                         let dest_civ_id = new_civ.id;
@@ -1773,7 +1779,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                         };
                         let dest_id = dest.id;
                         let dest_fig = dest.figures.first().map_or(0, |f| f.id);
-                        let records = transmission::diffuse_between(source, dest, tick);
+                        let records = transmission::diffuse_between(
+                            source,
+                            dest,
+                            tick,
+                            species.communication_speed_multiplier(),
+                        );
                         for r in records {
                             diffusions.push(KnowledgeDiffused {
                                 tick,
@@ -1907,12 +1918,13 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                     new_civ.inherit_lineage_from(parent_civ);
                 }
                 new_civ.dynamics = sim_civ::dynamics_for_civ(&new_civ, &species, &planet);
-                new_civ.configure_substrate(
+                new_civ.configure_substrate_with_topology(
                     species.habitat,
                     new_civ.effective_cognition(&species),
                     new_civ.effective_sociality(&species),
                     planet.metabolic_substrate.metabolism(),
                     state.grid().width().saturating_mul(state.grid().height()),
+                    species.cognition_topology,
                 );
                 new_civ.territory_centroid = emerge_cell;
                 let target = target_cell_count(&new_civ, state.grid().n_cells());

@@ -156,10 +156,15 @@ pub fn mythologization_axis(template_id: u32, relation_id: u32, source_civ_id: u
 /// not artifacts in transit). Returns the records that crossed
 /// from `source` into `dest` so the caller can emit events.
 /// The `dest`'s first figure receives the relations.
+/// `comm_speed` is the species' aggregate communication-channel
+/// transmission-speed multiplier in `[0.1, 1.0]` (see
+/// `Species::communication_speed_multiplier`). Pass `Real::ONE`
+/// for the back-compat acoustic-equivalent behaviour.
 pub fn diffuse_between(
     source: &Civ,
     dest: &mut Civ,
     transmitted_at_tick: u64,
+    comm_speed: Real,
 ) -> Vec<TransmissionRecord> {
     if dest.figures.is_empty() {
         return Vec::new();
@@ -206,7 +211,7 @@ pub fn diffuse_between(
         // multiplier folds in.
         let ling = (Real::ONE - drift).max(Real::ZERO);
         let tier = Real::from(TIER_FACTOR);
-        let score = (ling * tier * fidelity).min(Real::ONE);
+        let score = (ling * tier * fidelity * comm_speed).min(Real::ONE);
         if score <= threshold {
             continue;
         }
@@ -237,11 +242,19 @@ pub fn diffuse_between(
 /// — these don't transfer as confirmed knowledge but they
 /// perturb the successor civ's cosmology so the residue isn't
 /// fully lost.
+/// `comm_speed` is the species' aggregate communication-channel
+/// transmission-speed multiplier in `[0.1, 1.0]` (see
+/// `Species::communication_speed_multiplier`). Folds into the
+/// comprehension score so a chemical-pheromone species recovers
+/// less of its predecessor's knowledge per unit-time than an
+/// acoustic-air species. Pass `Real::ONE` for the back-compat
+/// behaviour (acoustic/light speed).
 pub fn transmit_from_parent(
     successor: &mut Civ,
     parent: &Civ,
     transmitted_at_tick: u64,
     decay_ticks: u64,
+    comm_speed: Real,
 ) -> (Vec<TransmissionRecord>, Vec<MythologizationRecord>) {
     if successor.figures.is_empty() {
         return (Vec::new(), Vec::new());
@@ -300,9 +313,12 @@ pub fn transmit_from_parent(
     for (_rid, mut rel) in best {
         let parent_collapsed = parent.collapsed_tick.unwrap_or(transmitted_at_tick);
         let age = transmitted_at_tick.saturating_sub(parent_collapsed);
-        let score =
-            (comprehension(dist, age, decay_ticks) * comm_bonus * settlement_mult * fidelity)
-                .min(Real::ONE);
+        let score = (comprehension(dist, age, decay_ticks)
+            * comm_bonus
+            * settlement_mult
+            * fidelity
+            * comm_speed)
+            .min(Real::ONE);
         if score <= threshold {
             // sub-threshold but above the myth floor →
             // mythologize. Pick a cosmology axis deterministically

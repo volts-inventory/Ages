@@ -10,8 +10,16 @@ use crate::{
     Civ, SELECTION_BIAS_CHANNEL_CEILING, SELECTION_BIAS_LIFESPAN_CEILING_YEARS,
     SUCCESSOR_DRIFT_LIFESPAN_STEP_YEARS, SUCCESSOR_DRIFT_TRAIT_STEP,
 };
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 use sim_world::BiosphereClass;
+
+/// Quorum population below which a `CognitionTopology::Collective`
+/// species suffers the isolation penalty on its effective
+/// cognition. Tuned so a typical founding cohort
+/// (~100-1000 individuals) stays above quorum while a deeply
+/// collapsed civ (sub-100) collapses to near-zero cognition —
+/// matching the spec's "single individuals cannot think" framing.
+pub const COLLECTIVE_QUORUM_POP: Pop = Pop::from_int(100);
 
 /// Deterministic drift seed mixer. Combines the planet seed
 /// with the new civ's id and the perturbation channel index (0-3
@@ -147,9 +155,24 @@ impl Civ {
     /// Effective cognition = species.cognition + drift,
     /// clamped to `[0, 1]`. Used by `dynamics_for_civ` and any
     /// other consumer that wants the civ-specific perceived trait.
+    ///
+    /// For `CognitionTopology::Collective` species, the cognition
+    /// is multiplied by `isolation_penalty()` (~0.05) when the
+    /// civ's total cohort falls below `COLLECTIVE_QUORUM_POP` — a
+    /// hive-mind species below the swarm-quorum cannot think.
+    /// Other topologies are unaffected.
     #[must_use]
     pub fn effective_cognition(&self, species: &sim_species::Species) -> Real {
-        (species.cognition + self.cognition_delta).clamp01()
+        let base = (species.cognition + self.cognition_delta).clamp01();
+        if matches!(
+            species.cognition_topology,
+            sim_species::CognitionTopology::Collective
+        ) && self.cohort.total() < COLLECTIVE_QUORUM_POP
+        {
+            (base * species.cognition_topology.isolation_penalty()).clamp01()
+        } else {
+            base
+        }
     }
 
     /// Effective sociality, clamped to `[0, 1]`.

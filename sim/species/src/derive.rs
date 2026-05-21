@@ -44,28 +44,33 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
 
     // Cognition topology — biased toward Centralized (the
     // vertebrate-equivalent default) so most seeds remain familiar;
-    // the Distributed branch surfaces the cephalopod-archetype
-    // species per the project's "different cognition substrate"
-    // direction.
-    let cognition_topology = if rng.gen_range(0..10) < 7 {
-        CognitionTopology::Centralized
-    } else {
-        CognitionTopology::Distributed
+    // the remaining three substrates surface the cephalopod-,
+    // hive-, and slime-mold-archetypes per the project's
+    // "different cognition substrate" direction. Distribution:
+    // 70% Centralized, 15% DistributedRedundant, 10% Collective,
+    // 5% Acentric — preserves Centralized's prior 70% share and
+    // lets the rarer substrates surface meaningfully without
+    // crowding the modal seed.
+    let cognition_topology = {
+        let roll = rng.gen_range(0..20);
+        if roll < 14 {
+            CognitionTopology::Centralized
+        } else if roll < 17 {
+            CognitionTopology::DistributedRedundant
+        } else if roll < 19 {
+            CognitionTopology::Collective
+        } else {
+            CognitionTopology::Acentric
+        }
     };
 
-    // Distributed-cognition behavioural fork. Their distributed
-    // nervous systems give them a different relationship to
-    // attention and parallel introspection — captured here as a
-    // small (+10%) cognition bonus that ripples through
-    // tolerance and minimum-sample formulas. The sim's existing
-    // cognition machinery makes this an emergent biological
-    // advantage: Distributed species fit relations slightly faster
-    // and tighter, which over thousands of years compounds into
-    // earlier tier-5 unlocks and richer scientific traditions —
-    // honoring the story's "their biology gives them an
-    // introspective edge" without adding a separate behavioural
-    // fork branch. Ceiling at 1.0 so the trait stays in [0, 1].
-    let cognition = if matches!(cognition_topology, CognitionTopology::Distributed) {
+    // DistributedRedundant-cognition behavioural fork. Their
+    // distributed nervous systems give them a different
+    // relationship to attention and parallel introspection —
+    // captured here as a small (+10%) cognition bonus that
+    // ripples through tolerance and minimum-sample formulas.
+    // Ceiling at 1.0 so the trait stays in [0, 1].
+    let cognition = if matches!(cognition_topology, CognitionTopology::DistributedRedundant) {
         let bumped = cognition * Real::percent(110);
         if bumped > Real::ONE {
             Real::ONE

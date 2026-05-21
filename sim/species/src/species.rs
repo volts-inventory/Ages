@@ -53,14 +53,17 @@ pub struct Species {
     /// to T0 (oral) tokens. Civ-level tier modifiers attenuate
     /// further via the tier table.
     pub t0_loss: Real,
-    /// Cognition topology — `Centralized` (one brain, vertebrate-
-    /// equivalent) vs `Distributed` (many processing centres,
-    /// cephalopod-equivalent). Sampled at species derivation;
-    /// surfaced in the post-run report so reports can capture
-    /// "different cognition substrate" worlds. Currently
-    /// flavour-only (no behavioural fork yet); future passes
-    /// could fork refinement aggressiveness or cosmology
-    /// drift speed by topology.
+    /// Cognition substrate topology — one of `Centralized`
+    /// (vertebrate-equivalent baseline), `DistributedRedundant`
+    /// (cephalopod-equivalent, parallel sensing but capped
+    /// abstraction), `Collective` (hive-mind, collapses under
+    /// isolation), `Acentric` (slime-mold-equivalent, slow but
+    /// cumulative cross-generational memory). Drives per-topology
+    /// multipliers on hypothesis-attempt cadence, knowledge-decay
+    /// rate, and an abstraction-axis hard cap — see
+    /// `CognitionTopology::attempt_period_multiplier`,
+    /// `knowledge_decay_multiplier`, `abstraction_cap`,
+    /// `isolation_penalty`.
     pub cognition_topology: CognitionTopology,
     /// Native habitat domain. `Aquatic` species evolved in
     /// water (`OceanWorld` / `SubSurfaceOcean` planets with
@@ -177,10 +180,22 @@ impl Species {
     /// tradition far better — a 200-year elephant-equivalent with
     /// sociality 0.8 keeps knowledge alive ~3× longer than a
     /// 10-year solitary species.
+    ///
+    /// `CognitionTopology::knowledge_decay_multiplier` further
+    /// stretches the constant inversely — an Acentric species
+    /// with multiplier 0.2 gets a 5× longer e-fold window,
+    /// reflecting that knowledge encoded in cumulative substrate
+    /// traces survives generations far better than oral or
+    /// cortical stores.
     pub fn transmission_decay_years(&self) -> Real {
-        Real::from_int(500)
+        let base = Real::from_int(500)
             + self.lifespan_years * Real::from_int(5)
-            + self.sociality * Real::from_int(1000)
+            + self.sociality * Real::from_int(1000);
+        let mult = self
+            .cognition_topology
+            .knowledge_decay_multiplier()
+            .max(Real::percent(1));
+        base / mult
     }
 
     /// Same as `transmission_decay_years` but converted to
@@ -192,6 +207,24 @@ impl Species {
         let ticks_real = years * Real::from_int(months_per_year);
         let raw: i64 = ticks_real.raw().to_num();
         u64::try_from(raw.max(1)).unwrap_or(1)
+    }
+
+    /// Aggregate communication-channel transmission-speed
+    /// multiplier in `[0.1, 1.0]`. Picks the *fastest* modality
+    /// the species has (a species with both pheromone and
+    /// acoustic-air channels inherits the acoustic speed for
+    /// transmission purposes — knowledge propagates on the
+    /// fastest available substrate). Defaults to 1.0 when the
+    /// species has no modalities (degenerate test fixtures).
+    /// See `CognitionTopology::transmission_speed_for_modality`.
+    pub fn communication_speed_multiplier(&self) -> Real {
+        if self.modalities.is_empty() {
+            return Real::ONE;
+        }
+        self.modalities
+            .iter()
+            .map(|m| CognitionTopology::transmission_speed_for_modality(m.kind))
+            .fold(Real::ZERO, |a, b| if b > a { b } else { a })
     }
 
     /// Per-species stress factor for `step_with_capacity`.

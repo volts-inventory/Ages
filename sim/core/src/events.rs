@@ -171,7 +171,9 @@ pub(crate) fn species_to_event(s: &Species) -> SpeciesDerived {
         perceivable_template_ids: s.perceivable_templates.iter().copied().collect(),
         cognition_topology: match s.cognition_topology {
             sim_species::CognitionTopology::Centralized => "centralized".into(),
-            sim_species::CognitionTopology::Distributed => "distributed".into(),
+            sim_species::CognitionTopology::DistributedRedundant => "distributed-redundant".into(),
+            sim_species::CognitionTopology::Collective => "collective".into(),
+            sim_species::CognitionTopology::Acentric => "acentric".into(),
         },
     }
 }
