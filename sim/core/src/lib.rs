@@ -661,8 +661,21 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // registry through, so these calls return empty event
         // vectors today — but the wire-up is in place so the
         // moment the registry is populated the events flow.
-        let speciation_results =
-            step_speciation(tick, &ecosystem.species, &species_registry, &mut speciation_tracker);
+        //
+        // P1.2: surface cosmic-ray ground flux (Item 20:
+        // `1 / (dipole_strength + 0.1)`) into the speciation + HGT
+        // rates. During magnetic-reversal windows the dipole weakens
+        // → flux climbs → mutation / divergence rates climb. The
+        // multiplier is clamped to `[1, 10]` inside the ecosystem
+        // layer so a pathological dipole near zero doesn't cascade.
+        let cosmic_mult = state.cosmic_ray_ground_flux();
+        let speciation_results = step_speciation(
+            tick,
+            &ecosystem.species,
+            &species_registry,
+            &mut speciation_tracker,
+            cosmic_mult,
+        );
         for (daughter, event) in speciation_results {
             // Register the daughter in the registry so later
             // ticks can speciate off her too. The ecosystem-side
@@ -672,7 +685,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             species_registry.insert(SpeciesId(event.daughter_id), daughter);
             emitter.emit(&Event::SpeciationOccurred(event))?;
         }
-        let hgt_events = step_hgt(&mut species_registry, tick, cfg.seed);
+        let hgt_events = step_hgt(&mut species_registry, tick, cfg.seed, cosmic_mult);
         for ev in hgt_events {
             emitter.emit(&Event::HorizontalGeneTransfer(ev))?;
         }
