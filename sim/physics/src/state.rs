@@ -154,6 +154,27 @@ pub struct PhysicsState {
     /// mid-ocean ridge. Length is either zero (no plates installed)
     /// or `grid.n_cells()` (same contract as `plate_id`).
     crust_age: Vec<u64>,
+    /// Per-cell isostatic baseline elevation in scaled units
+    /// (Sprint 4 Item 12c). Represents the "geological base" surface
+    /// — the elevation contribution that is *not* due to current
+    /// isostatic lift from the crust column. The invariant
+    /// `elevation = h_base + (ρ_mantle/ρ_crust - 1) × crust_thickness`
+    /// is maintained at the end of every `apply_isostasy` pass.
+    /// Lazily baked on the first `apply_isostasy` call after
+    /// `set_tectonics_fields` — empty until then. Tectonic uplift
+    /// + erosion write to `elevation` directly; `apply_isostasy`
+    /// absorbs those changes into `h_base` and re-derives elevation
+    /// from the current crust thickness so a thickness change
+    /// (subduction-driven thinning, convergent thickening) lifts /
+    /// drops the surface without disturbing the geological signal.
+    h_base: Vec<Real>,
+    /// Per-cell snapshot of `crust_thickness` at the last
+    /// `apply_isostasy` pass (Sprint 4 Item 12c). Used to detect
+    /// thickness changes between calls so external mutations to
+    /// `elevation` (from convergent uplift / erosion) can be
+    /// separated from isostasy-induced changes. Empty until the
+    /// first `apply_isostasy` pass bakes it.
+    last_thickness: Vec<Real>,
 }
 
 impl PhysicsState {
@@ -194,6 +215,14 @@ impl PhysicsState {
             // `crust_thickness` so the three tectonics arrays share
             // a single source of truth for their length.
             crust_age: Vec::new(),
+            // Sprint 4 Item 12c: empty until first `apply_isostasy`
+            // pass lazily bakes them. Lazy baking lets tests set
+            // elevation + thickness after `set_tectonics_fields`
+            // without having to manually rebake — the first pass
+            // captures whatever state exists at that moment as the
+            // isostatic baseline.
+            h_base: Vec::new(),
+            last_thickness: Vec::new(),
             grid,
         }
     }
@@ -483,6 +512,48 @@ impl PhysicsState {
         // Initialise per-cell crust age to zero. `Tectonics::integrate`
         // advances this each tick.
         self.crust_age = vec![0u64; n];
+        // Sprint 4 Item 12c: invalidate isostasy bookkeeping so the
+        // next `apply_isostasy` pass re-bakes against the freshly
+        // installed thickness + whatever elevation is current at
+        // that moment. Without the clear, a state that gets its
+        // tectonics fields reinstalled (e.g. a future worldgen
+        // rerun) would carry stale `h_base` / `last_thickness` from
+        // the previous run and corrupt the surface elevation.
+        self.h_base.clear();
+        self.last_thickness.clear();
+    }
+
+    /// Per-cell isostatic baseline elevation (Sprint 4 Item 12c).
+    /// Empty until `apply_isostasy` runs once after tectonics fields
+    /// are installed. Read-only public accessor for diagnostics and
+    /// tests; the canonical write path is `apply_isostasy` itself.
+    #[must_use]
+    pub fn h_base(&self) -> &[Real] {
+        &self.h_base
+    }
+
+    /// Mutable accessor for `h_base` — required by the isostasy law
+    /// which is in a sibling module (so a private field wouldn't be
+    /// reachable). Modules outside `physics` should never call this;
+    /// going through `apply_isostasy` keeps the
+    /// `elevation = h_base + factor × thickness` invariant intact.
+    pub fn h_base_mut(&mut self) -> &mut Vec<Real> {
+        &mut self.h_base
+    }
+
+    /// Per-cell snapshot of `crust_thickness` at the last
+    /// `apply_isostasy` pass (Sprint 4 Item 12c). Same semantics as
+    /// `h_base`: empty until first pass, then sized to
+    /// `grid().n_cells()`. Exposed for diagnostics + tests.
+    #[must_use]
+    pub fn last_thickness(&self) -> &[Real] {
+        &self.last_thickness
+    }
+
+    /// Mutable accessor for `last_thickness` — same isolation
+    /// rationale as `h_base_mut`.
+    pub fn last_thickness_mut(&mut self) -> &mut Vec<Real> {
+        &mut self.last_thickness
     }
 
     /// Aggregate mass of subducted crust (Sprint 4 Item 12a). In
