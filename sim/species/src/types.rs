@@ -235,6 +235,126 @@ impl DynamicToolEffects {
 /// `ToolKind` ids end at 58. Disjoint by construction.
 pub const DYNAMIC_TOOL_ID_START: u32 = 1000;
 
+/// Per-species environmental tolerance envelope. Defines the cell
+/// conditions a species can occupy and survive — temperature, pH,
+/// salinity, radiation, and pressure ranges. Habitat occupancy
+/// gates on cell conditions ∩ tolerance; catastrophe survival
+/// multiplies by `match_score(local_conditions)` so an extremophile
+/// species shaped to high-radiation or high-temperature niches
+/// differentially survives radiation bursts / thermal pulses that
+/// wipe out species with narrower envelopes.
+///
+/// Units:
+/// - `temp_range` — Kelvin.
+/// - `ph_range` — pH units (0 = strong acid, 14 = strong base).
+/// - `salinity_range` — g/L dissolved solids.
+/// - `radiation_max` — relative units (Earth-surface baseline ≈ 1.0;
+///   the gate is a hard ceiling rather than a range — life is
+///   sensitive to "too much radiation," not "too little radiation").
+/// - `pressure_range` — atm (Earth surface = 1.0).
+///
+/// Defaults are derived per `MetabolicSubstrate` in
+/// `sampling::derive_tolerance_envelope`; each species gets ±20%
+/// jitter per axis from the species seed so individuals end up as
+/// distinguishable extremophiles / generalists within a substrate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToleranceEnvelope {
+    pub temp_range: (Real, Real),
+    pub ph_range: (Real, Real),
+    pub salinity_range: (Real, Real),
+    pub radiation_max: Real,
+    pub pressure_range: (Real, Real),
+}
+
+impl ToleranceEnvelope {
+    /// Aqueous (water-based, Earth-like) default envelope. Used as
+    /// the back-compat fixture for literal `Species { ... }`
+    /// constructions (test fixtures, future Default impls). Values
+    /// match the `sampling::aqueous_default_envelope` baseline before
+    /// per-species jitter is applied.
+    #[must_use]
+    pub fn aqueous_default() -> Self {
+        Self {
+            temp_range: (Real::from_int(273), Real::from_int(373)),
+            ph_range: (Real::from_int(5), Real::from_int(9)),
+            salinity_range: (Real::ZERO, Real::from_int(50)),
+            radiation_max: Real::from_ratio(5, 10),
+            pressure_range: (Real::from_ratio(5, 10), Real::from_int(2)),
+        }
+    }
+
+    /// Whether the given environmental conditions fall inside the
+    /// tolerance envelope. All five axes must satisfy their gate:
+    /// `t`, `ph`, `sal`, `p` lie within their (low, high) ranges and
+    /// `rad ≤ radiation_max`. Radiation has no lower bound — life
+    /// tolerates the absence of ionising flux.
+    #[must_use]
+    pub fn contains(&self, t: Real, ph: Real, sal: Real, rad: Real, p: Real) -> bool {
+        let in_range = |v: Real, (lo, hi): (Real, Real)| v >= lo && v <= hi;
+        in_range(t, self.temp_range)
+            && in_range(ph, self.ph_range)
+            && in_range(sal, self.salinity_range)
+            && rad <= self.radiation_max
+            && in_range(p, self.pressure_range)
+    }
+
+    /// Per-axis fit score in `[0, 1]`. Returns `1.0` when the value
+    /// sits at the centre of the range and falls linearly toward
+    /// `0.0` at either edge; values outside the range return `0.0`.
+    /// Width-zero ranges return `1.0` when the value matches and
+    /// `0.0` otherwise (degenerate single-point envelope).
+    fn axis_score(v: Real, (lo, hi): (Real, Real)) -> Real {
+        if v < lo || v > hi {
+            return Real::ZERO;
+        }
+        let width = hi - lo;
+        if width <= Real::ZERO {
+            return Real::ONE;
+        }
+        let half_width = width / Real::from_int(2);
+        let centre = lo + half_width;
+        let dist = (v - centre).abs();
+        // margin = how far inside from the nearest edge, as a fraction
+        // of the half-width. centre → 1.0, edge → 0.0.
+        let margin = Real::ONE - (dist / half_width);
+        margin.clamp01()
+    }
+
+    /// Radiation match: linear decay from `1.0` at zero flux to
+    /// `0.0` at `radiation_max`. Negative inputs clamp to `1.0`
+    /// (no ionising flux = perfect fit). `radiation_max == 0`
+    /// degenerates to a hard pass/fail.
+    fn radiation_score(rad: Real, radiation_max: Real) -> Real {
+        if rad <= Real::ZERO {
+            return Real::ONE;
+        }
+        if radiation_max <= Real::ZERO {
+            return Real::ZERO;
+        }
+        if rad >= radiation_max {
+            return Real::ZERO;
+        }
+        (Real::ONE - rad / radiation_max).clamp01()
+    }
+
+    /// Aggregate match score in `[0, 1]`. Returns `1.0` if every
+    /// axis sits at the centre of its range; decays toward `0` as
+    /// any axis approaches its edge; `0.0` if any axis falls outside.
+    /// Uses the *smallest-margin axis* as the limiting fit so a
+    /// species near the edge on temperature can't compensate by
+    /// being well-inside on pH — biology is gated by the weakest
+    /// link.
+    #[must_use]
+    pub fn match_score(&self, t: Real, ph: Real, sal: Real, rad: Real, p: Real) -> Real {
+        let s_t = Self::axis_score(t, self.temp_range);
+        let s_ph = Self::axis_score(ph, self.ph_range);
+        let s_sal = Self::axis_score(sal, self.salinity_range);
+        let s_rad = Self::radiation_score(rad, self.radiation_max);
+        let s_p = Self::axis_score(p, self.pressure_range);
+        s_t.min(s_ph).min(s_sal).min(s_rad).min(s_p)
+    }
+}
+
 /// Species habitat domain. See `Species::habitat`.
 ///
 /// The first four (Aquatic / Terrestrial / Amphibious / Airborne)

@@ -3,7 +3,8 @@
 
 use crate::sampling::{
     compute_t0_loss, derive_habitat, derive_initial_cosmology, derive_population_biology,
-    sample_manipulation, sample_modalities, sample_unit, species_name_from_seed, template_channels,
+    derive_tolerance_envelope, sample_manipulation, sample_modalities, sample_unit,
+    species_name_from_seed, template_channels,
 };
 use crate::species::Species;
 use crate::types::{CognitionTopology, ModalityKind, DYNAMIC_TOOL_ID_START};
@@ -95,6 +96,12 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         cognition_topology,
         &manipulation_modes,
     );
+    // Per-species environmental tolerance envelope. Derived from the
+    // planet's metabolic substrate (each substrate carries a different
+    // "baseline biology" window) with ±20% per-axis jitter from the
+    // species seed so individual species end up as distinguishable
+    // generalists / extremophiles within the substrate.
+    let tolerance = derive_tolerance_envelope(planet.seed, planet.metabolic_substrate);
 
     Species {
         seed: planet.seed,
@@ -132,5 +139,6 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         // Per-seed cosmology pole-position bias.
         initial_cosmology,
         biology,
+        tolerance,
     }
 }

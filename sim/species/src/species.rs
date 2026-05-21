@@ -3,7 +3,7 @@
 
 use crate::types::{
     CognitionAxes, CognitionTopology, DynamicTool, Habitat, Manipulation, Modality,
-    PopulationBiology,
+    PopulationBiology, ToleranceEnvelope,
 };
 use sim_arith::Real;
 use std::collections::{BTreeMap, BTreeSet};
@@ -123,6 +123,15 @@ pub struct Species {
     /// from `clutch_size`, `infant_fraction`, `maturity_fraction`,
     /// `eldership_fraction`, and the per-bracket survival fields.
     pub biology: PopulationBiology,
+    /// Environmental tolerance envelope. Habitat occupancy gates
+    /// on cell conditions ∩ tolerance; catastrophe survival
+    /// multiplies by `tolerance.match_score(local_conditions)` so
+    /// extremophile species shaped to high-radiation, high-
+    /// temperature, or high-pressure niches differentially survive
+    /// catastrophes that wipe out narrower-envelope species.
+    /// Defaults derive from `MetabolicSubstrate` and are jittered
+    /// ±20% per axis from the species seed at derivation time.
+    pub tolerance: ToleranceEnvelope,
 }
 
 impl Species {

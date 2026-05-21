@@ -5,13 +5,13 @@
 
 use crate::types::{
     CognitionTopology, Habitat, Manipulation, ManipulationKind, Modality, ModalityKind,
-    PopulationBiology,
+    PopulationBiology, ToleranceEnvelope,
 };
 use rand::Rng;
 use rand_chacha::ChaCha20Rng;
 use sim_arith::transcendental::ln;
 use sim_arith::Real;
-use sim_world::{Atmosphere, BiosphereClass, Composition, Magnetosphere, Planet};
+use sim_world::{Atmosphere, BiosphereClass, Composition, Magnetosphere, MetabolicSubstrate, Planet};
 
 /// Map a recognition template id to the modality channels that
 /// natively sense it. Hand-wired for the M2 canonical 5; expand as
@@ -958,6 +958,166 @@ pub fn derive_population_biology(
         events_per_fertile_window,
         reproductive_success,
     }
+}
+
+/// Per-substrate default tolerance envelope (pre-jitter). Captures
+/// the "baseline biology" each metabolic substrate's species is built
+/// for. The per-species jitter applied in `derive_tolerance_envelope`
+/// then shapes individual species into generalists or extremophiles
+/// within the substrate's window.
+///
+/// Numbers per the implementation-plan Sprint 2 Item 7a spec.
+#[must_use]
+pub(crate) fn substrate_default_envelope(substrate: MetabolicSubstrate) -> ToleranceEnvelope {
+    match substrate {
+        // Aqueous: liquid water 273-373 K, near-neutral pH, modest
+        // salinity, low radiation, Earth-surface pressure range.
+        MetabolicSubstrate::Aqueous => ToleranceEnvelope {
+            temp_range: (Real::from_int(273), Real::from_int(373)),
+            ph_range: (Real::from_int(5), Real::from_int(9)),
+            salinity_range: (Real::ZERO, Real::from_int(50)),
+            radiation_max: Real::from_ratio(5, 10),
+            pressure_range: (Real::from_ratio(5, 10), Real::from_int(2)),
+        },
+        // Ammoniacal: liquid ammonia regime, basic pH, higher salinity
+        // tolerance (NH3 dissolves more), wider pressure band.
+        MetabolicSubstrate::Ammoniacal => ToleranceEnvelope {
+            temp_range: (Real::from_int(195), Real::from_int(240)),
+            ph_range: (Real::from_int(9), Real::from_int(12)),
+            salinity_range: (Real::ZERO, Real::from_int(100)),
+            radiation_max: Real::from_ratio(8, 10),
+            pressure_range: (Real::from_ratio(5, 10), Real::from_int(5)),
+        },
+        // Hydrocarbon: Titan-cold liquid methane/ethane, mildly acidic
+        // (dissolved CO2 / organics), low salinity (poor solvent),
+        // tolerates higher radiation + pressure.
+        MetabolicSubstrate::Hydrocarbon => ToleranceEnvelope {
+            temp_range: (Real::from_int(91), Real::from_int(117)),
+            ph_range: (Real::from_int(3), Real::from_int(7)),
+            salinity_range: (Real::ZERO, Real::from_int(10)),
+            radiation_max: Real::from_ratio(12, 10),
+            pressure_range: (Real::ONE, Real::from_int(10)),
+        },
+        // Silicate: crystalline lattice life — molten silicate
+        // temperatures, pH irrelevant (full 0-14), high salinity /
+        // radiation / pressure tolerance.
+        MetabolicSubstrate::Silicate => ToleranceEnvelope {
+            temp_range: (Real::from_int(1687), Real::from_int(3538)),
+            ph_range: (Real::ZERO, Real::from_int(14)),
+            salinity_range: (Real::ZERO, Real::from_int(200)),
+            radiation_max: Real::from_int(5),
+            pressure_range: (Real::ONE, Real::from_int(100)),
+        },
+    }
+}
+
+/// Derive the per-species `ToleranceEnvelope`. Starts from
+/// `substrate_default_envelope` and applies ±20% jitter per axis,
+/// derived deterministically from the species seed via a SplitMix64
+/// hash. Each axis gets an independent offset so individual species
+/// within a substrate end up with distinguishable envelopes —
+/// extremophiles (high radiation_max, wide temperature span) sit
+/// alongside generalists (narrow envelopes centred on the substrate
+/// midpoint).
+///
+/// Determinism: pure function of `(seed, substrate)`; no RNG state;
+/// reproducible per seed.
+///
+/// The jitter is applied symmetrically: low edges can move ±20% of
+/// the range width inward/outward, high edges can move ±20% of the
+/// range width inward/outward, and the `radiation_max` ceiling can
+/// move ±20% of its value. Edges are then re-ordered so `lo <= hi`
+/// stays an invariant even if the random offsets cross.
+#[must_use]
+pub(crate) fn derive_tolerance_envelope(
+    seed: u64,
+    substrate: MetabolicSubstrate,
+) -> ToleranceEnvelope {
+    let base = substrate_default_envelope(substrate);
+
+    // SplitMix64-style hash of (seed, axis_idx). Same shape as
+    // `CognitionAxes::from_scalar_with_seed` so the per-species
+    // jitter stays deterministic + free of RNG-state coupling.
+    fn axis_offset_signed(seed: u64, axis_idx: u64) -> Real {
+        let mut z = seed.wrapping_add(axis_idx.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        // Low 16 bits → signed offset in [-1, +1); scale by 0.20.
+        let bits = (z & 0xFFFF) as i64;
+        let signed = bits - 32_768;
+        // signed / 32768 in [-1, +1), scaled by 0.20.
+        Real::from_ratio(signed * 20, 32_768 * 100)
+    }
+
+    let jitter_range = |idx_lo: u64, idx_hi: u64, (lo, hi): (Real, Real)| -> (Real, Real) {
+        let width = hi - lo;
+        let off_lo = axis_offset_signed(seed, idx_lo) * width;
+        let off_hi = axis_offset_signed(seed, idx_hi) * width;
+        let new_lo = lo + off_lo;
+        let new_hi = hi + off_hi;
+        // Preserve lo <= hi invariant even if the jitter crosses.
+        if new_lo <= new_hi {
+            (new_lo, new_hi)
+        } else {
+            (new_hi, new_lo)
+        }
+    };
+
+    // Distinct axis indices per envelope dimension keep the offsets
+    // independent across temperature / pH / salinity / pressure pairs
+    // and the radiation ceiling.
+    let temp_range = jitter_range(101, 102, base.temp_range);
+    let ph_range = jitter_range(103, 104, base.ph_range);
+    let salinity_range = jitter_range(105, 106, base.salinity_range);
+    let pressure_range = jitter_range(109, 110, base.pressure_range);
+
+    let rad_off = axis_offset_signed(seed, 107);
+    let radiation_max = (base.radiation_max + base.radiation_max * rad_off).max(Real::ZERO);
+
+    ToleranceEnvelope {
+        temp_range,
+        ph_range,
+        salinity_range,
+        radiation_max,
+        pressure_range,
+    }
+}
+
+/// Map planet composition → metabolic substrate fallback for callers
+/// that don't have a `MetabolicSubstrate` available directly (older
+/// `Planet` shapes pre-substrate-first sampler). Prefer reading
+/// `planet.metabolic_substrate` whenever possible.
+#[must_use]
+#[allow(dead_code)]
+pub(crate) fn substrate_for_planet(planet: &Planet) -> MetabolicSubstrate {
+    planet.metabolic_substrate
+}
+
+/// Apply a catastrophe to a species and return the surviving
+/// fraction in `[0, 1]`. Survival = `tolerance.match_score(local
+/// conditions)` so a species with a tolerance envelope shaped to the
+/// catastrophe's local conditions (high radiation, high temperature)
+/// survives intact while species with envelopes that exclude those
+/// conditions are wiped out. The cause is supplied as the *local
+/// cell conditions during the catastrophe*; a radiation burst, for
+/// instance, passes `rad` near or above the typical species'
+/// `radiation_max` so only extremophiles match.
+///
+/// This is the catastrophe-survival multiplier referenced by Item
+/// 7a. Synthetic for now (no full catastrophe pipeline yet); when
+/// the catastrophe step lands it will read the same `match_score`
+/// off `species.tolerance` to scale per-tick mortality.
+#[must_use]
+pub fn apply_catastrophe(
+    tolerance: &ToleranceEnvelope,
+    t: Real,
+    ph: Real,
+    sal: Real,
+    rad: Real,
+    p: Real,
+) -> Real {
+    tolerance.match_score(t, ph, sal, rad, p)
 }
 
 /// r-leaning score for a manipulation set in [0, 1]. Body plans
