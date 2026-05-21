@@ -28,12 +28,16 @@
 //! steady-state being colder than the surface — exactly the
 //! lapse-rate signature.
 //!
-//! This is "1.5D" rather than full 3D — no horizontal advection
-//! at the upper layer yet, no vertical velocity field. But it's
-//! enough to give civs a queryable upper-atmosphere temperature
-//! that varies with surface heating (tropical updrafts, polar
-//! stratospheric vortex), and it sets up the structure for
-//! later refinements to add real vertical advection.
+//! Sprint 5 Item 22 makes this "1.5D" model couple to the full
+//! 3D Coriolis law via a per-cell vertical velocity field
+//! (`PhysicsState::fluid_velocity_w`). Warm surface → upward
+//! parcel motion (positive `v_w`); cold surface → downward
+//! parcel motion (negative `v_w`). The magnitude is small (a
+//! tunable fraction of the convective gap per tick) but it's
+//! enough to give the Coriolis law something real to deflect.
+//! Without this coupling, the equatorial Ω_y component (max at
+//! the equator) had nothing to act on and the new 3D physics
+//! was effectively dead at low latitudes.
 
 use crate::laws::Law;
 use crate::state::PhysicsState;
@@ -59,6 +63,18 @@ pub struct VerticalConvection {
     /// timescale, matching real-world stratospheric
     /// radiative-cooling rates (~0.5 K/day → ~5 K/year).
     pub radiative_loss_k: Real,
+    /// Sprint 5 Item 22: per-tick conversion factor from the
+    /// surface-vs-upper temperature gap to a vertical velocity
+    /// `v_w`. Warm-surface cells (`T_surface > T_upper`) get a
+    /// positive (upward) `v_w`; cold-surface cells get a
+    /// negative `v_w`. The coefficient is small — we don't have
+    /// a momentum budget here, just enough vertical velocity for
+    /// Coriolis to deflect. Default `0.001` keeps per-tick
+    /// `v_w` on the same order of magnitude as the horizontal
+    /// wind nudges produced by the pressure gradient
+    /// (`Wind::wind_k`), so the new 3D Coriolis kick isn't
+    /// dominated by either side of the cross-product.
+    pub updraft_k: Real,
 }
 
 impl VerticalConvection {
@@ -69,6 +85,7 @@ impl VerticalConvection {
             exchange_k: Real::percent(5),
             space_temperature: Real::from_int(100),
             radiative_loss_k: Real::percent(1),
+            updraft_k: Real::from_ratio(1, 1_000),
         }
     }
 }
@@ -109,6 +126,25 @@ impl Law for VerticalConvection {
         }
         state.temperature_mut().copy_from_slice(&surface_next);
         state.upper_temperature_mut().copy_from_slice(&upper_next);
+        // Sprint 5 Item 22: emit a per-cell vertical velocity
+        // proportional to the convective gap so the full 3D
+        // Coriolis law has something real to deflect. Recompute
+        // the gap from the *post-step* surface/upper buffers so
+        // a cell that just equilibrated emits ~0 `v_w` (no more
+        // updraft when convection saturates). The sign mirrors
+        // the convective sense: warm-surface (gap > 0) → +w
+        // (warm air rises), cold-surface (gap < 0) → -w
+        // (cold air sinks). We *overwrite* `v_w` rather than
+        // accumulate — `v_w` is a derived diagnostic of the
+        // convective state, not a momentum variable in its own
+        // right (a real 3D momentum equation is out of scope
+        // here).
+        let coeff = self.updraft_k * dt;
+        let v_w = state.fluid_velocity_w_mut();
+        for i in 0..n {
+            let gap = surface_next[i] - upper_next[i];
+            v_w[i] = coeff * gap;
+        }
     }
 }
 
