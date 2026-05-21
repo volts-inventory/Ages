@@ -122,6 +122,20 @@ pub struct PhysicsState {
     /// sea_ice))`) is already wired through for the follow-up
     /// that drives clouds from the hydrologic cycle.
     cloud_fraction: Vec<Real>,
+    /// Tectonic plate id owning each cell (Sprint 4 Item 12). Set
+    /// at worldgen via `Tectonics::sample_plates_for_seed`; immutable
+    /// per-cell in this PR (future Items 12a subduction + 12e
+    /// slab-pull will mutate it as plate boundaries migrate). Index
+    /// into `Tectonics::plates`. Length is either zero (no plates
+    /// sampled — `Tectonics::integrate` no-ops) or `grid.n_cells()`.
+    plate_id: Vec<u32>,
+    /// Per-cell crust thickness in km-equivalent (Sprint 4 Item 12).
+    /// Initialised to the owning plate's default (~7 km oceanic,
+    /// ~35 km continental); per-cell rather than per-plate so future
+    /// Item 12c isostasy + Item 12a subduction can grow / shrink
+    /// individual cells. Length is either zero or `grid.n_cells()`
+    /// (same contract as `plate_id`).
+    crust_thickness: Vec<Real>,
 }
 
 impl PhysicsState {
@@ -149,6 +163,13 @@ impl PhysicsState {
             snow_fraction: vec![Real::ZERO; n],
             sea_ice_fraction: vec![Real::ZERO; n],
             cloud_fraction: vec![Real::ZERO; n],
+            // Empty by default — populated by
+            // `set_tectonics_fields` after worldgen samples plates.
+            // The `Tectonics::integrate` law gates on the empty case
+            // so tests + bare-state callers don't have to fabricate
+            // a plate roster they don't need.
+            plate_id: Vec::new(),
+            crust_thickness: Vec::new(),
             grid,
         }
     }
@@ -358,6 +379,62 @@ impl PhysicsState {
 
     pub fn cloud_fraction_mut(&mut self) -> &mut [Real] {
         &mut self.cloud_fraction
+    }
+
+    /// Per-cell tectonic plate id (Sprint 4 Item 12). Empty slice
+    /// when no plates have been sampled — callers that depend on
+    /// the field being populated must check `len() ==
+    /// grid().n_cells()` before indexing. `Tectonics::integrate`
+    /// already does this and no-ops on the bare case.
+    #[must_use]
+    pub fn plate_id(&self) -> &[u32] {
+        &self.plate_id
+    }
+
+    pub fn plate_id_mut(&mut self) -> &mut [u32] {
+        &mut self.plate_id
+    }
+
+    /// Per-cell crust thickness in km-equivalent (Sprint 4 Item 12).
+    /// Empty slice when no plates have been sampled; otherwise
+    /// `grid().n_cells()` long.
+    #[must_use]
+    pub fn crust_thickness(&self) -> &[Real] {
+        &self.crust_thickness
+    }
+
+    pub fn crust_thickness_mut(&mut self) -> &mut [Real] {
+        &mut self.crust_thickness
+    }
+
+    /// Install per-cell tectonics fields (Sprint 4 Item 12). The two
+    /// vectors must already be sized to `grid().n_cells()`; this
+    /// method just installs them. Worldgen calls this once after
+    /// `Tectonics::sample_plates_for_seed`. Existing tests construct
+    /// the fields by hand for deterministic plate layouts.
+    ///
+    /// `plate_id` and `crust_thickness` are paired in this single
+    /// setter so callers can't install one without the other —
+    /// previously a partial install would have left
+    /// `Tectonics::integrate` reading a zero-length field on one
+    /// side and a populated field on the other, with no clean
+    /// semantics for that mismatch.
+    pub fn set_tectonics_fields(&mut self, plate_id: Vec<u32>, crust_thickness: Vec<Real>) {
+        let n = self.grid.n_cells();
+        assert_eq!(
+            plate_id.len(),
+            n,
+            "plate_id length {} must match grid n_cells {n}",
+            plate_id.len()
+        );
+        assert_eq!(
+            crust_thickness.len(),
+            n,
+            "crust_thickness length {} must match grid n_cells {n}",
+            crust_thickness.len()
+        );
+        self.plate_id = plate_id;
+        self.crust_thickness = crust_thickness;
     }
 }
 

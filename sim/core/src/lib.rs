@@ -117,11 +117,22 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         elevation_q32,
         water_depth_q32,
     }))?;
-    let laws = build_laws(&planet, cfg.grid_height);
+    let mut laws = build_laws(&planet, cfg.grid_height);
     // Seed the per-cell magnetic vector field once at planet
     // init. The per-tick `integrate` then overwrites with the
     // diurnal-modulated value each macro-step.
     laws.magnetism.init_field(&mut state);
+    // Sprint 4 Item 12: sample the tectonic plate roster + per-cell
+    // plate-id + per-cell crust-thickness from the planet seed, and
+    // install the plate roster into `laws.tectonics`. The state-side
+    // fields are installed via `set_tectonics_fields`. Must come
+    // after `init_planet` so the grid is sized and after `build_laws`
+    // so the default-constructed Tectonics is in place to be
+    // replaced.
+    let (tectonics, plate_id, crust_thickness) =
+        sim_physics::Tectonics::sample_plates_for_seed(planet.seed, state.grid());
+    state.set_tectonics_fields(plate_id, crust_thickness);
+    laws.install_tectonics(tectonics);
     let recognition = RecognitionLibrary::earth_like_default();
     // Per-run climate calibration for relative thresholds.
     // Built after init_planet so per-cell imprints (e.g.

@@ -28,6 +28,12 @@ pub(crate) struct Laws {
     pub vertical: sim_physics::VerticalConvection,
     pub weathering: sim_physics::Weathering,
     pub ice_albedo: sim_physics::IceAlbedo,
+    /// Sprint 4 Item 12: tectonics + fluvial erosion. Plate roster
+    /// is populated by `sim_world::init_planet` after the grid is
+    /// known (the sampler needs `HexGrid` dimensions). Default-
+    /// constructed via `earth_like()` here — the integrator no-ops
+    /// until the plate roster is installed.
+    pub tectonics: sim_physics::Tectonics,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -222,6 +228,12 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     let perturb = Real::ONE + planet.substrate_perturbation;
     let ice_albedo = sim_physics::IceAlbedo::for_freeze_point(substrate_freeze_k * perturb);
 
+    // Tectonics + fluvial erosion (Sprint 4 Item 12). Default
+    // coefficients here; the per-planet plate roster is sampled in
+    // `sim_world::init_planet` and installed via
+    // `state.set_tectonics_fields(...)` + `Laws::install_tectonics`.
+    let tectonics = sim_physics::Tectonics::earth_like();
+
     Laws {
         fluid,
         heat,
@@ -237,6 +249,21 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         vertical,
         weathering,
         ice_albedo,
+        tectonics,
+    }
+}
+
+impl Laws {
+    /// Replace the default-constructed `tectonics` law with one that
+    /// holds the planet-specific plate roster. The roster is sampled
+    /// by `sim_world::init_planet` (which has access to the
+    /// `HexGrid`); `build_laws` runs before that point in the
+    /// pipeline, so this setter exists to back-fill the roster once
+    /// init has run. Future Sprint 4 sub-items that mutate the
+    /// roster (subduction consuming a plate, slab-pull editing
+    /// velocities) will use the same setter.
+    pub(crate) fn install_tectonics(&mut self, tectonics: sim_physics::Tectonics) {
+        self.tectonics = tectonics;
     }
 }
 

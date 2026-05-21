@@ -80,6 +80,7 @@ pub(crate) fn physics_phase<E: Emitter>(
         Some(&laws.vertical),
         Some(&laws.weathering),
         Some(&laws.ice_albedo),
+        Some(&laws.tectonics),
     );
     Ok(prev_state_for_measurements)
 }
