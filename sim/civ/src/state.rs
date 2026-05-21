@@ -192,6 +192,14 @@ impl Civ {
             initial_producer_biomass: Real::ONE,
             ecological_resilience: Real::ONE,
             last_emitted_resilience: Real::ONE,
+            // P1.3 — dormant pool starts empty; only catastrophes
+            // populate it via `apply_resistance_and_dormancy`.
+            // Resurrection cap anchored at the civ's initial
+            // founding population so brand-new civs without any
+            // observed peak still have a sensible target if a
+            // catastrophe fires before the population has grown.
+            dormant_pool: sim_species::DormantPool::EMPTY,
+            pre_catastrophe_population: initial_population,
         }
     }
 

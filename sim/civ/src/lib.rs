@@ -60,10 +60,11 @@ pub use naming::civ_name_from_seed;
 pub use succession::pick_successor_centroid;
 
 use figures::{NameGrammar, NamedFigure};
-use sim_arith::Real;
+use sim_arith::{Pop, Real};
 pub use sim_population::Cohort;
 use sim_population::{LifecycleState, PopulationDynamics};
 use sim_recognition::ChannelKind;
+use sim_species::DormantPool;
 use std::collections::{BTreeMap, BTreeSet};
 use tech::ToolKind;
 
@@ -455,6 +456,28 @@ pub struct Civ {
     /// `Event::CivResilienceTick` so only meaningful shifts hit
     /// the log.
     pub last_emitted_resilience: Real,
+    /// P1.3 — per-civ seed-bank reservoir for tardigrade-grade
+    /// species. Catastrophes seed this with
+    /// `pop_before × base_loss × dormancy_capability × severity`
+    /// — i.e. the would-be casualties that the species' dormancy
+    /// trait shunts into cryptobiosis instead of death. Drained
+    /// each tick by `dormant_pool.resurrect_step` (1%/tick) back
+    /// into the active cohort, capped at
+    /// `pre_catastrophe_population` so the active pool can never
+    /// overshoot what the civ had before the catastrophe. Empty
+    /// by default — only catastrophe-driven dormancy ever
+    /// populates it.
+    pub dormant_pool: DormantPool,
+    /// P1.3 — high-water mark of the civ's active population,
+    /// used as the resurrection cap by
+    /// `dormant_pool.resurrect_step`. Initialised at construction
+    /// to `initial_population`; bumped on every catastrophe (via
+    /// `apply_resistance_and_dormancy`) so the anchor tracks the
+    /// largest active cohort the civ has held immediately before
+    /// the catastrophe fired. Resurrection can never restore the
+    /// active pool above this level — the dormant reservoir is a
+    /// refill, not an overshoot.
+    pub pre_catastrophe_population: Pop,
 }
 
 /// Collapse triggers. Multiple may compound; whichever streak

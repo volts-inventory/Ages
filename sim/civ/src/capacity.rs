@@ -339,6 +339,12 @@ impl Civ {
         self.update_producer_biomass(producer_biomass);
         if self.region_cohorts.is_empty() {
             self.step_population_with_seasonal_capacity(state, tick, planet, species);
+            // P1.3 — also drive the dormant-pool resurrection on
+            // the legacy single-cohort path so freshly-founded
+            // civs and unit-test fixtures that haven't yet
+            // distributed to `region_cohorts` still see seed-bank
+            // recovery between catastrophes.
+            self.step_dormant_resurrection();
             return;
         }
         // Re-derive per-tick dynamics from current tools + drift
@@ -381,6 +387,96 @@ impl Civ {
             .region_cohorts
             .values()
             .map(|c| c.elder)
+            .fold(Pop::ZERO, |a, b| a + b);
+        // P1.3 — drain a tick's worth of the dormant pool back
+        // into the active cohort. The seed-bank reservoir is
+        // populated by catastrophe-driven dormancy in
+        // `apply_resistance_and_dormancy`; this is the recovery
+        // half — tardigrade-grade species that crypto-bio'd
+        // through the catastrophe slowly re-emerge.
+        self.step_dormant_resurrection();
+    }
+
+    /// P1.3 — drive one tick's worth of dormant-pool resurrection
+    /// into the active cohort. Caps recovery at
+    /// `pre_catastrophe_population` so the active pool can never
+    /// overshoot the largest cohort the civ has ever held. Revived
+    /// headcount is deposited into the fertile bracket (matches the
+    /// spec's "just add to fertile bracket" fall-through — emerging
+    /// cryptobiotic adults rejoin the reproductive pool directly).
+    /// When the civ has per-cell `region_cohorts`, the deposit is
+    /// distributed proportionally so the resurrection doesn't all
+    /// land in cell 0; civs without per-cell breakdown (legacy
+    /// tests, freshly founded civs) deposit into the aggregate
+    /// fertile bracket directly. No-op when the pool is empty or
+    /// the active cohort already sits at the cap.
+    pub fn step_dormant_resurrection(&mut self) {
+        if self.dormant_pool.population <= Real::ZERO {
+            return;
+        }
+        let target = self.pre_catastrophe_population.to_real_nonneg();
+        let mut active = self.cohort.total().to_real_nonneg();
+        let revived = self.dormant_pool.resurrect_step(&mut active, target);
+        if revived <= Real::ZERO {
+            return;
+        }
+        let revived_pop = Pop::from_real(revived);
+        // Distribute the revival across per-cell cohorts in
+        // proportion to each cell's current fertile share so the
+        // resurrection doesn't pile on top of any single cell.
+        // Falls back to the civ-level cohort when no per-cell
+        // breakdown exists.
+        if self.region_cohorts.is_empty() {
+            self.cohort.add_fertile(revived_pop);
+            return;
+        }
+        let total_fertile = self
+            .region_cohorts
+            .values()
+            .map(|c| c.fertile)
+            .fold(Pop::ZERO, |a, b| a + b);
+        if total_fertile <= Pop::ZERO {
+            // No fertile pop anywhere — deposit into the civ-level
+            // cohort (which the per-cell sum at the call site
+            // already nominally tracks) and into the first cell
+            // so the aggregate matches the sum.
+            self.cohort.add_fertile(revived_pop);
+            if let Some((_, c)) = self.region_cohorts.iter_mut().next() {
+                c.add_fertile(revived_pop);
+            }
+            return;
+        }
+        // Per-cell proportional split. Collect keys then mutate so
+        // we don't hold a borrow across the iteration.
+        let cells: Vec<u32> = self.region_cohorts.keys().copied().collect();
+        let mut deposited = Pop::ZERO;
+        for cell in &cells {
+            if let Some(cohort) = self.region_cohorts.get_mut(cell) {
+                let share = cohort.fertile / total_fertile;
+                let delta = revived_pop * share;
+                cohort.add_fertile(delta);
+                deposited = deposited + delta;
+            }
+        }
+        // Any rounding residual goes to the largest cell so the
+        // civ-level sum equals `revived_pop` exactly.
+        let residual = revived_pop - deposited;
+        if residual > Pop::ZERO {
+            if let Some(cell) = cells
+                .iter()
+                .max_by_key(|&&c| self.region_cohorts.get(&c).map(|x| x.fertile))
+            {
+                if let Some(cohort) = self.region_cohorts.get_mut(cell) {
+                    cohort.add_fertile(residual);
+                }
+            }
+        }
+        // Re-sum the civ-level fertile bracket so the aggregate
+        // reflects the resurrection deposit.
+        self.cohort.fertile = self
+            .region_cohorts
+            .values()
+            .map(|c| c.fertile)
             .fold(Pop::ZERO, |a, b| a + b);
     }
 }
