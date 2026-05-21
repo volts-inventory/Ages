@@ -9,6 +9,7 @@ members = [
     "sim/world",
     "sim/recognition",
     "sim/species",
+    "sim/ecosystem",
     "sim/civ",
     "sim/population",
     "sim/report",
@@ -41,6 +42,7 @@ sim-physics = { path = "sim/physics" }
 sim-world = { path = "sim/world" }
 sim-recognition = { path = "sim/recognition" }
 sim-species = { path = "sim/species" }
+sim-ecosystem = { path = "sim/ecosystem" }
 sim-civ = { path = "sim/civ" }
 sim-population = { path = "sim/population" }
 sim-report = { path = "sim/report" }

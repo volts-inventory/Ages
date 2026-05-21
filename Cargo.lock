@@ -311,6 +311,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-ecosystem"
+version = "0.0.1"
+dependencies = [
+ "rand",
+ "rand_chacha",
+ "sim-arith",
+ "sim-species",
+]
+
+[[package]]
 name = "sim-events"
 version = "0.0.1"
 dependencies = [

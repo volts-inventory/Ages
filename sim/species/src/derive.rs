@@ -7,7 +7,9 @@ use crate::sampling::{
     species_name_from_seed, template_channels,
 };
 use crate::species::Species;
-use crate::types::{CognitionTopology, Lifecycle, ModalityKind, DYNAMIC_TOOL_ID_START};
+use crate::types::{
+    CognitionTopology, EcosystemRole, Lifecycle, ModalityKind, DYNAMIC_TOOL_ID_START,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
@@ -147,5 +149,12 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         // `Aquatic { semelparous: true }`, social insects through
         // `Eusocial`, etc.
         lifecycle: Lifecycle::Vertebrate,
+        // The legacy single-species `derive` produces the civ-
+        // bearing species — a PrimaryConsumer (herbivore-equivalent)
+        // by default. The multi-species ecosystem layer
+        // (`sim_ecosystem`) samples a full per-planet species
+        // distribution with the canonical role mix; this entry
+        // point preserves the v1 single-species story.
+        role: EcosystemRole::PrimaryConsumer,
     }
 }

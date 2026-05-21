@@ -355,6 +355,142 @@ impl ToleranceEnvelope {
     }
 }
 
+/// Trophic / functional role within a multi-species ecosystem.
+/// Drives the per-tick ecosystem step (Lindeman pyramid, functional
+/// response, keystone detection) and worldgen role-distribution
+/// constraints.
+///
+/// Variants are non-`Copy` because `Producer{metabolism}` /
+/// `Mutualist{kind}` / `Parasite{kind}` carry a nested enum payload
+/// (which is itself `Copy` but the wrapper isn't to leave room for
+/// later expansion). For tier-comparison + ordering use
+/// `EcosystemRole::tier()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EcosystemRole {
+    Producer { metabolism: ProducerMetabolism },
+    PrimaryConsumer,
+    SecondaryConsumer,
+    ApexConsumer,
+    Detritivore,
+    Saprotroph,
+    Mutualist { kind: MutualismKind },
+    Parasite { kind: ParasiteKind },
+}
+
+impl EcosystemRole {
+    /// Trophic tier index. 0 = producer base of the pyramid; 1 =
+    /// primary consumer; 2 = secondary; 3 = apex. Detritivore /
+    /// Saprotroph / Mutualist / Parasite return `None` (they're
+    /// off-pyramid recycling / coupling species, not stacked tiers).
+    #[must_use]
+    pub fn tier(self) -> Option<u8> {
+        match self {
+            EcosystemRole::Producer { .. } => Some(0),
+            EcosystemRole::PrimaryConsumer => Some(1),
+            EcosystemRole::SecondaryConsumer => Some(2),
+            EcosystemRole::ApexConsumer => Some(3),
+            _ => None,
+        }
+    }
+
+    /// True if this role consumes other species' biomass (any
+    /// consumer tier OR detritivore/saprotroph/parasite — these all
+    /// draw biomass from something else and need a non-zero food
+    /// source to persist).
+    #[must_use]
+    pub fn is_consumer(self) -> bool {
+        !matches!(self, EcosystemRole::Producer { .. })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProducerMetabolism {
+    Photoautotroph,
+    Chemoautotroph,
+    Mixotroph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutualismKind {
+    Pollinator,
+    SeedDisperser,
+    Engineer,
+    Generic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParasiteKind {
+    Macro,
+    Micro,
+    Virus,
+}
+
+/// Typed pairwise ecological interaction. The half-saturation
+/// constant for Type-II / Type-III responses is hard-coded inside the
+/// step (see `sim_ecosystem`) at `0.1 × planet capacity` rather than
+/// carried per-pair: the spec asks for a `FunctionalResponse` tag
+/// only, and a per-pair `k` field would invite per-call tuning that
+/// the determinism story doesn't need.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Interaction {
+    pub kind: InteractionKind,
+    pub strength: Real,
+    pub functional_response: FunctionalResponse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteractionKind {
+    Predation,
+    Competition,
+    Mutualism,
+    Commensalism,
+    Parasitism,
+    HabitatModification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionalResponse {
+    Linear,
+    Saturating,
+    Sigmoidal,
+}
+
+/// Species identifier used by the multi-species ecosystem layer.
+/// Distinct from `Species::seed` so the ecosystem can address
+/// per-planet species by a compact dense index without colliding
+/// across planets that share a substrate seed. Determinism is
+/// preserved by sorting all iteration via `BTreeMap`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SpeciesId(pub u32);
+
+/// Sparse interaction matrix. Pairs are keyed `(predator/affector,
+/// prey/affected)` for asymmetric interactions (Predation,
+/// Parasitism, Commensalism, HabitatModification); for symmetric
+/// interactions (Competition, Mutualism) callers MUST insert both
+/// orderings so the per-tick step sees both effects.
+#[derive(Debug, Clone, Default)]
+pub struct InteractionMatrix {
+    pub pairs: std::collections::BTreeMap<(SpeciesId, SpeciesId), Interaction>,
+}
+
+impl InteractionMatrix {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pairs: std::collections::BTreeMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, a: SpeciesId, b: SpeciesId, interaction: Interaction) {
+        self.pairs.insert((a, b), interaction);
+    }
+
+    #[must_use]
+    pub fn get(&self, a: SpeciesId, b: SpeciesId) -> Option<&Interaction> {
+        self.pairs.get(&(a, b))
+    }
+}
+
 /// Species habitat domain. See `Species::habitat`.
 ///
 /// The first four (Aquatic / Terrestrial / Amphibious / Airborne)
