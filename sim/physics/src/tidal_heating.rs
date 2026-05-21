@@ -70,9 +70,70 @@
 //! pass; the call signature is stable so that future refinement is
 //! local to this module.
 
+use crate::chemistry::MetabolicSubstrate;
 use crate::state::PhysicsState;
 use sim_arith::transcendental::two_pi;
 use sim_arith::Real;
+
+/// Surface ↔ subsurface conduction coefficient (P1.1). Per-tick
+/// `delta_surface = (T_sub - T_surf) × CONDUCTION_K × dt`. Tuned
+/// slow enough to give a multi-tick warm-up so the subsurface
+/// reservoir accumulates heat over many macro-steps before the
+/// surface follows. With `dt = 1` macro-step and a 20 K gradient
+/// the per-tick surface bump is 0.02 K — visible on a 1000-tick
+/// integration but invisible on a single macro-step, matching the
+/// real icy-moon timescale where surface response lags subsurface
+/// by orbital periods (Europa) or geologic eras (Enceladus).
+#[inline]
+fn conduction_k() -> Real {
+    // 0.001 per tick. Use a Real::from_ratio so the constant stays
+    // bit-exact in Q32.32.
+    Real::from_ratio(1, 1_000)
+}
+
+/// Fraction of tidal heat routed into the *subsurface* reservoir
+/// for a given metabolic substrate (P1.1). The remainder lands on
+/// the surface `temperature` field. Real ratios vary enormously:
+///
+/// - Io (silicate / low-Q rocky volcanism) is ~95 % surface because
+///   tidal stress shatters the rocky crust into mid-latitude shear
+///   zones that vent magma directly. → 30 % subsurface.
+/// - Europa (Aqueous-on-icy-shell) is ~95 % subsurface because the
+///   ice shell insulates surface from the warm interior ocean. →
+///   90 % subsurface.
+/// - Titan (Hydrocarbon) is similar to Europa — cryogenic surface,
+///   warm subsurface ocean (likely H2O + ammonia) under the icy
+///   shell. → 90 % subsurface.
+/// - Enceladus / Ganymede analogues sit between; for v1 we map all
+///   ammoniacal regimes to a 60 % subsurface split (the eutectic
+///   point of NH3-H2O lets some heat vent to surface via cryovolcanism).
+///
+/// Returns a `Real` in `[0, 1]` interpretable as the subsurface
+/// fraction; `Real::ONE - subsurface_fraction` is the surface
+/// fraction.
+#[must_use]
+pub fn subsurface_heat_fraction(substrate: MetabolicSubstrate) -> Real {
+    match substrate {
+        MetabolicSubstrate::Aqueous | MetabolicSubstrate::Hydrocarbon => {
+            Real::from_ratio(90, 100)
+        }
+        MetabolicSubstrate::Ammoniacal => Real::from_ratio(60, 100),
+        MetabolicSubstrate::Silicate => Real::from_ratio(30, 100),
+    }
+}
+
+/// Default subsurface-heat fraction for callers that don't know the
+/// per-planet substrate (P1.1). 80 % subsurface matches the
+/// astrophysical default the post-implementation review identified:
+/// "Direct 80% of the tidal heat into subsurface, 20% into surface."
+/// Production paths thread the planet's actual `MetabolicSubstrate`
+/// via `subsurface_heat_fraction`; this default is the
+/// substrate-agnostic fallback.
+#[inline]
+#[must_use]
+pub fn default_subsurface_heat_fraction() -> Real {
+    Real::from_ratio(80, 100)
+}
 
 /// Tidal Love number `k₂` for rocky bodies. Earth ≈ 0.299; Mercury ≈ 0.45.
 /// Spec anchors at 0.3 for rocky substrates.
@@ -291,23 +352,36 @@ pub fn moon_tidal_heat_rate(planet_radius_earth_units: Real, moon: &MoonHeating)
 }
 
 /// Distribute a total heat dissipation rate (in TW) uniformly across
-/// every cell's temperature field.
+/// every cell, splitting between the subsurface reservoir and the
+/// surface temperature field per the `subsurface_fraction` argument.
 ///
 /// `total_heat_tw` is the sum of `moon_tidal_heat_rate` over every
-/// moon orbiting the planet (in TW). The "distribution" here is
-/// uniform: every cell gets `total_heat_tw × heat_to_kelvin / n_cells`
-/// added to its temperature each call. The `heat_to_kelvin`
-/// conversion factor (`1e-6`) is chosen so that 100 TW of Io-scale
-/// heating raises a typical 1000-cell grid by ~1e-4 K per call —
-/// a modest perturbation comparable to radiative-balance per-step
-/// nudges, well below the inter-tick variability of the equilibrium
-/// solver.
+/// moon orbiting the planet (in TW). `subsurface_fraction` ∈ `[0, 1]`
+/// specifies what proportion of the heat goes into
+/// `state.subsurface_temperature` (the rest lands on the surface
+/// `temperature` field). Use `subsurface_heat_fraction(substrate)`
+/// to pick the per-substrate ratio, or
+/// `default_subsurface_heat_fraction()` for the substrate-agnostic
+/// 80 % default.
 ///
-/// Future passes (the TODO ladder calls out "concentrate heat at
-/// tidal-stress hot spots") would replace the uniform distribution
-/// with a latitude- and longitude-weighted profile; this signature
-/// is stable so that refinement is internal to the module.
-pub fn distribute_heat_to_cells(state: &mut PhysicsState, total_heat_tw: Real) {
+/// P1.1 rationale: real tidal heating on Europa / Enceladus powers
+/// subsurface oceans, not surface T; on Io it concentrates at
+/// mid-latitude shear zones where the bulge tears the crust. The
+/// previous "100 % uniform onto surface" distribution foreclosed
+/// subsurface-ocean habitats on tidally heated moons. This split
+/// is the minimum-viable correction; a future pass can replace the
+/// uniform distribution with a latitude / longitude profile (the
+/// TODO ladder calls out "concentrate heat at tidal-stress hot spots").
+///
+/// The `heat_to_kelvin` conversion factor (`1e-6`) is unchanged from
+/// the original implementation: 100 TW of Io-scale heating distributed
+/// across a 1000-cell grid produces a ~1e-7 K per-cell per-call delta,
+/// comparable to radiation's per-step nudges.
+pub fn distribute_heat_to_cells(
+    state: &mut PhysicsState,
+    total_heat_tw: Real,
+    subsurface_fraction: Real,
+) {
     if total_heat_tw == Real::ZERO {
         return;
     }
@@ -323,10 +397,73 @@ pub fn distribute_heat_to_cells(state: &mut PhysicsState, total_heat_tw: Real) {
     // the per-cell delta is ~1e-7 K per macro-step — same order as
     // radiation's per-step nudges.
     let heat_to_kelvin = Real::from_ratio(1, 1_000_000);
-    let per_cell = total_heat_tw.saturating_mul(heat_to_kelvin)
+    let per_cell_total = total_heat_tw.saturating_mul(heat_to_kelvin)
         / Real::from_int(i64::try_from(n_cells).unwrap_or(1).max(1));
+    // Clamp the fraction to `[0, 1]` defensively so a caller passing
+    // an out-of-range value can't bias the totals out of conservation.
+    let sub_frac = subsurface_fraction.clamp(Real::ZERO, Real::ONE);
+    let surf_frac = Real::ONE - sub_frac;
+    let per_cell_sub = per_cell_total.saturating_mul(sub_frac);
+    let per_cell_surf = per_cell_total.saturating_mul(surf_frac);
+    // Update surface first (mutable borrow #1), then subsurface
+    // (mutable borrow #2). Q32.32 is bit-exact under saturating add
+    // so the order doesn't affect determinism, but we keep it
+    // surface-then-subsurface to mirror the reading order in
+    // `subsurface_conduction_step`.
     for t in state.temperature_mut() {
-        *t = t.saturating_add(per_cell);
+        *t = t.saturating_add(per_cell_surf);
+    }
+    for t in state.subsurface_temperature_mut() {
+        *t = t.saturating_add(per_cell_sub);
+    }
+}
+
+/// Subsurface-to-surface conduction step (P1.1). For every cell:
+///
+/// ```text
+///   delta = (T_subsurface - T_surface) × CONDUCTION_K × dt
+///   T_surface     += delta
+///   T_subsurface  -= delta
+/// ```
+///
+/// This is the simplest energy-conserving "two-reservoir" relaxation
+/// kernel: warm subsurface bleeds heat upward, cold surface gains it,
+/// and the pair drifts toward equilibrium exponentially over many
+/// ticks. The per-tick gain on a 20 K gradient is 0.02 K (with
+/// `CONDUCTION_K = 0.001` and `dt = 1`), so a sealed Europa-class
+/// planet with no other forcing relaxes its subsurface ocean by
+/// ~10 % in ~100 ticks — slow enough to be a multi-tick warm-up,
+/// fast enough to register on the 1000-tick canary.
+///
+/// Strictly energy-conserving by construction: the same delta is
+/// added to surface and subtracted from subsurface, so the per-cell
+/// `T_surf + T_sub` is invariant under this kernel (modulo Q32.32
+/// LSB drift from the multiply, which sits at ~1e-10 per call).
+///
+/// `dt` is the conduction sub-step length in macro-step units. The
+/// orchestrator passes `cfg.heat_dt` so the conduction cadence
+/// matches the other heat-band kernels.
+pub fn subsurface_conduction_step(state: &mut PhysicsState, dt: Real) {
+    let n = state
+        .temperature()
+        .len()
+        .min(state.subsurface_temperature().len());
+    if n == 0 {
+        return;
+    }
+    let k_dt = conduction_k().saturating_mul(dt);
+    // Snapshot the surface temperatures so we can read both fields
+    // while writing one. Single-cell read-then-write is cheaper than
+    // a full clone in the common case (n ~ 100-1000).
+    for i in 0..n {
+        let t_surf = state.temperature()[i];
+        let t_sub = state.subsurface_temperature()[i];
+        let gradient = t_sub - t_surf;
+        let delta = gradient.saturating_mul(k_dt);
+        state.temperature_mut()[i] = t_surf.saturating_add(delta);
+        // Subtract from subsurface so total energy is conserved per
+        // cell.
+        state.subsurface_temperature_mut()[i] = t_sub - delta;
     }
 }
 
@@ -338,12 +475,19 @@ pub fn distribute_heat_to_cells(state: &mut PhysicsState, total_heat_tw: Real) {
 /// and the orchestrator calls this once per macro-step between
 /// `Tides` and `Chemistry`.
 ///
+/// `substrate` selects the per-substrate subsurface-vs-surface
+/// split (P1.1) — Aqueous / Hydrocarbon worlds route 90 % into
+/// the subsurface reservoir (Europa, Titan); Silicate routes 30 %
+/// (Io); Ammoniacal routes 60 % (Enceladus-like cryovolcanic
+/// regimes). Pass `None` for the substrate-agnostic 80 % default.
+///
 /// Returns the total dissipation rate in TW so callers / tests can
 /// inspect the per-tick budget without re-summing.
 pub fn apply_tidal_heating(
     state: &mut PhysicsState,
     planet_radius_earth_units: Real,
     moons: &[MoonHeating],
+    substrate: Option<MetabolicSubstrate>,
 ) -> Real {
     // P0.6: saturating_add so a worldgen that samples many moons
     // (or one moon at a saturated `moon_tidal_heat_rate`) doesn't
@@ -352,7 +496,9 @@ pub fn apply_tidal_heating(
     for m in moons {
         total = total.saturating_add(moon_tidal_heat_rate(planet_radius_earth_units, m));
     }
-    distribute_heat_to_cells(state, total);
+    let sub_frac = substrate
+        .map_or_else(default_subsurface_heat_fraction, subsurface_heat_fraction);
+    distribute_heat_to_cells(state, total, sub_frac);
     total
 }
 
@@ -382,7 +528,7 @@ mod tests {
         for t in state.temperature_mut() {
             *t = Real::from_int(288);
         }
-        let total = apply_tidal_heating(&mut state, Real::ONE, &[moon]);
+        let total = apply_tidal_heating(&mut state, Real::ONE, &[moon], None);
         assert_eq!(total, Real::ZERO);
         for t in state.temperature() {
             assert_eq!(*t, Real::from_int(288));
@@ -496,7 +642,11 @@ mod tests {
         for t in state.temperature_mut() {
             *t = Real::from_int(100);
         }
-        distribute_heat_to_cells(&mut state, Real::from_int(100));
+        // Use surface_only split (subsurface fraction = 0) so the
+        // pre-P1.1 invariant (every cell's surface T rises by the
+        // same delta) still holds without aliasing into the new
+        // subsurface reservoir.
+        distribute_heat_to_cells(&mut state, Real::from_int(100), Real::ZERO);
         let first = state.temperature()[0];
         // Some delta from 100 K.
         assert!(
@@ -524,7 +674,7 @@ mod tests {
         let moon_b = MoonHeating::icy(Real::from_ratio(50, 10_000), 4);
         let h_a = moon_tidal_heat_rate(r, &moon_a);
         let h_b = moon_tidal_heat_rate(r, &moon_b);
-        let total = apply_tidal_heating(&mut state, r, &[moon_a, moon_b]);
+        let total = apply_tidal_heating(&mut state, r, &[moon_a, moon_b], None);
         assert_eq!(
             total,
             h_a + h_b,
@@ -554,10 +704,11 @@ mod tests {
             MoonHeating::icy(Real::from_ratio(80, 10_000), 5),
         ];
         for _ in 0..10 {
-            apply_tidal_heating(&mut a, r, &moons);
-            apply_tidal_heating(&mut b, r, &moons);
+            apply_tidal_heating(&mut a, r, &moons, None);
+            apply_tidal_heating(&mut b, r, &moons, None);
         }
         assert_eq!(a.temperature(), b.temperature());
+        assert_eq!(a.subsurface_temperature(), b.subsurface_temperature());
     }
 
     /// Empty moon list is a no-op: total = 0, state unchanged.
@@ -568,10 +719,184 @@ mod tests {
         for t in state.temperature_mut() {
             *t = Real::from_int(288);
         }
-        let total = apply_tidal_heating(&mut state, Real::ONE, &[]);
+        let total = apply_tidal_heating(&mut state, Real::ONE, &[], None);
         assert_eq!(total, Real::ZERO);
         for t in state.temperature() {
             assert_eq!(*t, Real::from_int(288));
+        }
+    }
+
+    /// P1.1 spec test: an Aqueous (Europa-like) configuration routes
+    /// most of its tidal heat into the subsurface reservoir, not the
+    /// surface. After 100 ticks of Io-class heating with the Aqueous
+    /// 90 / 10 split, the subsurface T rises more than the surface T.
+    /// This pins the structural correction the spec calls for —
+    /// Europa-class moons keep their tidal heat under the ice.
+    #[test]
+    fn europa_like_configuration_powers_subsurface_not_surface() {
+        let grid = HexGrid::new(8, 4);
+        let mut state = PhysicsState::new(grid);
+        // Seed both fields at the same baseline so any post-call
+        // difference must come from the substrate-dependent split.
+        for t in state.temperature_mut() {
+            *t = Real::from_int(260);
+        }
+        for t in state.subsurface_temperature_mut() {
+            *t = Real::from_int(260);
+        }
+        let r = Real::from_ratio(286, 1_000); // Io-class R for a non-zero rate.
+        let moon = MoonHeating::icy(Real::from_ratio(41, 10_000), 2);
+        for _ in 0..100 {
+            apply_tidal_heating(
+                &mut state,
+                r,
+                &[moon],
+                Some(MetabolicSubstrate::Aqueous),
+            );
+        }
+        let surf = state.temperature()[0];
+        let sub = state.subsurface_temperature()[0];
+        assert!(
+            sub > surf,
+            "Aqueous substrate should route tidal heat to subsurface: surf={surf:?} sub={sub:?}"
+        );
+        // And both must have risen above the baseline (the heating
+        // budget is non-zero by construction with e > 0).
+        assert!(
+            sub > Real::from_int(260),
+            "subsurface should have warmed: sub={sub:?}"
+        );
+    }
+
+    /// P1.1 spec test: an Io-like silicate moon routes most of its
+    /// tidal heat onto the surface (mid-latitude shear-zone
+    /// volcanism), not the subsurface. After 100 ticks with the
+    /// Silicate 30 / 70 split, surface T rises more than subsurface T.
+    #[test]
+    fn io_like_configuration_routes_heat_to_surface() {
+        let grid = HexGrid::new(8, 4);
+        let mut state = PhysicsState::new(grid);
+        for t in state.temperature_mut() {
+            *t = Real::from_int(110); // Io surface ~110 K
+        }
+        for t in state.subsurface_temperature_mut() {
+            *t = Real::from_int(110);
+        }
+        let r = Real::from_ratio(286, 1_000);
+        let moon = MoonHeating::rocky(Real::from_ratio(41, 10_000), 2);
+        for _ in 0..100 {
+            apply_tidal_heating(
+                &mut state,
+                r,
+                &[moon],
+                Some(MetabolicSubstrate::Silicate),
+            );
+        }
+        let surf = state.temperature()[0];
+        let sub = state.subsurface_temperature()[0];
+        assert!(
+            surf > sub,
+            "Silicate substrate should route tidal heat to surface: surf={surf:?} sub={sub:?}"
+        );
+    }
+
+    /// P1.1 spec test: subsurface conduction relaxes the surface
+    /// temperature toward the (warmer) subsurface temperature over
+    /// many ticks with no other forcing. Seed `T_sub = 300`,
+    /// `T_surf = 280`, run 1000 conduction ticks; surface T should
+    /// converge toward 290 (the midpoint, since the two-reservoir
+    /// kernel is energy-conserving per cell).
+    #[test]
+    fn subsurface_conduction_warms_surface_over_time() {
+        let grid = HexGrid::new(4, 4);
+        let mut state = PhysicsState::new(grid);
+        for t in state.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        for t in state.subsurface_temperature_mut() {
+            *t = Real::from_int(300);
+        }
+        let dt = Real::ONE;
+        let initial_surf = state.temperature()[0];
+        for _ in 0..1000 {
+            subsurface_conduction_step(&mut state, dt);
+        }
+        let final_surf = state.temperature()[0];
+        let final_sub = state.subsurface_temperature()[0];
+        assert!(
+            final_surf > initial_surf,
+            "surface should warm via conduction: initial={initial_surf:?} final={final_surf:?}"
+        );
+        // Converges *toward* the subsurface T but doesn't necessarily
+        // reach it within 1000 ticks at CONDUCTION_K = 0.001. The
+        // gap should close substantially though: with k·dt = 0.001
+        // per step, the exponential time-constant is 500 ticks, so
+        // 1000 ticks closes ~86 % of the gap. Final surface T should
+        // be within ~3 K of the midpoint (290 K) ± round-off.
+        let mid = Real::from_int(290);
+        let surf_gap = (final_surf - mid).abs();
+        let sub_gap = (final_sub - mid).abs();
+        // Loose tolerance — bracketing the asymptote, not a precise
+        // closed-form match. Halfway between the seeds (10 K) is the
+        // strict upper bound for an underdamped relaxation.
+        assert!(
+            surf_gap < Real::from_int(10),
+            "surface should converge toward midpoint: gap={surf_gap:?}"
+        );
+        assert!(
+            sub_gap < Real::from_int(10),
+            "subsurface should converge toward midpoint: gap={sub_gap:?}"
+        );
+        // Total energy conservation per cell (modulo Q32.32 LSB
+        // drift). T_surf + T_sub should stay near 580 across the
+        // 1000-tick relaxation.
+        let total = final_surf + final_sub;
+        let expected = Real::from_int(580);
+        let drift = (total - expected).abs();
+        assert!(
+            drift < Real::ONE,
+            "per-cell energy conservation: total={total:?} expected={expected:?} drift={drift:?}"
+        );
+    }
+
+    /// `subsurface_heat_fraction` returns the documented per-substrate
+    /// splits. Pinned so a future re-tune of the ratios is intentional.
+    #[test]
+    fn subsurface_heat_fraction_per_substrate() {
+        assert_eq!(
+            subsurface_heat_fraction(MetabolicSubstrate::Aqueous),
+            Real::from_ratio(90, 100)
+        );
+        assert_eq!(
+            subsurface_heat_fraction(MetabolicSubstrate::Hydrocarbon),
+            Real::from_ratio(90, 100)
+        );
+        assert_eq!(
+            subsurface_heat_fraction(MetabolicSubstrate::Ammoniacal),
+            Real::from_ratio(60, 100)
+        );
+        assert_eq!(
+            subsurface_heat_fraction(MetabolicSubstrate::Silicate),
+            Real::from_ratio(30, 100)
+        );
+    }
+
+    /// `init_subsurface_temperature` sets each cell's subsurface T to
+    /// `surface T - 10 K`. Smoke-tests the planet-init contract.
+    #[test]
+    fn init_subsurface_temperature_offsets_by_ten() {
+        let grid = HexGrid::new(4, 4);
+        let mut state = PhysicsState::new(grid);
+        for (i, t) in state.temperature_mut().iter_mut().enumerate() {
+            *t = Real::from_int(280 + i as i64);
+        }
+        state.init_subsurface_temperature();
+        for i in 0..state.grid().n_cells() {
+            assert_eq!(
+                state.subsurface_temperature()[i],
+                state.temperature()[i] - Real::from_int(10),
+                "cell {i} subsurface should be surface - 10"
+            );
         }
     }
 }

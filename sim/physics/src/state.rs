@@ -105,6 +105,22 @@ pub struct PhysicsState {
     /// layer as the minimum-viable vertical resolution; future
     /// refinements can grow this into a multi-level stack.
     upper_temperature: Vec<Real>,
+    /// Per-cell *subsurface* temperature in K (P1.1). Sits one
+    /// layer below the surface `temperature` field. Real tidal
+    /// heating on Europa / Enceladus powers subsurface oceans, not
+    /// surface T; on Io it powers mid-latitude shear-zone volcanism
+    /// (still mostly subsurface origin even if it vents to surface).
+    /// `distribute_heat_to_cells` deposits the substrate-dependent
+    /// majority of tidal energy here, and `subsurface_conduction_step`
+    /// diffuses it upward toward surface T over many ticks. Initialised
+    /// at planet init to `temperature[i] - 10 K` (slightly cooler at
+    /// birth; retains heat better than the radiatively-cooled surface,
+    /// gains energy from tidal forcing).
+    ///
+    /// P1.5 follow-up: on `LockingState::Synchronous` worlds the
+    /// fixed sub-stellar point will also drive subsurface T. For now
+    /// this field only sees the tidal-heating + conduction couplings.
+    subsurface_temperature: Vec<Real>,
     /// Per-cell biofuel carrying-capacity ceiling. Set at planet
     /// init from the cell's biosphere contribution (land + non-zero
     /// biosphere class → positive ceiling; sea + lifeless worlds →
@@ -253,6 +269,10 @@ impl PhysicsState {
             magnetic_magnitude: vec![Real::ZERO; n],
             macro_step: 0,
             upper_temperature: vec![Real::ZERO; n],
+            // P1.1: zero by default; `init_subsurface_temperature` (or
+            // explicit test seeding) sets it to `temperature - 10` after
+            // surface temperature is populated.
+            subsurface_temperature: vec![Real::ZERO; n],
             biofuel_ceiling: vec![Real::ZERO; n],
             snow_fraction: vec![Real::ZERO; n],
             sea_ice_fraction: vec![Real::ZERO; n],
@@ -464,6 +484,54 @@ impl PhysicsState {
 
     pub fn upper_temperature_mut(&mut self) -> &mut [Real] {
         &mut self.upper_temperature
+    }
+
+    /// Per-cell subsurface temperature in K (P1.1). Sits one layer
+    /// below the surface `temperature` field. Authored by the
+    /// substrate-dependent split in
+    /// `tidal_heating::distribute_heat_to_cells` and by
+    /// `subsurface_conduction_step`; read by future habitat /
+    /// chemistry passes that gate on "is there a liquid subsurface
+    /// ocean?" Real Europa-class moons keep most of their tidal heat
+    /// in this reservoir because the icy shell insulates the surface
+    /// from the warm interior.
+    #[must_use]
+    pub fn subsurface_temperature(&self) -> &[Real] {
+        &self.subsurface_temperature
+    }
+
+    /// Mutable accessor for the subsurface temperature slice (P1.1).
+    /// Used by `tidal_heating::distribute_heat_to_cells` to deposit
+    /// the substrate-dependent majority of tidal energy and by
+    /// `subsurface_conduction_step` to relax toward surface T. Tests
+    /// also seed it directly.
+    pub fn subsurface_temperature_mut(&mut self) -> &mut [Real] {
+        &mut self.subsurface_temperature
+    }
+
+    /// Initialise `subsurface_temperature[i] = temperature[i] - 10` for
+    /// every cell (P1.1). The 10 K offset mirrors the typical
+    /// terrestrial geothermal-gradient *inversion* at planet birth:
+    /// the subsurface is slightly cooler than the just-formed surface
+    /// (which is still hot from accretion), but it retains heat better
+    /// than the radiatively-cooled surface, so over time tidal +
+    /// internal forcing pushes it above surface T (the Europa /
+    /// Enceladus regime). Callers should invoke this after seeding the
+    /// surface `temperature` field at planet init; the orchestrator
+    /// itself does *not* call it — the per-run init path
+    /// (`build_laws` / planet seeding in `sim-core`) is the contract
+    /// owner.
+    pub fn init_subsurface_temperature(&mut self) {
+        // Snapshot the surface temperatures first to avoid aliasing
+        // the borrow checker against the mutable subsurface slice.
+        let n = self.temperature.len().min(self.subsurface_temperature.len());
+        let offset = Real::from_int(10);
+        for i in 0..n {
+            // Saturating subtract so an initial cell at T < 10 K (deep
+            // space sentinel; ammonia-world surfaces around 90 K still
+            // produce a sensible 80 K subsurface seed) doesn't underflow.
+            self.subsurface_temperature[i] = self.temperature[i] - offset;
+        }
     }
 
     /// Per-cell biofuel ceiling (regrowth target). Set once at

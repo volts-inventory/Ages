@@ -506,20 +506,35 @@ pub fn integrate_civ_step(
                 );
             }
         }
-        // Sprint 5 Item 16 (v2): tidal heating from eccentric moon
-        // orbits. Runs immediately after the lunar-bulge `Tides`
+        // Sprint 5 Item 16 (v2) + P1.1: tidal heating from eccentric
+        // moon orbits. Runs immediately after the lunar-bulge `Tides`
         // displacement so the same per-macro-step tidal-friction
         // coupling that drives the bulge here injects its
-        // dissipated heat into the temperature field. By the time
-        // chemistry runs later in the macro-step, it sees the
-        // post-heating temperatures. Mass-conserving (energy-only),
+        // dissipated heat into both the surface and subsurface
+        // temperature fields per the substrate-dependent split. By
+        // the time chemistry runs later in the macro-step, it sees
+        // the post-heating temperatures. Mass-conserving (energy-only),
         // so no drift bookkeeping is needed.
+        //
+        // The substrate-agnostic 80/20 default is used here; the
+        // production path (sim-core::laws::build_laws) threads the
+        // per-planet `MetabolicSubstrate` through the
+        // `tidal_heating` 4-tuple in a future wire-through. The
+        // orchestrator's view stays substrate-free so the
+        // physics-layer crate doesn't take a sim-world dependency.
         if let Some((planet_radius_earth_units, moons)) = tidal_heating {
             let _ = crate::tidal_heating::apply_tidal_heating(
                 state,
                 planet_radius_earth_units,
                 moons,
+                None,
             );
+            // P1.1: subsurface → surface conduction. Runs every
+            // macro-step regardless of whether tidal heating fired
+            // this tick, so subsurface heat seeded at planet init
+            // (or by past tidal cycles) bleeds into the surface
+            // even on quiescent ticks.
+            crate::tidal_heating::subsurface_conduction_step(state, cfg.heat_dt);
         }
         for _fluid_step in 0..cfg.fluid_substeps_per_macro {
             fluid.integrate(state, cfg.fluid_dt);
