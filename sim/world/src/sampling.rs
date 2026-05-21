@@ -6,7 +6,7 @@
 
 use crate::{
     Atmosphere, AtmosphericComposition, BiosphereClass, Composition, Crust, CrustalComposition,
-    Magnetosphere, MetabolicSubstrate, Moon, Planet,
+    LockingState, Magnetosphere, MetabolicSubstrate, Moon, Planet,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -240,6 +240,18 @@ pub fn sample_planet(seed: u64) -> Planet {
                 mass_relative_x100: mass,
                 orbital_period_macros: period,
                 inclination_deg_x10,
+                // Per-moon eccentricity. Earth's moon ≈ 0.055, Io
+                // ≈ 0.004. The sampler picks a small initial value
+                // in `[0.00, 0.10]`; Item 19's per-tick damping then
+                // shrinks it (Synchronous) or holds it
+                // (Resonance-pumped). Sprint 5 Item 24 will sample
+                // the locking_state per moon-planet pair — until
+                // then the planet default `FreeRotator` gates the
+                // slow damping path.
+                eccentricity: Real::from_ratio(
+                    rng.gen_range(0_i64..=10_i64),
+                    100,
+                ),
             }
         })
         .collect();
@@ -371,6 +383,15 @@ pub fn sample_planet(seed: u64) -> Planet {
         // [-0.05, +0.05]. RNG draw of an i64 in [-50, 50] divided
         // by 1000 — gives 5% relative drift on freeze/boil points.
         substrate_perturbation: Real::from_ratio(rng.gen_range(-50_i64..=50_i64), 1000),
+        // Tidal-locking regime. Item 19 (this PR) introduces the
+        // enum + per-tick dynamics with `FreeRotator` as the back-
+        // compat default; Item 24 will add the proper sampler that
+        // examines moon mass + orbital period + day length and
+        // picks {Synchronous, Resonance(p,q), FreeRotator}. Until
+        // then every sampled planet defaults to FreeRotator (slow
+        // tidal damping of eccentricity, sub-stellar point rotates
+        // with macro_step).
+        locking_state: LockingState::FreeRotator,
     }
 }
 

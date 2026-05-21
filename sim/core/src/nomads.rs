@@ -1112,6 +1112,7 @@ mod tests {
             substrate_perturbation: Real::ZERO,
             terrain_centre_q: 0,
             terrain_centre_r: 0,
+            locking_state: sim_world::LockingState::FreeRotator,
         }
     }
 

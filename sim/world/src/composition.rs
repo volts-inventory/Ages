@@ -27,6 +27,20 @@ pub struct Moon {
     /// earlier 1D model omitted). Defaults to 0 for legacy
     /// worldgen paths that don't populate it.
     pub inclination_deg_x10: i32,
+    /// Orbital eccentricity in `[0, 1)`. 0 = circular orbit,
+    /// approaching 1 = highly elliptical. Earth's moon ≈ 0.055;
+    /// Io ≈ 0.0041 (low but non-zero, sustained by Laplace resonance
+    /// with Europa + Ganymede). Drives tidal heating in the
+    /// `(21/2) k₂/Q × R⁵ n⁵ e² / G` formula (Item 16) — circular
+    /// moons produce no heating; eccentric moons radiate friction
+    /// heat from internal flexing.
+    ///
+    /// Evolved per-tick by `tidal_locking::step_eccentricity_damping`
+    /// (Item 19): damps toward zero unless the moon's host planet is
+    /// in a `Resonance` locking state, where gravitational forcing
+    /// from other bodies sustains a non-zero steady-state e.
+    /// Defaults to 0 for legacy worldgen paths that don't populate it.
+    pub eccentricity: Real,
 }
 
 /// Continuous atmospheric composition. Mass fractions for

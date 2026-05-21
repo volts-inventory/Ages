@@ -41,6 +41,7 @@ mod hemisphere;
 mod init;
 mod planet;
 mod sampling;
+mod tidal_locking;
 mod types;
 
 pub use climate::{seasonal_capacity_factor, seasonal_temperature_offset};
@@ -56,8 +57,10 @@ pub use habitability::{
 pub use init::{discharge_threshold_for, init_planet};
 pub use planet::Planet;
 pub use sampling::{planet_name_from_seed, sample_planet};
+pub use tidal_locking::{step_eccentricity_damping, sub_stellar_point};
 pub use types::{
-    Atmosphere, BiosphereClass, Composition, Crust, Magnetosphere, MetabolicSubstrate,
+    Atmosphere, BiosphereClass, Composition, Crust, LockingState, Magnetosphere,
+    MetabolicSubstrate,
 };
 
 #[cfg(test)]
