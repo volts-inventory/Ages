@@ -162,7 +162,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // Each macro-step ≈ one sim-day; `orbital_period_months`
     // months × 30 days = year-length in macro-steps.
     let year_macros = u64::from(planet.orbital_period_months).saturating_mul(30);
-    let radiation = sim_physics::Radiation::for_planet(
+    let radiation_base = sim_physics::Radiation::for_planet(
         grid_height,
         planet.stellar_luminosity,
         albedo_x100,
@@ -177,6 +177,30 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         // day/night asymmetry across macro-steps.
         planet.day_length_hours,
     );
+    // P1.5: thread the tidal-locking sub-stellar point through.
+    // For `LockingState::Synchronous` planets the sub-stellar
+    // point is fixed at (0, 0); the radiation law swaps its per-
+    // row zonal-mean equilibrium for a per-cell great-circle-
+    // distance day-night gradient anchored on that point.
+    // Locked worlds get a permanent terminator — the
+    // climatically interesting feature that distinguishes a
+    // tidally-locked exoplanet from a free-rotator one. For
+    // `Resonance` / `FreeRotator` the sub-stellar longitude
+    // rotates with `macro_step`, so on the macro-step timescale
+    // the day-night gradient washes out and the per-row table is
+    // the right physics; pass `LockingMode::Other` and let the
+    // diurnal-amplitude path handle the slow-rotator residual.
+    let locking_mode = match planet.locking_state {
+        sim_world::LockingState::Synchronous => sim_physics::LockingMode::Synchronous,
+        sim_world::LockingState::FreeRotator | sim_world::LockingState::Resonance { .. } => {
+            sim_physics::LockingMode::Other
+        }
+    };
+    // `sub_stellar_point(planet, 0)` returns (0, 0) for
+    // `Synchronous` (locked face); for non-synchronous regimes
+    // the law ignores the value (`LockingMode::Other`).
+    let (sub_lat, sub_lon) = sim_world::sub_stellar_point(planet, 0);
+    let radiation = radiation_base.with_locking(locking_mode, sub_lat, sub_lon);
 
     // Atmospheric wind. Per-planet tuning lives in
     // `wind_for_atmosphere`: density scaling on all three
