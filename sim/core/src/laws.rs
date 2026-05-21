@@ -43,6 +43,13 @@ pub(crate) struct Laws {
     /// without a magnetosphere still get this law installed but the
     /// effect is invisible because the per-cell vector field is zero.
     pub magnetic_reversal: sim_physics::MagneticReversal,
+    /// Sprint 5 Item 23: cloud microphysics. Per-cell cloud
+    /// fraction derived from vapour saturation + vertical-motion
+    /// proxies; classified as cirrus vs stratus by elevation and
+    /// updraft strength. Couples to albedo and greenhouse via the
+    /// per-cell `cloud_fraction` + `cloud_type` fields the law
+    /// authors.
+    pub clouds: sim_physics::Clouds,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -256,6 +263,12 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // can decide whether to ignore the result).
     let magnetic_reversal = sim_physics::MagneticReversal::earth_like();
 
+    // Cloud microphysics (Sprint 5 Item 23). Per-cell cloud
+    // fraction + type driven by vapour saturation and the
+    // vertical-motion proxy. Earth-like defaults; per-substrate
+    // tuning can come later.
+    let clouds = sim_physics::Clouds::earth_like();
+
     Laws {
         fluid,
         heat,
@@ -274,6 +287,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         tectonics,
         volcanism,
         magnetic_reversal,
+        clouds,
     }
 }
 

@@ -412,6 +412,7 @@ pub fn integrate_civ_step(
     tectonics: Option<&crate::tectonics::Tectonics>,
     volcanism: Option<&crate::volcanism::Volcanism>,
     magnetic_reversal: Option<&crate::magnetism::MagneticReversal>,
+    clouds: Option<&crate::clouds::Clouds>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -601,6 +602,18 @@ pub fn integrate_civ_step(
         if let Some(v) = vertical {
             v.integrate(state, cfg.heat_dt);
         }
+        // Cloud microphysics (Sprint 5 Item 23). Runs after
+        // vertical convection so the surface-vs-upper temperature
+        // gap (the vertical-motion proxy clouds read) reflects
+        // the freshest convective state, and after hydrology so
+        // vapour densities are post-evaporation. The cloud
+        // fraction + type the law authors feed *next* macro-step's
+        // ice-albedo and radiation passes — current-tick coupling
+        // is one-way (clouds depend on T, vapour, elevation) so
+        // no fixed-point iteration is needed.
+        if let Some(c) = clouds {
+            c.integrate(state, cfg.heat_dt);
+        }
         for _em_step in 0..cfg.em_substeps_per_macro {
             em.integrate(state, cfg.em_dt);
         }
@@ -713,11 +726,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -770,7 +783,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);

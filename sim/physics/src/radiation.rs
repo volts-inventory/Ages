@@ -70,6 +70,7 @@
 
 use crate::albedo::{albedo_radiation_factor, effective_albedo_slice};
 use crate::chemistry::Substance;
+use crate::clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType};
 use crate::laws::Law;
 use crate::state::PhysicsState;
 use sim_arith::transcendental::{cos, exp, half_pi, ln};
@@ -441,6 +442,16 @@ impl Law for Radiation {
         let vapour = state.substance(Substance::Vapour.idx()).to_vec();
         let co2 = state.substance(Substance::CO2.idx()).to_vec();
         let ch4 = state.substance(Substance::Methane.idx()).to_vec();
+        // Per-cell cloud cover + type (Sprint 5 Item 23). Cirrus
+        // contributes more greenhouse forcing than stratus
+        // (high-altitude ice clouds trap more outgoing longwave
+        // than low-altitude liquid-water clouds). Read once per
+        // integrate so the per-cell hot loop avoids the byte
+        // decode.
+        let cloud_fraction = state.cloud_fraction().to_vec();
+        let cloud_type = state.cloud_type().to_vec();
+        let cirrus_gh = cirrus_greenhouse_k();
+        let stratus_gh = stratus_greenhouse_k();
 
         // Per-cell diurnal modulation. Sub-solar longitude
         // advances at rate 1 / day_length_macros per macro-step.
@@ -516,7 +527,19 @@ impl Law for Radiation {
             // drives runaway. Bounded by [`greenhouse_cap_k`] so
             // a saturated runaway plateaus at a Venus-like temperature
             // rather than overflowing fixed-point arithmetic.
-            let greenhouse_raw = vapour[i] * h2o_k + co2[i] * co2_k + ch4[i] * ch4_k;
+            // Per-cell cloud greenhouse contribution. Cirrus cells
+            // add `cirrus_gh × cloud_fraction`; stratus cells add
+            // the smaller `stratus_gh × cloud_fraction`. Without
+            // this term the cloud_fraction field affected only
+            // albedo (shortwave shielding) — clouds in the real
+            // climate also trap outgoing longwave.
+            let cloud_gh_peak = match CloudType::from_byte(cloud_type[i]) {
+                CloudType::Cirrus => cirrus_gh,
+                CloudType::Stratus => stratus_gh,
+            };
+            let cloud_gh = cloud_gh_peak * cloud_fraction[i].clamp01();
+            let greenhouse_raw =
+                vapour[i] * h2o_k + co2[i] * co2_k + ch4[i] * ch4_k + cloud_gh;
             let greenhouse_cell = greenhouse_raw.min(greenhouse_cap);
             let t_eq = t_eq_base * day_factor + greenhouse_cell;
             let gap = t_eq - temps_prev[i];

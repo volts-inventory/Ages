@@ -116,13 +116,24 @@ pub struct PhysicsState {
     /// capped ice. Authored by the `IceAlbedo` law from surface
     /// temperature alone. Range `[0, 1]`.
     sea_ice_fraction: Vec<Real>,
-    /// Per-cell fraction of cell covered by cloud. Stub for
-    /// now (initialised to 0 and not yet updated by any law); the
-    /// `IceAlbedo` law reads it so the cloud contribution to
-    /// effective albedo (`0.4 × cloud_fraction × (1 - max(snow,
-    /// sea_ice))`) is already wired through for the follow-up
-    /// that drives clouds from the hydrologic cycle.
+    /// Per-cell fraction of cell covered by cloud. Authored by
+    /// the `Clouds` law (Sprint 5 Item 23) from vapour
+    /// supersaturation + vertical motion proxies; read by the
+    /// `effective_albedo_for` helper and by `Radiation` for the
+    /// per-cell greenhouse contribution. Range `[0, 1]`.
     cloud_fraction: Vec<Real>,
+    /// Per-cell cloud type discriminant (Sprint 5 Item 23). One
+    /// byte per cell: `0` = stratus (low-altitude, high-albedo,
+    /// low-greenhouse), `1` = cirrus (high-altitude, low-albedo,
+    /// high-greenhouse). Authored by the `Clouds` law based on
+    /// surface elevation + vertical motion strength; read by
+    /// `effective_albedo_for` (cloud type modulates the cloud
+    /// channel's albedo peak) and `Radiation` (cloud type
+    /// modulates the per-cell greenhouse contribution). Stored as
+    /// `u8` rather than `Vec<CloudType>` so the per-cell footprint
+    /// stays one byte and the slice can be passed to SIMD-friendly
+    /// loops without enum boxing.
+    cloud_type: Vec<u8>,
     /// Tectonic plate id owning each cell (Sprint 4 Item 12). Set
     /// at worldgen via `Tectonics::sample_plates_for_seed`; immutable
     /// per-cell in this PR (future Items 12a subduction + 12e
@@ -235,6 +246,11 @@ impl PhysicsState {
             snow_fraction: vec![Real::ZERO; n],
             sea_ice_fraction: vec![Real::ZERO; n],
             cloud_fraction: vec![Real::ZERO; n],
+            // Default `0` = stratus. Cells without active vertical
+            // motion default to low-altitude stratus; the `Clouds`
+            // law re-classifies as cirrus when elevation or
+            // updraft strength crosses the thresholds.
+            cloud_type: vec![0u8; n],
             // Empty by default — populated by
             // `set_tectonics_fields` after worldgen samples plates.
             // The `Tectonics::integrate` law gates on the empty case
@@ -461,11 +477,13 @@ impl PhysicsState {
         &mut self.sea_ice_fraction
     }
 
-    /// Per-cell cloud-cover fraction (`[0, 1]`). Stub channel —
-    /// initialised to zero and not yet updated by any law. The
-    /// `IceAlbedo` helper reads it so the cloud contribution to
-    /// effective albedo is already wired through for the
-    /// follow-up that drives clouds from the hydrologic cycle.
+    /// Per-cell cloud-cover fraction (`[0, 1]`). Authored by the
+    /// `Clouds` law (Sprint 5 Item 23) from vapour supersaturation
+    /// against [`crate::hydrology::saturation_vapour_cap`] plus a
+    /// vertical-motion proxy (surface-vs-upper temperature gap).
+    /// Read by `effective_albedo_for` (modulated by per-cell
+    /// `cloud_type` — cirrus contributes ~0.2, stratus ~0.5) and
+    /// by `Radiation` for the per-cell greenhouse contribution.
     #[must_use]
     pub fn cloud_fraction(&self) -> &[Real] {
         &self.cloud_fraction
@@ -473,6 +491,21 @@ impl PhysicsState {
 
     pub fn cloud_fraction_mut(&mut self) -> &mut [Real] {
         &mut self.cloud_fraction
+    }
+
+    /// Per-cell cloud-type byte (Sprint 5 Item 23). `0` = stratus,
+    /// `1` = cirrus. Authored by the `Clouds` law from surface
+    /// elevation + vertical-motion strength; read by the
+    /// effective-albedo helper and by `Radiation` for the per-cell
+    /// greenhouse contribution. See [`crate::clouds::CloudType`]
+    /// for the typed wrapper around individual entries.
+    #[must_use]
+    pub fn cloud_type(&self) -> &[u8] {
+        &self.cloud_type
+    }
+
+    pub fn cloud_type_mut(&mut self) -> &mut [u8] {
+        &mut self.cloud_type
     }
 
     /// Per-cell tectonic plate id (Sprint 4 Item 12). Empty slice

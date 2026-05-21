@@ -83,9 +83,31 @@ pub fn sea_ice_peak_albedo() -> Real {
 
 /// Peak albedo for fully overcast cloud cover. Stratus / cumulus
 /// scatter ~40 % of incoming shortwave; cirrus much less. 0.4 is
-/// the canonical mid-cloud value.
+/// the canonical mid-cloud value, retained as the "generic /
+/// type-agnostic" peak for callers that haven't yet distinguished
+/// cloud morphology. Cloud-type-aware callers use the cirrus /
+/// stratus peaks below.
 pub fn cloud_peak_albedo() -> Real {
     Real::percent(40)
+}
+
+/// Peak albedo for stratus / cumulus cloud cover (Sprint 5 Item
+/// 23). Low- to mid-altitude clouds with thick liquid-water
+/// content scatter a large fraction of incoming shortwave; 0.5
+/// is the high end of the published stratiform range. Pairs with
+/// the lower stratus greenhouse contribution: bright + cool
+/// shortwave-blocker.
+pub fn stratus_peak_albedo() -> Real {
+    Real::percent(50)
+}
+
+/// Peak albedo for cirrus cloud cover (Sprint 5 Item 23). High-
+/// altitude ice clouds are optically thin; they scatter only ~20 %
+/// of incoming shortwave. Pairs with the higher cirrus greenhouse
+/// contribution: nearly transparent to sunlight but very effective
+/// at trapping outgoing longwave.
+pub fn cirrus_peak_albedo() -> Real {
+    Real::percent(20)
 }
 
 /// Deterministic sigmoid over `Real`: `1 / (1 + exp(-x))`.
@@ -145,12 +167,18 @@ pub fn base_albedo_for(water_depth: Real, biofuel_ceiling: Real) -> Real {
 ///
 /// All inputs are clamped to `[0, 1]` before combining; callers
 /// don't need to pre-clamp.
+///
+/// `cloud_type` discriminates morphology (Sprint 5 Item 23):
+/// stratus is the bright low-altitude default
+/// ([`stratus_peak_albedo`]); cirrus is the dim high-altitude
+/// channel ([`cirrus_peak_albedo`]).
 #[must_use]
 pub fn effective_albedo_for(
     base: Real,
     snow_fraction: Real,
     sea_ice_fraction: Real,
     cloud_fraction: Real,
+    cloud_type: crate::clouds::CloudType,
 ) -> Real {
     let snow_f = snow_fraction.clamp01();
     let ice_f = sea_ice_fraction.clamp01();
@@ -163,9 +191,14 @@ pub fn effective_albedo_for(
     // Clouds add brightness in proportion to the non-bright
     // surface area beneath them: over a fully ice-covered cell
     // the cloud contribution vanishes (already as bright as it
-    // will get).
+    // will get). Cloud type picks the peak albedo: stratus
+    // bright (~0.5), cirrus dim (~0.2).
+    let cloud_peak = match cloud_type {
+        crate::clouds::CloudType::Cirrus => cirrus_peak_albedo(),
+        crate::clouds::CloudType::Stratus => stratus_peak_albedo(),
+    };
     let surface_brightness = snow_f.max(ice_f);
-    let cloud_a = cloud_peak_albedo() * cloud_f * (Real::ONE - surface_brightness);
+    let cloud_a = cloud_peak * cloud_f * (Real::ONE - surface_brightness);
     let a = base.max(snow_a).max(sea_ice_a).max(cloud_a);
     a.clamp01()
 }
@@ -183,10 +216,12 @@ pub fn effective_albedo_slice(state: &PhysicsState) -> Vec<Real> {
     let snow = state.snow_fraction();
     let sea_ice = state.sea_ice_fraction();
     let cloud = state.cloud_fraction();
+    let cloud_type = state.cloud_type();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let base = base_albedo_for(water[i], bio[i]);
-        out.push(effective_albedo_for(base, snow[i], sea_ice[i], cloud[i]));
+        let ct = crate::clouds::CloudType::from_byte(cloud_type[i]);
+        out.push(effective_albedo_for(base, snow[i], sea_ice[i], cloud[i], ct));
     }
     out
 }
@@ -366,7 +401,13 @@ mod tests {
 
     #[test]
     fn effective_albedo_snow_dominates_over_base() {
-        let a = effective_albedo_for(Real::percent(6), Real::ONE, Real::ZERO, Real::ZERO);
+        let a = effective_albedo_for(
+            Real::percent(6),
+            Real::ONE,
+            Real::ZERO,
+            Real::ZERO,
+            crate::clouds::CloudType::Stratus,
+        );
         assert_eq!(a, snow_peak_albedo());
     }
 
@@ -375,7 +416,13 @@ mod tests {
         // Snow on top of sea ice should read as the snow albedo
         // — the sea-ice channel gets suppressed by `(1 -
         // snow_fraction)`.
-        let a = effective_albedo_for(Real::percent(6), Real::ONE, Real::ONE, Real::ZERO);
+        let a = effective_albedo_for(
+            Real::percent(6),
+            Real::ONE,
+            Real::ONE,
+            Real::ZERO,
+            crate::clouds::CloudType::Stratus,
+        );
         assert_eq!(a, snow_peak_albedo());
     }
 
@@ -385,10 +432,20 @@ mod tests {
         // albedo above the ice channel — the `(1 - max(snow,
         // sea_ice))` suppression term zeros the cloud
         // contribution.
-        let a_no_cloud =
-            effective_albedo_for(Real::percent(6), Real::ZERO, Real::ONE, Real::ZERO);
-        let a_with_cloud =
-            effective_albedo_for(Real::percent(6), Real::ZERO, Real::ONE, Real::ONE);
+        let a_no_cloud = effective_albedo_for(
+            Real::percent(6),
+            Real::ZERO,
+            Real::ONE,
+            Real::ZERO,
+            crate::clouds::CloudType::Stratus,
+        );
+        let a_with_cloud = effective_albedo_for(
+            Real::percent(6),
+            Real::ZERO,
+            Real::ONE,
+            Real::ONE,
+            crate::clouds::CloudType::Stratus,
+        );
         assert_eq!(a_no_cloud, a_with_cloud);
     }
 
@@ -495,6 +552,7 @@ mod tests {
                 s.snow_fraction()[0],
                 s.sea_ice_fraction()[0],
                 s.cloud_fraction()[0],
+                crate::clouds::CloudType::from_byte(s.cloud_type()[0]),
             )
         };
         let a_jb = albedo_of(&just_below);

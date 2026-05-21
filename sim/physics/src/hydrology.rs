@@ -167,11 +167,11 @@ const SAT_CAP_FLOOR: i64 = 100;
 /// headroom they need. At `T == 0`, the floor binds at `100`,
 /// so downstream `>= cap` checks never see zero.
 ///
-/// `pub(crate)` so future precipitation logic in the
-/// hydrology module can reference the same curve without
-/// duplicating the polynomial.
+/// `pub` so downstream laws (precipitation logic, cloud
+/// microphysics in `crate::clouds`) can reference the same curve
+/// without duplicating the polynomial.
 #[must_use]
-pub(crate) fn saturation_vapour_cap(temperature: Real) -> Real {
+pub fn saturation_vapour_cap(temperature: Real) -> Real {
     let t_ref = Real::from_int(SAT_CAP_T_REF_K);
     let c_base = Real::from_int(SAT_CAP_C_BASE);
     let floor = Real::from_int(SAT_CAP_FLOOR);
