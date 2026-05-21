@@ -81,6 +81,7 @@
 use crate::grid::HexGrid;
 use crate::laws::Law;
 use crate::state::PhysicsState;
+use sim_arith::transcendental::sqrt as sqrt_real;
 use sim_arith::Real;
 
 /// Hex-direction axial offsets matching `HexGrid::neighbours` canonical
@@ -144,6 +145,40 @@ pub const SUBDUCTION_DT_TICKS: i64 = 100;
 /// "exactly zero" would leave a dangling cell with no crust which
 /// would confuse Item 12c isostasy when it lands.
 pub const MIN_CRUST_THICKNESS_KM: i64 = 1;
+
+/// Sprint 4 Item 12b. Ridge-cooling depth coefficient — the
+/// "350" prefactor in the empirical half-space cooling law
+/// `depth ≈ 350 × sqrt(age_Ma)` (Parsons & Sclater 1977; Stein &
+/// Stein 1992). Ocean floor near a mid-ocean ridge sits ~2.5 km
+/// shallower than at 80 Ma age, and the relationship holds to
+/// within a factor of two out to ~70-80 Ma where the half-space
+/// model rolls over to a plate-cooling asymptote. Carried as a
+/// `Real` so the depth math is fixed-point throughout.
+pub const RIDGE_DEPTH_PREFACTOR: i64 = 350;
+
+/// Sprint 4 Item 12b. Scale factor between simulation ticks and the
+/// age units that feed the sqrt-cooling law. Earth's mid-ocean
+/// ridge depths span 0-5 km across ~100 Myr; we treat `SCALE` ticks
+/// as the equivalent of `1` age-unit in the prefactor formula so
+/// the depth output lands in km-equivalent rather than spiking past
+/// the elevation field's dynamic range on a per-tick cadence. The
+/// value (10_000) is chosen so that ~10k macro-ticks of aging
+/// produce a 350-unit depression, matching the Earth-like geologic
+/// pacing of the surrounding tectonic step (per-month cadence × ~10k
+/// months ≈ 800 yr → still well below realistic ridge timescales
+/// but tuned to the run's accelerated clock).
+pub const AGE_TICK_SCALE: i64 = 10_000;
+
+/// Sprint 4 Item 12b. Final scaling between the raw "extra-depth"
+/// metric (km-equivalent) and the per-cell elevation subtraction.
+/// The prefactor-times-sqrt term yields km-equivalent depth; the
+/// elevation field is in metre-equivalents, so without this scale
+/// the depth would dwarf realistic seafloor topography. `1 / 100`
+/// (0.01) damps the cumulative depth into the metre-scale band the
+/// surrounding tectonic uplift / divergence kicks already operate
+/// in, keeping the integrator's per-tick budget balanced.
+pub const OCEAN_DEPTH_K_NUM: i64 = 1;
+pub const OCEAN_DEPTH_K_DEN: i64 = 100;
 
 /// Crust archetype carried by each `Plate`.
 ///
@@ -416,6 +451,15 @@ impl Law for Tectonics {
             .substance(crate::chemistry::Substance::Vapour.idx())
             .to_vec();
         let mut elevation = elevation_in.clone();
+        // Sprint 4 Item 12b. Track which cells participate in a
+        // divergent boundary this tick. These cells are at a ridge —
+        // their crust is freshly emplaced and the per-cell age is
+        // reset to zero below. Every other cell ages by one tick.
+        // Bool-mask rather than a `HashSet<usize>` so the inner loop
+        // can flip bits with a flat index — same shape used by the
+        // ice / snow fraction maps.
+        let n = grid.n_cells();
+        let mut at_ridge = vec![false; n];
 
         // ---- Tectonic uplift / divergence at plate boundaries. ----
         //
@@ -486,6 +530,14 @@ impl Law for Tectonics {
                     let new_j = elevation[j] - kick;
                     elevation[i] = new_i.max(Real::ZERO);
                     elevation[j] = new_j.max(Real::ZERO);
+                    // Sprint 4 Item 12b. Mark both sides of this
+                    // divergent pair as "ridge cells" so the
+                    // crust-age update below resets them to zero
+                    // (fresh crust spawning at the spreading
+                    // centre). Interior cells of the same plate
+                    // age normally.
+                    at_ridge[i] = true;
+                    at_ridge[j] = true;
                 }
                 // Zero-projection (parallel boundary, no relative
                 // motion along the boundary normal): transform-fault
@@ -546,6 +598,79 @@ impl Law for Tectonics {
                     elevation[downhill] = elevation[downhill] + transfer;
                 }
             }
+        }
+
+        // ---- Crust age update + ocean-floor ridge-cooling depth. ----
+        //
+        // Sprint 4 Item 12b. For each cell:
+        //   - If the cell was touched by a divergent boundary this
+        //     tick, reset its age to zero (fresh crust emplaced).
+        //   - Otherwise, increment the age by one. `saturating_add`
+        //     so the counter doesn't wrap on multi-million-tick runs.
+        //
+        // Then, for oceanic cells, apply the half-space cooling
+        // depth modulator:
+        //   extra_depth = 350 × sqrt(age / SCALE)
+        //   elevation -= extra_depth × OCEAN_DEPTH_K
+        //
+        // The modulator runs only when the per-cell age field is
+        // sized; otherwise we'd be indexing into an empty slice on
+        // states that skipped `set_tectonics_fields`.
+        if state.crust_age().len() == n {
+            // Snapshot the previous-tick ages so the writes below
+            // don't tangle with the read-side depth calc. The age
+            // array is `u64` — copy is cheap and keeps the
+            // mutation discipline matching the elevation snapshot
+            // above.
+            let mut ages = state.crust_age().to_vec();
+            for i in 0..n {
+                if at_ridge[i] {
+                    ages[i] = 0;
+                } else {
+                    ages[i] = ages[i].saturating_add(1);
+                }
+            }
+            // Apply ridge-cooling depth to oceanic cells. Read
+            // crust_type from the owning plate; non-oceanic cells
+            // are skipped. Continental crust doesn't follow the
+            // half-space cooling law (it's too thick and buoyant),
+            // and the spec only requires the modulator on oceanic
+            // cells.
+            let prefactor = Real::from_int(RIDGE_DEPTH_PREFACTOR);
+            let scale = Real::from_int(AGE_TICK_SCALE);
+            let ocean_k = Real::from_ratio(OCEAN_DEPTH_K_NUM, OCEAN_DEPTH_K_DEN);
+            for i in 0..n {
+                let plate_idx = plate_ids[i];
+                let plate = match self.plate_for(plate_idx) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                if plate.crust_type != CrustType::Oceanic {
+                    continue;
+                }
+                if ages[i] == 0 {
+                    // sqrt(0) = 0 → no depth contribution at ridge.
+                    // Skipping is a perf detail; the math agrees.
+                    continue;
+                }
+                // age_in_ticks / SCALE — i64 ages capped at i64::MAX
+                // can blow up `from_int`, but realistic runs stay
+                // far below 2^63, so the cast is safe on simulation
+                // timescales. The `min` guard keeps a runaway
+                // counter from panicking the integrator.
+                let age_capped = ages[i].min(i64::MAX as u64) as i64;
+                let age_real = Real::from_int(age_capped);
+                let ratio = age_real / scale;
+                let s = sqrt_real(ratio);
+                let extra_depth = prefactor * s;
+                let drop = extra_depth * ocean_k * dt;
+                // Subtract the depth, clamped at zero so the
+                // elevation field stays non-negative — same
+                // convention as the divergence-step clamp above.
+                let new_elev = elevation[i] - drop;
+                elevation[i] = new_elev.max(Real::ZERO);
+            }
+            state.crust_age_mut().copy_from_slice(&ages);
         }
 
         state.elevation_mut().copy_from_slice(&elevation);
@@ -1183,6 +1308,150 @@ mod tests {
         // Plate ids must be stable across the run — no cell
         // reassignment for non-subducting boundaries.
         assert_eq!(state.plate_id(), plate_id_before.as_slice());
+    }
+
+    /// Sprint 4 Item 12b: ridge cells should stay at age 0 each tick
+    /// while interior cells (same plate, not touching a divergent
+    /// boundary) accumulate age normally. Two oceanic plates moving
+    /// apart create a ridge along the q=3 / q=2 boundary; cells
+    /// inside the plates (away from the boundary) age, cells at the
+    /// boundary stay at zero.
+    #[test]
+    fn ridge_crust_starts_age_zero() {
+        let grid = HexGrid::new(8, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        // Two plates moving apart: plate 0 (q < 4) goes west,
+        // plate 1 (q >= 4) goes east. The boundary sits between
+        // q=3 (plate 0) and q=4 (plate 1).
+        let mut plate_id = vec![0u32; n];
+        for (cid, axial) in grid.cells() {
+            plate_id[cid.0 as usize] = if axial.q < 4 { 0 } else { 1 };
+        }
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::from_int(-1), Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::from_int(1), Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+        ];
+        let crust_thickness = vec![Real::from_int(OCEANIC_THICKNESS_KM); n];
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        // Seed elevation high enough that the divergence + depth
+        // clamps don't keep zeroing the field — the test only
+        // reads ages here.
+        for e in state.elevation_mut() {
+            *e = Real::from_int(5000);
+        }
+
+        // Ridge cells: q=3 (plate 0's east edge) and q=4 (plate 1's
+        // west edge), both at r=1 so they're true 6-neighbours.
+        let ridge_left = state.grid().cell_id(Axial::new(3, 1)).0 as usize;
+        let ridge_right = state.grid().cell_id(Axial::new(4, 1)).0 as usize;
+        // Interior cell: q=0, r=1 (plate 0, far from the boundary so
+        // none of its hex neighbours cross to plate 1).
+        let interior = state.grid().cell_id(Axial::new(0, 1)).0 as usize;
+
+        let tect = Tectonics {
+            plates,
+            convergence_rate: Real::percent(10),
+            divergence_rate: Real::percent(10),
+            erosion_k: Real::ZERO,
+        };
+
+        let n_ticks = 5u64;
+        for _ in 0..n_ticks {
+            tect.integrate(&mut state, Real::ONE);
+        }
+
+        let ages = state.crust_age();
+        assert_eq!(
+            ages[ridge_left], 0,
+            "ridge cell (q=3,r=1) should stay at age 0 across {n_ticks} ticks: got {}",
+            ages[ridge_left]
+        );
+        assert_eq!(
+            ages[ridge_right], 0,
+            "ridge cell (q=4,r=1) should stay at age 0 across {n_ticks} ticks: got {}",
+            ages[ridge_right]
+        );
+        assert_eq!(
+            ages[interior], n_ticks,
+            "interior cell (q=0,r=1) should accumulate {n_ticks} ticks of age: got {}",
+            ages[interior]
+        );
+    }
+
+    /// Sprint 4 Item 12b: an oceanic cell with a larger crust age
+    /// should sit at a lower elevation than an otherwise-identical
+    /// cell with a smaller crust age. Mirrors the real-world
+    /// observation that older sea floor is deeper than newer sea
+    /// floor near a mid-ocean ridge (half-space cooling).
+    #[test]
+    fn ocean_depth_increases_with_crustal_age() {
+        let grid = HexGrid::new(6, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        // Single oceanic plate, zero velocity → no tectonic kicks
+        // interfere; the only elevation change should come from the
+        // ridge-cooling depth modulator driven by the manually-set
+        // crust_age field. Single-plate also means `at_ridge` stays
+        // all-false (no divergent pairs), so the manual ages don't
+        // get reset.
+        let plate_id = vec![0u32; n];
+        let plates = vec![Plate {
+            id: 0,
+            crust_type: CrustType::Oceanic,
+            velocity: (Real::ZERO, Real::ZERO),
+            thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+        }];
+        let crust_thickness = vec![Real::from_int(OCEANIC_THICKNESS_KM); n];
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        // Seed both cells with the same high elevation so we can
+        // observe the depth modulator deepen each independently.
+        for e in state.elevation_mut() {
+            *e = Real::from_int(10_000);
+        }
+
+        // Young (ridge-fresh) cell: age starts at 0.
+        let young = state.grid().cell_id(Axial::new(1, 1)).0 as usize;
+        // Old cell: pre-aged so the sqrt(age / SCALE) term is
+        // substantially non-zero on the first integrate call.
+        let old = state.grid().cell_id(Axial::new(4, 1)).0 as usize;
+        // Pre-load the old cell with a large age (1e6 ticks). Even
+        // with `AGE_TICK_SCALE = 10_000` this gives `sqrt(100) = 10`,
+        // multiplied by the 350 prefactor and the 0.01 ocean-depth
+        // scaler that's 35 km of depth per tick — well above the
+        // signal floor for a fixed-point comparison.
+        state.crust_age_mut()[old] = 1_000_000;
+        state.crust_age_mut()[young] = 0;
+
+        let tect = Tectonics {
+            plates,
+            convergence_rate: Real::ZERO,
+            divergence_rate: Real::ZERO,
+            erosion_k: Real::ZERO,
+        };
+        tect.integrate(&mut state, Real::ONE);
+
+        let young_elev = state.elevation()[young];
+        let old_elev = state.elevation()[old];
+        assert!(
+            old_elev < young_elev,
+            "older oceanic cell should be deeper (lower elevation) \
+             than younger oceanic cell: old={old_elev:?} young={young_elev:?}"
+        );
     }
 
     /// Worldgen sampler should produce a roughly 60/40 oceanic /

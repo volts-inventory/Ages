@@ -145,6 +145,15 @@ pub struct PhysicsState {
     /// cell once it enters the mantle — it surfaces wherever the
     /// volcanism law decides, not where the oceanic plate sank.
     subducted_mass: Real,
+    /// Per-cell crust age in ticks since formation (Sprint 4 Item 12b).
+    /// Incremented every tick by `Tectonics::integrate` except for
+    /// cells at divergent (ridge) boundaries where fresh crust spawns
+    /// and the age is reset to zero. Drives oceanic ridge-cooling
+    /// depth via the `depth ∝ sqrt(age)` half-space-cooling law:
+    /// older sea floor sits lower than younger sea floor near a
+    /// mid-ocean ridge. Length is either zero (no plates installed)
+    /// or `grid.n_cells()` (same contract as `plate_id`).
+    crust_age: Vec<u64>,
 }
 
 impl PhysicsState {
@@ -180,6 +189,11 @@ impl PhysicsState {
             plate_id: Vec::new(),
             crust_thickness: Vec::new(),
             subducted_mass: Real::ZERO,
+            // Per-cell crust age in ticks. Empty by default — sized
+            // by `set_tectonics_fields` alongside `plate_id` /
+            // `crust_thickness` so the three tectonics arrays share
+            // a single source of truth for their length.
+            crust_age: Vec::new(),
             grid,
         }
     }
@@ -417,6 +431,22 @@ impl PhysicsState {
         &mut self.crust_thickness
     }
 
+    /// Per-cell crust age in ticks since formation (Sprint 4 Item
+    /// 12b). Empty slice when no plates have been sampled; otherwise
+    /// `grid().n_cells()` long. Bumped each tick by
+    /// `Tectonics::integrate` except at divergent boundaries, where
+    /// the age is reset to zero — fresh crust spawning at a ridge.
+    /// Read by the ocean-floor depth modulator to drive the
+    /// half-space cooling `depth ∝ sqrt(age)` law.
+    #[must_use]
+    pub fn crust_age(&self) -> &[u64] {
+        &self.crust_age
+    }
+
+    pub fn crust_age_mut(&mut self) -> &mut [u64] {
+        &mut self.crust_age
+    }
+
     /// Install per-cell tectonics fields (Sprint 4 Item 12). The two
     /// vectors must already be sized to `grid().n_cells()`; this
     /// method just installs them. Worldgen calls this once after
@@ -429,6 +459,11 @@ impl PhysicsState {
     /// `Tectonics::integrate` reading a zero-length field on one
     /// side and a populated field on the other, with no clean
     /// semantics for that mismatch.
+    ///
+    /// The companion `crust_age` field (Sprint 4 Item 12b) is sized
+    /// to `grid().n_cells()` and zeroed here too: a planet starts
+    /// with all-zero ages and accrues age as ticks pass, except at
+    /// ridge cells where the age is reset to zero each tick.
     pub fn set_tectonics_fields(&mut self, plate_id: Vec<u32>, crust_thickness: Vec<Real>) {
         let n = self.grid.n_cells();
         assert_eq!(
@@ -445,6 +480,9 @@ impl PhysicsState {
         );
         self.plate_id = plate_id;
         self.crust_thickness = crust_thickness;
+        // Initialise per-cell crust age to zero. `Tectonics::integrate`
+        // advances this each tick.
+        self.crust_age = vec![0u64; n];
     }
 
     /// Aggregate mass of subducted crust (Sprint 4 Item 12a). In
