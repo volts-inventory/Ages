@@ -129,6 +129,22 @@ pub const OCEANIC_PERCENT: u32 = 60;
 /// (`0xFEED_FACE_BAAD_F00D`) so the streams stay independent.
 const PLATE_SALT: u64 = 0x71EC_701C_5A1A_DEED;
 
+/// Number of ticks an oceanic cell at a convergent boundary takes to
+/// decay from its initial thickness to zero (Sprint 4 Item 12a). The
+/// per-tick decrement is `OCEANIC_THICKNESS_KM / SUBDUCTION_DT_TICKS`
+/// — fixed regardless of convergence speed, so the geological
+/// timescale of consumption is the same across worlds (tunable here
+/// in one place rather than entangled with per-plate velocities).
+pub const SUBDUCTION_DT_TICKS: i64 = 100;
+
+/// Minimum crust thickness in km-equivalent below which a subducting
+/// oceanic cell flips ownership to the overriding (continental, or
+/// lower-id oceanic) plate. Picked at 1 km so the cell still has a
+/// non-trivial thickness when reassigned — the alternative of
+/// "exactly zero" would leave a dangling cell with no crust which
+/// would confuse Item 12c isostasy when it lands.
+pub const MIN_CRUST_THICKNESS_KM: i64 = 1;
+
 /// Crust archetype carried by each `Plate`.
 ///
 /// - `Oceanic` — thin (~7 km), basaltic, dense. Sinks at convergent
@@ -318,6 +334,59 @@ impl Tectonics {
     fn plate_for(&self, plate_id: u32) -> Option<&Plate> {
         self.plates.get(plate_id as usize)
     }
+
+    /// Aggregate mass of crust subducted into the mantle (Sprint 4
+    /// Item 12a). Reads through to `PhysicsState::subducted_mass`
+    /// since the storage is per-state (the same plate roster can
+    /// drive different planets); the accessor lives here so
+    /// downstream callers (Item 12d volcanism) can wire to a single
+    /// `Tectonics` handle rather than needing both the law and the
+    /// state object.
+    #[must_use]
+    pub fn subducted_mass(state: &PhysicsState) -> Real {
+        state.subducted_mass()
+    }
+
+    /// Decide which side of a convergent oceanic-bearing boundary
+    /// subducts. Returns `(subducting_idx, overriding_idx)` chosen
+    /// from the input pair `(i, j)`, or `None` for boundaries that
+    /// don't subduct (continental-continental: existing uplift logic
+    /// keeps running unchanged).
+    ///
+    /// Tie-break rules:
+    /// - Oceanic vs continental → oceanic subducts (denser).
+    /// - Oceanic vs oceanic → higher-`id` plate's cell subducts.
+    ///   Real geology picks "older / colder / denser"; Item 12b adds
+    ///   per-cell crust age, after which we'll switch this rule.
+    ///   Until then, plate id is a stable per-run proxy.
+    /// - Continental vs continental → `None`. No subduction; the
+    ///   uplift path in `integrate` does Himalayan-style thickening.
+    fn pick_subducting_side(
+        pi: &Plate,
+        pj: &Plate,
+        i: usize,
+        j: usize,
+    ) -> Option<(usize, usize)> {
+        match (pi.crust_type, pj.crust_type) {
+            (CrustType::Continental, CrustType::Continental) => None,
+            (CrustType::Oceanic, CrustType::Continental) => Some((i, j)),
+            (CrustType::Continental, CrustType::Oceanic) => Some((j, i)),
+            (CrustType::Oceanic, CrustType::Oceanic) => {
+                // Higher-id plate is the proxy-older plate; its cell
+                // subducts under the lower-id plate. Equal ids
+                // shouldn't reach here (same plate filtered upstream)
+                // but if they somehow do, fall through to "no
+                // subduction" rather than panicking.
+                if pi.id > pj.id {
+                    Some((i, j))
+                } else if pj.id > pi.id {
+                    Some((j, i))
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 impl Law for Tectonics {
@@ -480,6 +549,130 @@ impl Law for Tectonics {
         }
 
         state.elevation_mut().copy_from_slice(&elevation);
+
+        // ---- Subduction (Sprint 4 Item 12a). ----
+        //
+        // Pass 1 (collect): for every convergent boundary pair where
+        // at least one side is oceanic, decide which side subducts
+        // and record the overriding plate id for the subducting cell.
+        // We collect into `BTreeMap<cell_idx, overriding_plate_id>`
+        // so a cell that borders multiple convergent boundaries
+        // resolves to a single deterministic overriding plate (first
+        // writer wins, walking pairs in canonical grid order).
+        //
+        // Pass 2 (apply): for each marked cell, decrement its crust
+        // thickness by a fixed `OCEANIC_THICKNESS_KM /
+        // SUBDUCTION_DT_TICKS` step per dt unit, depositing the lost
+        // mass into the aggregate `subducted_mass` pool. Once the
+        // thickness drops below `MIN_CRUST_THICKNESS_KM`, reassign
+        // the cell's `plate_id` to the recorded overriding plate.
+        //
+        // Continental-continental boundaries are untouched (the
+        // uplift step above already drove the Himalayan thickening
+        // path). Oceanic-oceanic is handled with a plate-id tie-break
+        // for Item 12a; Item 12b will swap that for proper crust age.
+        if state.crust_thickness().len() == state.grid().n_cells() {
+            let elevation_snapshot = state.elevation().to_vec();
+            let crust_thickness_in = state.crust_thickness().to_vec();
+            let plate_ids_now = state.plate_id().to_vec();
+
+            // `BTreeMap` keeps iteration deterministic in pass 2
+            // even though per-cell decay is independent. The map
+            // also gives us a clean "first writer wins" semantic via
+            // `or_insert` for cells touching multiple boundaries.
+            let mut subducting: std::collections::BTreeMap<usize, u32> =
+                std::collections::BTreeMap::new();
+
+            for (cid, axial) in grid.cells() {
+                let i = cid.0 as usize;
+                let plate_i = plate_ids_now[i];
+                for (k, nb) in grid.neighbours(axial).iter().enumerate() {
+                    let j = nb.0 as usize;
+                    if j <= i {
+                        continue;
+                    }
+                    let plate_j = plate_ids_now[j];
+                    if plate_i == plate_j {
+                        continue;
+                    }
+                    let (pi, pj) = match (
+                        self.plate_for(plate_i),
+                        self.plate_for(plate_j),
+                    ) {
+                        (Some(a), Some(b)) => (a, b),
+                        _ => continue,
+                    };
+                    // Convergence test reuses the uplift step's
+                    // projection: negative projection = i and j
+                    // approach along the i→j direction.
+                    let (dir_q, dir_r) = NEIGHBOUR_DIRECTIONS[k];
+                    let rel_q = pj.velocity.0 - pi.velocity.0;
+                    let rel_r = pj.velocity.1 - pi.velocity.1;
+                    let projection =
+                        rel_q * Real::from_int(dir_q) + rel_r * Real::from_int(dir_r);
+                    if projection >= Real::ZERO {
+                        continue;
+                    }
+                    // Subducting side and the plate id that wins
+                    // the cell once it's consumed.
+                    let (sub_idx, over_idx) =
+                        match Tectonics::pick_subducting_side(pi, pj, i, j) {
+                            Some(pair) => pair,
+                            None => continue,
+                        };
+                    let overriding_plate = plate_ids_now[over_idx];
+                    // First writer wins so cells at multi-boundary
+                    // corners get a stable assignment.
+                    subducting.entry(sub_idx).or_insert(overriding_plate);
+                }
+            }
+
+            if !subducting.is_empty() {
+                // Per-tick decrement: a fresh oceanic cell takes
+                // `SUBDUCTION_DT_TICKS` ticks at `dt = 1` to drop
+                // below the reassignment threshold. The decrement
+                // scales linearly with `dt` so accelerated tests
+                // (large dt) consume in proportionally fewer ticks.
+                let decrement_per_tick =
+                    Real::from_ratio(OCEANIC_THICKNESS_KM, SUBDUCTION_DT_TICKS);
+                let decrement = decrement_per_tick * dt;
+                let min_thickness = Real::from_int(MIN_CRUST_THICKNESS_KM);
+
+                let mut crust_thickness = crust_thickness_in.clone();
+                let mut plate_ids = plate_ids_now.clone();
+                let mut elevation_out = elevation_snapshot.clone();
+                let mut total_subducted = Real::ZERO;
+
+                for (&cell, &overriding_plate) in subducting.iter() {
+                    let before = crust_thickness[cell];
+                    let after = (before - decrement).max(Real::ZERO);
+                    let lost = before - after;
+                    if lost > Real::ZERO {
+                        total_subducted = total_subducted + lost;
+                    }
+                    crust_thickness[cell] = after;
+                    // Reassign once thickness has fallen below the
+                    // floor. Drop the cell's elevation toward zero
+                    // at the same time so the next tectonic step
+                    // doesn't see a residual "ghost mountain" left
+                    // behind by the consumed oceanic crust. Clamp at
+                    // zero — Item 12c isostasy will lift this to a
+                    // proper bathymetry depth once it lands.
+                    if after < min_thickness {
+                        plate_ids[cell] = overriding_plate;
+                        elevation_out[cell] = Real::ZERO;
+                    }
+                }
+
+                if total_subducted > Real::ZERO {
+                    let pool = state.subducted_mass_mut();
+                    *pool = *pool + total_subducted;
+                }
+                state.crust_thickness_mut().copy_from_slice(&crust_thickness);
+                state.plate_id_mut().copy_from_slice(&plate_ids);
+                state.elevation_mut().copy_from_slice(&elevation_out);
+            }
+        }
     }
 }
 
@@ -757,6 +950,239 @@ mod tests {
                 "plate count {count} outside [{MIN_PLATES}, {MAX_PLATES}] for seed {seed:#x}"
             );
         }
+    }
+
+    /// Convergent oceanic-continental boundary should consume the
+    /// oceanic crust over `SUBDUCTION_DT_TICKS`-ish ticks: the
+    /// oceanic-side boundary cells lose thickness, flip to the
+    /// continental plate's id once below the floor, and the
+    /// aggregate `subducted_mass` becomes positive (Sprint 4 Item
+    /// 12a).
+    #[test]
+    fn oceanic_continental_convergence_consumes_oceanic_crust() {
+        let grid = HexGrid::new(6, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        // Plate 0 = continental on left (q < 3), plate 1 = oceanic
+        // on right (q >= 3). Velocities point toward each other so
+        // every cell pair across the q=3 boundary is convergent.
+        let mut plate_id = vec![0u32; n];
+        let mut crust_thickness = vec![Real::ZERO; n];
+        for (cid, axial) in grid.cells() {
+            let i = cid.0 as usize;
+            if axial.q < 3 {
+                plate_id[i] = 0;
+                crust_thickness[i] = Real::from_int(CONTINENTAL_THICKNESS_KM);
+            } else {
+                plate_id[i] = 1;
+                crust_thickness[i] = Real::from_int(OCEANIC_THICKNESS_KM);
+            }
+        }
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Continental,
+                velocity: (Real::from_int(1), Real::ZERO),
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::from_int(-1), Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+        ];
+        state.set_tectonics_fields(plate_id.clone(), crust_thickness);
+
+        // Identify the oceanic-side boundary column (q == 3) — the
+        // cells we expect to subduct over the run.
+        let oceanic_boundary_cells: Vec<usize> = grid
+            .cells()
+            .filter(|(_, axial)| axial.q == 3)
+            .map(|(cid, _)| cid.0 as usize)
+            .collect();
+        assert!(!oceanic_boundary_cells.is_empty());
+
+        let tect = Tectonics {
+            plates,
+            convergence_rate: Real::ZERO,
+            divergence_rate: Real::ZERO,
+            erosion_k: Real::ZERO,
+        };
+        // Run well past SUBDUCTION_DT_TICKS so even with the
+        // per-tick decrement scaled by OCEANIC_THICKNESS_KM /
+        // SUBDUCTION_DT_TICKS the boundary cells have time to drop
+        // below the reassignment floor.
+        for _ in 0..(SUBDUCTION_DT_TICKS + 50) {
+            tect.integrate(&mut state, Real::ONE);
+        }
+
+        // Every oceanic-boundary cell should now belong to plate 0
+        // (the overriding continental plate). Equivalently, the
+        // oceanic plate has lost its frontline column.
+        for &c in &oceanic_boundary_cells {
+            assert_eq!(
+                state.plate_id()[c],
+                0,
+                "oceanic boundary cell {c} should have flipped to \
+                 continental plate after subduction"
+            );
+        }
+        assert!(
+            state.subducted_mass() > Real::ZERO,
+            "subducted_mass should be positive after a convergent \
+             oceanic-continental run, got {:?}",
+            state.subducted_mass()
+        );
+        // Cross-check via the Tectonics-side accessor that wires
+        // through to PhysicsState — this is what Item 12d volcanism
+        // will call.
+        assert_eq!(
+            Tectonics::subducted_mass(&state),
+            state.subducted_mass()
+        );
+    }
+
+    /// A small oceanic plate surrounded on every side by convergent
+    /// continental plates should be wholly consumed given enough
+    /// time. Test runs an explicitly geological number of ticks
+    /// (1000 ≫ SUBDUCTION_DT_TICKS) and asserts no cell still
+    /// belongs to the oceanic plate at the end (Sprint 4 Item 12a).
+    #[test]
+    fn ocean_basin_can_be_completely_consumed_over_geological_time() {
+        let grid = HexGrid::new(5, 5);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        // Centre cell is the oceanic basin. Surround with
+        // continental cells. The continental plate pushes inward,
+        // so every cell-pair across the basin perimeter is
+        // convergent.
+        const OCEANIC_PLATE_ID: u32 = 0;
+        let centre = state.grid().cell_id(Axial::new(2, 2)).0 as usize;
+        let mut plate_id = vec![1u32; n];
+        let mut crust_thickness = vec![Real::from_int(CONTINENTAL_THICKNESS_KM); n];
+        plate_id[centre] = OCEANIC_PLATE_ID;
+        crust_thickness[centre] = Real::from_int(OCEANIC_THICKNESS_KM);
+
+        // Plate roster: oceanic basin = plate 0 stationary; the
+        // surrounding continental plate = plate 1 moving inward
+        // (toward the centre). With a stationary oceanic core,
+        // convergence at each of the centre's six neighbour pairs
+        // depends purely on the sign of `v_continental · dir`. The
+        // velocity (-1, -1) produces negative projection on the
+        // east / northeast / southeast half of the hex rosette —
+        // enough convergent neighbour pairs every tick to keep
+        // wearing the centre cell down.
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Continental,
+                velocity: (Real::from_int(-1), Real::from_int(-1)),
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+        ];
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        let tect = Tectonics {
+            plates,
+            convergence_rate: Real::ZERO,
+            divergence_rate: Real::ZERO,
+            erosion_k: Real::ZERO,
+        };
+
+        // Roll the simulation forward over geological time. 1000
+        // ticks is ≫ SUBDUCTION_DT_TICKS so the centre cell — the
+        // only oceanic-plate cell — has time to wear down past the
+        // reassignment floor.
+        for _ in 0..1000 {
+            tect.integrate(&mut state, Real::ONE);
+        }
+
+        // No cell should still belong to the oceanic plate. The
+        // basin has been fully consumed; everything is now part of
+        // the surrounding continental plate.
+        for i in 0..n {
+            assert_ne!(
+                state.plate_id()[i],
+                OCEANIC_PLATE_ID,
+                "cell {i} still belongs to oceanic plate after \
+                 1000 ticks; basin should have been fully consumed"
+            );
+        }
+        // And the subducted-mass pool should reflect the consumed
+        // crust.
+        assert!(
+            state.subducted_mass() > Real::ZERO,
+            "subducted_mass should be positive after total basin \
+             consumption, got {:?}",
+            state.subducted_mass()
+        );
+    }
+
+    /// Continental-continental convergent boundaries must NOT
+    /// subduct — Item 12a explicitly preserves the existing
+    /// Himalayan-uplift behaviour for those boundaries. Set up two
+    /// continental plates with convergent velocities and confirm
+    /// `subducted_mass` stays at zero (and plate ids don't migrate).
+    #[test]
+    fn continental_continental_convergence_does_not_subduct() {
+        let grid = HexGrid::new(6, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        let mut plate_id = vec![0u32; n];
+        for (cid, axial) in grid.cells() {
+            plate_id[cid.0 as usize] = if axial.q < 3 { 0 } else { 1 };
+        }
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Continental,
+                velocity: (Real::from_int(1), Real::ZERO),
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Continental,
+                velocity: (Real::from_int(-1), Real::ZERO),
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+        ];
+        let crust_thickness = vec![Real::from_int(CONTINENTAL_THICKNESS_KM); n];
+        let plate_id_before = plate_id.clone();
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        let tect = Tectonics {
+            plates,
+            convergence_rate: Real::percent(10),
+            divergence_rate: Real::percent(10),
+            erosion_k: Real::ZERO,
+        };
+        for _ in 0..200 {
+            tect.integrate(&mut state, Real::ONE);
+        }
+
+        // No mass should have been pumped into the subduction pool;
+        // continental-continental collisions thicken rather than
+        // consume crust.
+        assert_eq!(
+            state.subducted_mass(),
+            Real::ZERO,
+            "continental-continental convergence should not produce \
+             subducted mass; got {:?}",
+            state.subducted_mass()
+        );
+        // Plate ids must be stable across the run — no cell
+        // reassignment for non-subducting boundaries.
+        assert_eq!(state.plate_id(), plate_id_before.as_slice());
     }
 
     /// Worldgen sampler should produce a roughly 60/40 oceanic /

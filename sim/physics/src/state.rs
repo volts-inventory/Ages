@@ -136,6 +136,15 @@ pub struct PhysicsState {
     /// individual cells. Length is either zero or `grid.n_cells()`
     /// (same contract as `plate_id`).
     crust_thickness: Vec<Real>,
+    /// Aggregate mass of crust consumed by subduction over the run
+    /// (Sprint 4 Item 12a). Accumulates as oceanic-side cells at
+    /// convergent boundaries decay toward zero thickness; future
+    /// volcanism (Item 12d) draws from this pool to outgas CO2 and
+    /// rebuild crust at arc / hotspot positions. Aggregate (not per-
+    /// cell) because subducted material decouples from its origin
+    /// cell once it enters the mantle — it surfaces wherever the
+    /// volcanism law decides, not where the oceanic plate sank.
+    subducted_mass: Real,
 }
 
 impl PhysicsState {
@@ -170,6 +179,7 @@ impl PhysicsState {
             // a plate roster they don't need.
             plate_id: Vec::new(),
             crust_thickness: Vec::new(),
+            subducted_mass: Real::ZERO,
             grid,
         }
     }
@@ -435,6 +445,23 @@ impl PhysicsState {
         );
         self.plate_id = plate_id;
         self.crust_thickness = crust_thickness;
+    }
+
+    /// Aggregate mass of subducted crust (Sprint 4 Item 12a). In
+    /// km-equivalent thickness units, summed across every cell that
+    /// has lost mass at a convergent oceanic boundary. Future
+    /// volcanism (Item 12d) drains this pool when it outgasses; for
+    /// now `Tectonics::integrate` is a pure source.
+    #[must_use]
+    pub fn subducted_mass(&self) -> Real {
+        self.subducted_mass
+    }
+
+    /// Mutable accessor for the subducted-mass pool. Used by
+    /// `Tectonics::integrate` to deposit consumed oceanic mass and
+    /// by Item 12d volcanism to drain it once that law lands.
+    pub fn subducted_mass_mut(&mut self) -> &mut Real {
+        &mut self.subducted_mass
     }
 }
 
