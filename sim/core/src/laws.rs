@@ -34,6 +34,8 @@ pub(crate) struct Laws {
     /// constructed via `earth_like()` here — the integrator no-ops
     /// until the plate roster is installed.
     pub tectonics: sim_physics::Tectonics,
+    /// Sprint 4 Item 12d: volcanic CO2 + H2O outgassing.
+    pub volcanism: sim_physics::Volcanism,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -234,6 +236,9 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // `state.set_tectonics_fields(...)` + `Laws::install_tectonics`.
     let tectonics = sim_physics::Tectonics::earth_like();
 
+    // Volcanic CO2 + H2O outgassing (Sprint 4 Item 12d).
+    let volcanism = sim_physics::Volcanism::earth_like();
+
     Laws {
         fluid,
         heat,
@@ -250,6 +255,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         weathering,
         ice_albedo,
         tectonics,
+        volcanism,
     }
 }
 
