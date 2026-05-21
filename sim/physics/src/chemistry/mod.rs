@@ -12,8 +12,10 @@ pub use constants::*;
 pub use reactions::{BiofuelRegrowth, CombustionReaction, PhaseTransition};
 pub use substance::Substance;
 pub use substrate::{
-    substrate_boiling_point_k, substrate_phase_thresholds, substrate_properties,
-    water_boiling_point_k, SubstrateProperties,
+    solvent_reaction_kinetics_prefactor, solvent_reaction_kinetics_prefactor_for_tag,
+    solvent_solubility, substrate_boiling_point_k, substrate_from_tag, substrate_phase_thresholds,
+    substrate_properties, water_boiling_point_k, MetabolicSubstrate, SolubilityProfile,
+    SubstrateProperties,
 };
 
 use crate::laws::Law;
@@ -32,6 +34,14 @@ pub struct Chemistry {
     /// Oxidiser). Empty on lifeless worlds; one entry on any planet
     /// with a non-zero biosphere class.
     pub regrowths: Vec<BiofuelRegrowth>,
+    /// Substrate-coupled Arrhenius-like multiplier applied to
+    /// combustion and biofuel-regrowth rates each step. Default
+    /// 1.0 (Aqueous baseline). Set via
+    /// `Chemistry::set_kinetics_prefactor` or composed at
+    /// construction by `Chemistry::for_planet` / `with_substrate_kinetics`.
+    /// Phase transitions are *not* scaled — they're temperature-
+    /// gated, not Arrhenius.
+    pub kinetics_prefactor: Real,
 }
 
 impl Chemistry {
@@ -197,7 +207,31 @@ impl Chemistry {
                 rate: Real::from_ratio(1, 1000),
                 latent_heat: lh_regrowth,
             }],
+            // Substrate-coupled Arrhenius prefactor. Aqueous → 1.0,
+            // Ammoniacal → 0.4, Hydrocarbon → 0.05, Silicate → 5.0.
+            // Unknown tags fall back to Aqueous (1.0) — same
+            // behaviour as `substrate_properties`.
+            kinetics_prefactor: solvent_reaction_kinetics_prefactor_for_tag(substrate_tag),
         }
+    }
+
+    /// Set the substrate-coupled Arrhenius-like kinetics
+    /// multiplier directly. Callers that build `Chemistry` via
+    /// channels other than `for_planet` (tests, one-off
+    /// orchestration) can thread the prefactor through with this.
+    pub fn set_kinetics_prefactor(&mut self, prefactor: Real) {
+        self.kinetics_prefactor = prefactor;
+    }
+
+    /// Builder-style: returns `self` with the kinetics prefactor
+    /// derived from the given substrate. Convenience for callers
+    /// that already have a `MetabolicSubstrate` and want
+    /// substrate-coupled chemistry without going through
+    /// `for_planet`.
+    #[must_use]
+    pub fn with_substrate_kinetics(mut self, substrate: &MetabolicSubstrate) -> Self {
+        self.kinetics_prefactor = solvent_reaction_kinetics_prefactor(substrate);
+        self
     }
 
     /// Earth-equivalent default chemistry. Tests and orchestration
@@ -213,14 +247,26 @@ impl Law for Chemistry {
         for transition in &self.transitions {
             transition.apply(state, dt);
         }
+        // Apply substrate-coupled Arrhenius prefactor: cold
+        // solvents (Hydrocarbon, Ammoniacal) run combustion / regrowth
+        // slowly; hot solvents (Silicate) run them quickly; Aqueous
+        // stays at the baseline rates the constructor authored.
+        // We scale by adjusting the per-reaction `rate` on a local
+        // copy so the authored `combustions` / `regrowths` records
+        // stay clean.
+        let k = self.kinetics_prefactor;
         for combustion in &self.combustions {
-            combustion.apply(state, dt);
+            let mut scaled = *combustion;
+            scaled.rate = scaled.rate * k;
+            scaled.apply(state, dt);
         }
         // Regrowth runs after combustion in the same tick: ash
         // produced this tick is already eligible to feed regrowth.
         // Order is fixed for determinism.
         for regrowth in &self.regrowths {
-            regrowth.apply(state, dt);
+            let mut scaled = *regrowth;
+            scaled.rate = scaled.rate * k;
+            scaled.apply(state, dt);
         }
     }
 }
@@ -573,6 +619,73 @@ mod tests {
             "test setup didn't trigger combustion or regrowth — \
              ash field unchanged"
         );
+    }
+
+    #[test]
+    fn chemistry_step_runs_faster_on_silicate_than_hydrocarbon() {
+        // Same reactants, same temperature — the
+        // substrate-coupled kinetics prefactor should make
+        // silicate-substrate chemistry produce a much larger
+        // combustion delta than hydrocarbon-substrate chemistry
+        // in the same number of ticks. Silicate prefactor is 5.0,
+        // hydrocarbon is 0.05 — a 100× spread.
+        //
+        // Use temperatures inside the ignition window for each
+        // substrate; the underlying combustion rate (`rate` field)
+        // is the same on both, only the Arrhenius prefactor
+        // differs. We seed the same cell state on both runs.
+        fn run(substrate_tag: &str) -> Real {
+            let mut state = fresh_state(3, 3);
+            // High enough to be above both planets' ignition
+            // thresholds (silicate ignites well above earth-like
+            // 600 K; the test seeds an even higher T so both
+            // chemistries fire on every step).
+            for t in state.temperature_mut() {
+                *t = Real::from_int(3_000);
+            }
+            for f in state.substance_mut(Substance::Fuel.idx()) {
+                *f = Real::from_int(10);
+            }
+            for o in state.substance_mut(Substance::Oxidiser.idx()) {
+                *o = Real::from_int(10);
+            }
+            // Use a moderate ignition threshold so both
+            // substrates' authored combustions fire — 2000 K is
+            // below the seeded 3000 K and above the silicate
+            // baseline.
+            let chem = Chemistry::for_planet(
+                Real::from_int(P_REF_ATM_PA),
+                Real::from_int(2_000),
+                substrate_tag,
+            );
+            for _ in 0..5 {
+                chem.integrate(&mut state, Real::ONE);
+            }
+            // Total ash produced is the combustion delta.
+            state
+                .substance(Substance::Ash.idx())
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b)
+        }
+        let ash_silicate = run("silicate");
+        let ash_hydrocarbon = run("hydrocarbon");
+        assert!(
+            ash_silicate > ash_hydrocarbon,
+            "silicate substrate (kinetics 5.0) should burn more \
+             than hydrocarbon (kinetics 0.05) in the same time \
+             — silicate ash={ash_silicate:?}, hydrocarbon ash={ash_hydrocarbon:?}"
+        );
+    }
+
+    #[test]
+    fn earth_like_chemistry_has_unit_kinetics_prefactor() {
+        // Back-compat: the default constructor for an
+        // aqueous-substrate planet must produce a kinetics
+        // prefactor of 1.0 so existing chemistry tests continue
+        // to reflect the same rates they did before this change.
+        let chem = Chemistry::earth_like_water();
+        assert_eq!(chem.kinetics_prefactor, Real::ONE);
     }
 
     #[test]

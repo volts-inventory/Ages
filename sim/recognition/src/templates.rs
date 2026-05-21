@@ -813,6 +813,74 @@ impl RecognitionLibrary {
                     tags: &[FormTag::Threshold, FormTag::Polynomial],
                     channels: &[ChannelKind::Tactile, ChannelKind::AcousticAir],
                 },
+                // ============================================
+                // Per-substrate surface-solvent templates (Sprint 2
+                // Item 8). The original `surface_water` (id 5) is
+                // retained for legacy compatibility; these new
+                // templates fire on `Field::WaterDepth` (a
+                // solvent-agnostic measure of standing surface
+                // liquid) with substrate-appropriate `Above`
+                // thresholds:
+                //   - water (id 50): standard 1 m floor
+                //   - ammonia (id 51): same 1 m floor; ammonia is
+                //     about as fluid as water at its own range
+                //   - methane (id 52): shallow lakes — 0.3 m
+                //     (Titan's `lakes' are typically < 1 m on
+                //     average)
+                //   - silicate melt (id 53): magma ponds are
+                //     thin sheets — 0.2 m floor, and the cell
+                //     must be hot enough for silicate to be
+                //     liquid (> 1687 K) so warm-water cells on
+                //     Earth-like planets never accidentally fire
+                //     this template.
+                RecognitionTemplate {
+                    id: 50,
+                    name: "surface_solvent_water",
+                    signature: Signature::Above(Field::WaterDepth, Real::ONE),
+                    tags: &[FormTag::Threshold, FormTag::Polynomial],
+                    channels: &[ChannelKind::VisualLight, ChannelKind::Tactile],
+                },
+                RecognitionTemplate {
+                    id: 51,
+                    name: "surface_solvent_ammonia",
+                    signature: Signature::Above(Field::WaterDepth, Real::ONE),
+                    tags: &[FormTag::Threshold, FormTag::Polynomial],
+                    channels: &[
+                        ChannelKind::ChemicalTaste,
+                        ChannelKind::Tactile,
+                        ChannelKind::AcousticAir,
+                    ],
+                },
+                RecognitionTemplate {
+                    id: 52,
+                    name: "surface_solvent_methane",
+                    signature: Signature::Above(Field::WaterDepth, Real::from_ratio(3, 10)),
+                    tags: &[FormTag::Threshold, FormTag::Polynomial],
+                    channels: &[
+                        ChannelKind::AcousticWater,
+                        ChannelKind::Tactile,
+                        ChannelKind::ChemicalTaste,
+                    ],
+                },
+                RecognitionTemplate {
+                    id: 53,
+                    name: "surface_solvent_silicate_melt",
+                    // Silicate melt is only liquid at silicate
+                    // freeze (1687 K) and above; combine the
+                    // depth floor with a temperature gate so
+                    // earth-like cells with standing water can
+                    // never accidentally trip this template.
+                    signature: Signature::All(vec![
+                        Signature::Above(Field::WaterDepth, Real::from_ratio(2, 10)),
+                        Signature::Above(Field::Temperature, Real::from_int(1_687)),
+                    ]),
+                    tags: &[FormTag::Threshold, FormTag::Polynomial],
+                    channels: &[
+                        ChannelKind::Tactile,
+                        ChannelKind::Seismic,
+                        ChannelKind::VisualLight,
+                    ],
+                },
             ],
         }
     }
