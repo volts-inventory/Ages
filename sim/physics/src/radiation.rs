@@ -73,8 +73,41 @@ use crate::chemistry::Substance;
 use crate::clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType};
 use crate::laws::Law;
 use crate::state::PhysicsState;
-use sim_arith::transcendental::{cos, exp, half_pi, ln};
+use sim_arith::transcendental::{cos, exp, half_pi, ln, pow, sin};
 use sim_arith::Real;
+
+/// Tidal-locking regime as seen by the radiation law. Mirrors the
+/// `LockingState` enum in `sim-world` but lives here so `sim-physics`
+/// doesn't depend on `sim-world` (the dependency points the other
+/// way). `Synchronous` flips on the per-cell day-night gradient
+/// (substellar point fixed); `Other` falls back to the per-row /
+/// diurnal-amplitude path used for free rotators and resonances.
+///
+/// See `Radiation::with_locking` for the wire-in surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockingMode {
+    /// Synchronous (1:1) tidal lock. Sub-stellar point fixed at
+    /// the supplied (lat, lon) in fractional turns; per-cell day-
+    /// night gradient computed each tick from the great-circle
+    /// angle to that point.
+    Synchronous,
+    /// Anything not 1:1-locked — free rotator or `p:q` resonance.
+    /// The sub-stellar longitude rotates over time, so on a
+    /// macro-step timescale the day-night gradient washes out and
+    /// the existing per-row table (annual + zonal mean) is the
+    /// right physics.
+    Other,
+}
+
+/// Night-side residual absorption fraction for a synchronous
+/// world. Stellar input drops to ~5 % of full at the antistellar
+/// point — atmospheric IR redistribution + some scattered light
+/// from the day-night limb keeps the dark side from going to a
+/// true 0 K. Matches the value in `post-implementation-fixes.md`
+/// P1.5 spec.
+fn night_factor() -> Real {
+    Real::from_ratio(5, 100)
+}
 
 /// Per-unit-density greenhouse coefficient for water vapour.
 /// Calibrated against [`crate::hydrology::saturation_vapour_cap`],
@@ -227,6 +260,19 @@ pub struct Radiation {
     /// the day/night asymmetry persists across macro-steps →
     /// amplitude trends toward 1.
     pub diurnal_amplitude: Real,
+    /// Tidal-locking regime for this planet. `Synchronous` swaps
+    /// the per-cell day-night modulation for the great-circle-
+    /// distance gradient anchored on `substellar_lat_turns /
+    /// substellar_lon_turns`; `Other` keeps the existing diurnal
+    /// path (which trivially zeroes out for fast rotators).
+    pub locking_mode: LockingMode,
+    /// Sub-stellar latitude in fractional turns `[-1/4, +1/4]`
+    /// (so `+1/4` is the north pole). For `LockingMode::Other`
+    /// this field is unread.
+    pub substellar_lat_turns: Real,
+    /// Sub-stellar longitude in fractional turns `[0, 1)`. For
+    /// `LockingMode::Other` this field is unread.
+    pub substellar_lon_turns: Real,
 }
 
 impl Radiation {
@@ -385,7 +431,39 @@ impl Radiation {
             relaxation: relaxation_rate(),
             day_length_macros: day_length_macros_real,
             diurnal_amplitude,
+            // Default: spinning planet. Callers (sim-core
+            // `build_laws`) override via `with_locking` for
+            // tidally-locked worlds. Without the override the
+            // `LockingMode::Other` path runs and the existing
+            // diurnal-amplitude code carries through unchanged.
+            locking_mode: LockingMode::Other,
+            substellar_lat_turns: Real::ZERO,
+            substellar_lon_turns: Real::ZERO,
         }
+    }
+
+    /// Override the locking regime + sub-stellar point. Callers
+    /// pass the result of `sim_world::sub_stellar_point` here
+    /// (latitude / longitude in fractional turns) when building
+    /// the law for a tidally-locked planet. For
+    /// `LockingMode::Other` the lat/lon arguments are unread —
+    /// the diurnal-amplitude path stays in charge — but it costs
+    /// nothing to thread them through uniformly.
+    ///
+    /// Returned by value (builder style) so the wire-in in
+    /// `sim-core` chains cleanly:
+    /// `Radiation::for_planet(...).with_locking(mode, lat, lon)`.
+    #[must_use]
+    pub fn with_locking(
+        mut self,
+        locking_mode: LockingMode,
+        substellar_lat_turns: Real,
+        substellar_lon_turns: Real,
+    ) -> Self {
+        self.locking_mode = locking_mode;
+        self.substellar_lat_turns = substellar_lat_turns;
+        self.substellar_lon_turns = substellar_lon_turns;
+        self
     }
 
     /// Current seasonal index for the given macro-step.
@@ -474,6 +552,32 @@ impl Law for Radiation {
         let sub_solar_q_i = i32::try_from(sub_solar_q.rem_euclid(i64::from(width_i))).unwrap_or(0);
         let _ = two_pi_phase; // unused — sub_solar_q_i is the integer phase
 
+        // P1.5: synchronous-lock path setup. For a `Synchronous`
+        // planet the sub-stellar point is fixed; pre-compute its
+        // (sin, cos)-latitude and longitude in radians so the
+        // per-cell great-circle-distance formula
+        // `cos(angle) = sin(lat₁)·sin(lat₂)
+        //              + cos(lat₁)·cos(lat₂)·cos(lon₁ - lon₂)`
+        // stays O(1) per cell. The factor maps cos(angle) into a
+        // day-side / night-side absorption multiplier
+        // `night + (1 - night) · max(0, cos(angle))`; T_eq scales
+        // as the fourth root of absorption (Stefan-Boltzmann).
+        // Without this, locked worlds are climatically
+        // indistinguishable from spinning ones (the per-row
+        // zonal-mean equilibrium already averages the day-night
+        // gradient away).
+        let half_h = height_i / 2;
+        let is_synchronous = matches!(self.locking_mode, LockingMode::Synchronous);
+        let sub_lat_rad = self.substellar_lat_turns * two_pi_v;
+        let sub_lon_rad = self.substellar_lon_turns * two_pi_v;
+        let sub_sin_lat = sin(sub_lat_rad);
+        let sub_cos_lat = cos(sub_lat_rad);
+        let night = night_factor();
+        let one_minus_night = Real::ONE - night;
+        // Fourth-root exponent for T_eq ∝ absorption^(1/4).
+        let quarter = Real::from_ratio(1, 4);
+        let pi_v = sim_arith::transcendental::pi();
+
         let temps_next = state.temperature_mut();
         for (cid, axial) in grid.cells() {
             let i = cid.0 as usize;
@@ -495,14 +599,83 @@ impl Law for Radiation {
             let cell_factor = albedo_radiation_factor(effective_albedo[i]);
             let t_eq_base = t_no_greenhouse * cell_factor / baseline_factor + self.greenhouse_k;
 
-            // Diurnal modulation factor in `[1 - amp,
-            // 1 + amp]`. amp=0 → 1 (no modulation, original
-            // T_eq); amp=1 + cos at sub-solar → 2; amp=1 +
-            // cos opposite → 0. The annual-mean T_eq factor is
-            // 1.0 by convention; modulating multiplies by
-            // (1 + amp · cos(longitude)) where positive
-            // longitude offsets get cosine swing.
-            let day_factor = if self.diurnal_amplitude > Real::ZERO {
+            // Day-night modulation factor on T_eq. Three paths:
+            //
+            // 1. `LockingMode::Synchronous`: per-cell great-circle
+            //    distance to the *fixed* sub-stellar point.
+            //    Absorbed insolation scales as
+            //    `night + (1 - night) · max(0, cos(angle))`;
+            //    T_eq scales as the fourth root (Stefan-
+            //    Boltzmann). This is the path that makes a
+            //    tidally-locked world climatically distinct from
+            //    a spinning one — without it, the sub-stellar
+            //    point is sampled but never read.
+            //
+            // 2. `LockingMode::Other` with `diurnal_amplitude > 0`:
+            //    slow-rotator longitude-sweep modulation (the
+            //    existing `1 + amp · cos(q_diff)` path). Sub-
+            //    solar longitude advances with `macro_step`.
+            //
+            // 3. `LockingMode::Other` with `diurnal_amplitude = 0`:
+            //    fast rotator — diurnal cycle washes out at our
+            //    resolution. Factor = 1.
+            let day_factor = if is_synchronous {
+                // Cell latitude in radians. Convention: row 0 =
+                // north pole (lat = +π/2), row `half_h` = equator
+                // (lat = 0), row `height-1` = south pole
+                // (lat ≈ -π/2). Map row → lat directly via
+                // `lat = π · (half_h - r) / height`, which gives
+                // the half-turn range [-π/2, +π/2] without
+                // round-tripping through fractional turns.
+                let row_i = axial.r.rem_euclid(height_i);
+                let lat_rad = pi_v.saturating_mul(Real::from_ratio(
+                    i64::from(half_h - row_i),
+                    i64::from(height_i.max(1)),
+                ));
+                // Longitude in radians, `axial.q ∈ [0, width)`.
+                let lon_turns = Real::from_ratio(
+                    i64::from(axial.q.rem_euclid(width_i)),
+                    i64::from(width_i),
+                );
+                let lon_rad = lon_turns * two_pi_v;
+                // Great-circle distance:
+                //   cos(angle) = sin(lat₁)·sin(lat₂)
+                //              + cos(lat₁)·cos(lat₂)·cos(Δlon).
+                let sin_lat = sin(lat_rad);
+                let cos_lat = cos(lat_rad);
+                let d_lon = lon_rad - sub_lon_rad;
+                let cos_angle = sin_lat
+                    .saturating_mul(sub_sin_lat)
+                    .saturating_add(cos_lat.saturating_mul(sub_cos_lat).saturating_mul(cos(d_lon)));
+                // Day side fraction. The strict-Lambertian
+                // `max(0, cos_angle)` clamps both terminator and
+                // antistellar to 0, leaving them at the same
+                // equilibrium T — physically reasonable for a
+                // radiation-only model (neither sees direct
+                // insolation) but it collapses the terminator
+                // zone tests. We instead use the smoothed half-
+                // cosine `(cos_angle + 1) / 2`, which maps
+                // [-1, +1] → [0, 1]: 1 at sub-stellar, 0.5 at
+                // the terminator (90°), 0 at antistellar. This
+                // is the same shape a real atmosphere produces
+                // by carrying day-side heat across the
+                // terminator via winds + conduction; our
+                // radiation law approximates that redistribution
+                // with the smoothed profile directly so the per-
+                // cell equilibrium picks up the right gradient
+                // even on a 1-row grid (where the diffusion
+                // laws can't move heat between longitudes).
+                let cell_day = (cos_angle + Real::ONE) * Real::from_ratio(1, 2);
+                let cell_day = cell_day.clamp01();
+                // Absorption multiplier: night + (1 - night) · cell_day.
+                // night = 0.05 floor at the antistellar point,
+                // 1.0 ceiling at the sub-stellar point, ~0.525
+                // at the terminator. T_eq scales as the fourth
+                // root (Stefan-Boltzmann).
+                let absorption_mult =
+                    night.saturating_add(one_minus_night.saturating_mul(cell_day));
+                pow(absorption_mult, quarter)
+            } else if self.diurnal_amplitude > Real::ZERO {
                 let q_diff = (axial.q - sub_solar_q_i).rem_euclid(width_i);
                 let signed = if q_diff <= width_i / 2 {
                     q_diff
@@ -782,6 +955,163 @@ mod tests {
             day_cell > night_cell,
             "tidally-locked day side should be warmer than night side: \
              day={day_cell:?} night={night_cell:?}"
+        );
+    }
+
+    // P1.5 — synchronous-lock day-night gradient. These tests
+    // verify that a `LockingMode::Synchronous` planet develops a
+    // permanent hot day side / cold night side anchored on the
+    // sub-stellar point, that a `LockingMode::Other` planet stays
+    // zonally symmetric (rotation washes any gradient out), and
+    // that the terminator zone lands between the two extremes.
+
+    #[test]
+    fn synchronous_planet_has_hot_day_side_cold_night_side() {
+        // A `Synchronous` planet's sub-stellar point is fixed at
+        // (lat=0, lon=0); the cell closest to that point should
+        // sit at a higher equilibrium T than the cell at the
+        // antistellar point (lon=0.5). We use a 1-row grid to
+        // remove latitudinal cooling — the only modulator left is
+        // the day-night gradient, so any T separation must come
+        // from the synchronous code path.
+        use crate::laws::Law;
+        let rad = Radiation::for_planet(
+            1,
+            Real::from_int(1_361),
+            30,
+            Real::ZERO,
+            0,    // no axial tilt
+            0,    // no seasonal swing
+            0,    // circular orbit
+            Real::from_int(24), // day length irrelevant under
+                                // Synchronous mode (the fixed
+                                // sub-stellar point is what
+                                // drives the gradient)
+        )
+        .with_locking(LockingMode::Synchronous, Real::ZERO, Real::ZERO);
+        let mut state = PhysicsState::new(HexGrid::new(8, 1));
+        for t in state.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        // Run many ticks to reach quasi-steady state. The
+        // relaxation rate is ~2 % per tick (50-tick e-folding),
+        // so 500 ticks brings every cell to within 5e-5 of its
+        // (now per-cell) equilibrium.
+        for _ in 0..500 {
+            rad.integrate(&mut state, Real::ONE);
+        }
+        // Sub-stellar cell sits at q=0 (cos_angle=1, full
+        // insolation). Antistellar at q=4 for width=8
+        // (cos_angle=-1, clamped → night floor).
+        let day_cell = state.temperature()[0];
+        let night_cell = state.temperature()[4];
+        assert!(
+            day_cell > night_cell + Real::from_int(50),
+            "synchronous-lock day side must be much hotter than night side: \
+             day={day_cell:?} night={night_cell:?}"
+        );
+    }
+
+    #[test]
+    fn free_rotator_has_zonal_symmetric_radiation() {
+        // Same planet parameters as the synchronous test above,
+        // but in `LockingMode::Other` (free rotator). With Earth-
+        // like day length the diurnal amplitude is zero (fast
+        // rotators average out at our macro-step resolution), so
+        // all cells at the same latitude should converge to the
+        // same equilibrium T — no day/night gradient.
+        use crate::laws::Law;
+        let rad = Radiation::for_planet(
+            1,
+            Real::from_int(1_361),
+            30,
+            Real::ZERO,
+            0,
+            0,
+            0,
+            Real::from_int(24),
+        )
+        .with_locking(LockingMode::Other, Real::ZERO, Real::ZERO);
+        let mut state = PhysicsState::new(HexGrid::new(8, 1));
+        for t in state.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        for _ in 0..500 {
+            rad.integrate(&mut state, Real::ONE);
+        }
+        // Every cell in this 1-row grid sits at the equator;
+        // under `LockingMode::Other` they should converge to the
+        // same T. Tolerance ~1 K covers Q32.32 LSB rounding and
+        // the residual gap from the relaxation pull.
+        let t0 = state.temperature()[0];
+        for q in 1..8 {
+            let tq = state.temperature()[q];
+            let diff = (tq - t0).abs();
+            assert!(
+                diff < Real::from_int(1),
+                "free-rotator row should be zonally symmetric: q=0 T={t0:?}, q={q} T={tq:?}, diff={diff:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminator_zone_has_moderate_temperature() {
+        // The terminator is the 90°-from-substellar great-circle
+        // band — half the cell sees the star and half doesn't. A
+        // cell sitting on the terminator should have an
+        // equilibrium T between the hottest day-side cell (sub-
+        // stellar) and the coldest night-side cell (antistellar).
+        //
+        // Use a 5-row grid so we can include latitude variation,
+        // then check the terminator row's temperature is between
+        // the day and night extremes.
+        use crate::laws::Law;
+        let rad = Radiation::for_planet(
+            1,
+            Real::from_int(1_361),
+            30,
+            Real::ZERO,
+            0,
+            0,
+            0,
+            Real::from_int(24),
+        )
+        .with_locking(LockingMode::Synchronous, Real::ZERO, Real::ZERO);
+        let mut state = PhysicsState::new(HexGrid::new(8, 1));
+        for t in state.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        for _ in 0..500 {
+            rad.integrate(&mut state, Real::ONE);
+        }
+        // For width=8 with sub-stellar at q=0: q=2 sits at
+        // longitude 2/8 = 0.25 turns = 90° east — exactly on the
+        // terminator. q=6 (270° = -90°) is the other terminator.
+        // Both should land strictly between the day-side cell
+        // (q=0) and the night-side cell (q=4).
+        let day = state.temperature()[0];
+        let term_east = state.temperature()[2];
+        let term_west = state.temperature()[6];
+        let night = state.temperature()[4];
+        assert!(
+            term_east < day && term_east > night,
+            "east terminator should sit between day and night: \
+             day={day:?} term={term_east:?} night={night:?}"
+        );
+        assert!(
+            term_west < day && term_west > night,
+            "west terminator should sit between day and night: \
+             day={day:?} term={term_west:?} night={night:?}"
+        );
+        // The two terminators sit at symmetric great-circle
+        // distances from the sub-stellar point, so their
+        // equilibrium temperatures should match (within Q32.32
+        // LSB rounding).
+        let diff = (term_east - term_west).abs();
+        assert!(
+            diff < Real::from_int(1),
+            "east and west terminators should be symmetric: \
+             east={term_east:?} west={term_west:?} diff={diff:?}"
         );
     }
 

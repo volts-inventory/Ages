@@ -64,7 +64,7 @@ pub use lorentz::Lorentz;
 pub use magnetism::{DipoleState, MagneticReversal, Magnetism};
 pub use mechanics::Mechanics;
 pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorState};
-pub use radiation::Radiation;
+pub use radiation::{LockingMode, Radiation};
 pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tectonics::{CrustType, Plate, Tectonics};
 pub use tidal_heating::{
