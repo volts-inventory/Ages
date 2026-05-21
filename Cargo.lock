@@ -302,6 +302,7 @@ dependencies = [
  "rand_chacha",
  "sim-arith",
  "sim-civ",
+ "sim-ecosystem",
  "sim-events",
  "sim-physics",
  "sim-recognition",

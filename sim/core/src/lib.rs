@@ -17,11 +17,16 @@ use protocol::{
 };
 use sim_arith::Real;
 use sim_civ::{catastrophe, conflict, cosmology, tech, transmission, Civ};
+use sim_ecosystem::{
+    sample_ecosystem_with_substrate, step_hgt, step_speciation, PlanetEcosystem,
+    SpeciationTracker,
+};
 use sim_events::Emitter;
 use sim_physics::{HexGrid, OrchestratorState, PhysicsState};
 use sim_recognition::RecognitionLibrary;
+use sim_species::SpeciesId;
 use sim_world::{init_planet, sample_planet, Atmosphere, Composition, Magnetosphere};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod config;
 mod contact;
@@ -101,6 +106,50 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     let mut planet = sample_planet(cfg.seed);
     emitter.emit(&Event::Planet(planet_to_event(&planet)))?;
     init_planet(&mut state, &planet);
+
+    // P0.1: multi-species ecosystem. Sampled once at worldgen-time
+    // from `(planet.seed, planet.metabolic_substrate)` and stepped
+    // every tick inside the main loop (between the chemistry and
+    // catastrophe phases). Producer carrying capacity scales with the
+    // planet's biosphere density × grid size so a lush planet starts
+    // with a thicker biomass pool than a sparse one. The seed XOR
+    // (`sample_ecosystem_with_substrate` applies `0xEC05_0001_5751_1F00`
+    // internally) keeps the ecosystem draw in its own deterministic
+    // namespace — collisions with the worldgen / tectonics / species
+    // RNG streams are avoided by giving each stream its own discriminator.
+    let substrate_tag: &'static str = planet.metabolic_substrate.tag();
+    // Planet-level producer capacity: every cell carries a unit of
+    // primary-production headroom, scaled by the continuous biosphere
+    // density (0 = lifeless → 0 capacity; 1 = lush → 1 unit per cell).
+    // Clamped to a floor of 1.0 so even a near-lifeless world has a
+    // non-degenerate Lindeman pyramid for the per-tick step (the
+    // extinction sweep then collapses unsupported tiers naturally).
+    let planet_capacity: Real = {
+        let n_cells_real = Real::from_int(state.grid().n_cells() as i64);
+        let cap = n_cells_real * planet.biosphere_density;
+        if cap < Real::ONE {
+            Real::ONE
+        } else {
+            cap
+        }
+    };
+    let mut ecosystem: PlanetEcosystem =
+        sample_ecosystem_with_substrate(planet.seed, substrate_tag, planet_capacity);
+    // Speciation + HGT trackers/registries live alongside the
+    // ecosystem. The species registry feeds `step_speciation` (which
+    // reads a parent `Species` from the registry to derive daughters)
+    // and `step_hgt` (which iterates Microbial species to swap traits).
+    // The civ-bearing `species` derived above is *not* an ecosystem
+    // species record — those are the trophic-tier members sampled by
+    // `sample_ecosystem_with_substrate`. Until the per-trait species
+    // registry is wired in (P1+), the registry stays empty: the per-
+    // tick step still runs (extinction sweep + biogeochem are gated
+    // on the ecosystem's own species map, not the registry), but no
+    // daughter species or HGT events will fire. The events still flow
+    // through the emitter when they do — that's the wire-up this PR
+    // is responsible for.
+    let mut species_registry: BTreeMap<SpeciesId, sim_species::Species> = BTreeMap::new();
+    let mut speciation_tracker = SpeciationTracker::new();
 
     // PlanetMap — per-cell elevation + water_depth in row-major
     // order (matches HexGrid::cells()). Emitted once after
@@ -529,6 +578,55 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         }
         for ev in surplus_events {
             emitter.emit(&Event::CivSurplusChanged(ev))?;
+        }
+
+        // P0.1: per-tick ecosystem step. Runs AFTER the chemistry
+        // phase (chemistry is integrated inside `physics_phase` above,
+        // so atmospheric CO2 is current at this point) and BEFORE the
+        // catastrophe phase (so the just-updated biomass + extinction
+        // sweep is visible to catastrophe survival math through the
+        // emitted `SpeciesExtinct` events). The canonical biogeochem
+        // step couples producer growth ← atmospheric CO2 + solar /
+        // oxidiser energy and respiration / decomposition → atmospheric
+        // CO2, then runs the extinction sweep.
+        //
+        // `solar_irradiance` is the planet's nominal stellar
+        // irradiance (Earth ≈ 1361 W/m²). The ecosystem uses it as
+        // the energy budget for Photoautotrophs; Chemoautotrophs draw
+        // off the planet-wide Oxidiser pool, Mixotrophs draw both.
+        let solar_irradiance = planet.stellar_luminosity;
+        let extinct_events =
+            ecosystem.step_with_biogeochem_at_tick(&mut state, solar_irradiance, tick);
+        for ev in extinct_events {
+            // P0.1: open a post-extinction adaptive-radiation window
+            // on the speciation tracker so the post-extinction
+            // multiplier kicks in on subsequent ticks. The window
+            // closes naturally after `POST_EXTINCTION_BOOST_TICKS`.
+            speciation_tracker.register_extinction_event(tick);
+            emitter.emit(&Event::SpeciesExtinct(ev))?;
+        }
+        // Speciation + HGT. Both run once per tick (the per-tick
+        // probabilities for polyploidy / HGT are baked into the
+        // step functions themselves; the per-tick allopatric and
+        // sympatric streak counters live on the tracker). The
+        // species registry is empty until P1 wires the trait
+        // registry through, so these calls return empty event
+        // vectors today — but the wire-up is in place so the
+        // moment the registry is populated the events flow.
+        let speciation_results =
+            step_speciation(tick, &ecosystem.species, &species_registry, &mut speciation_tracker);
+        for (daughter, event) in speciation_results {
+            // Register the daughter in the registry so later
+            // ticks can speciate off her too. The ecosystem-side
+            // `EcoSpecies` record + role wiring is a P1
+            // responsibility; the registry insert here only
+            // affects future speciation passes.
+            species_registry.insert(SpeciesId(event.daughter_id), daughter);
+            emitter.emit(&Event::SpeciationOccurred(event))?;
+        }
+        let hgt_events = step_hgt(&mut species_registry, tick, cfg.seed);
+        for ev in hgt_events {
+            emitter.emit(&Event::HorizontalGeneTransfer(ev))?;
         }
 
         // Catastrophe check on every active civ.
