@@ -422,6 +422,14 @@ pub fn integrate_civ_step(
     // no-op so existing call sites that don't yet wire it pay
     // zero overhead.
     tidal_heating: Option<(Real, &[crate::tidal_heating::MoonHeating])>,
+    // Sprint 5 Item 17: multi-channel atmospheric escape parameters
+    // (Jeans + hydrodynamic + photochemical + ion). When provided,
+    // the orchestrator runs one escape pass per macro-step after
+    // chemistry so the lost mass reflects the post-reaction
+    // composition (e.g. vapour that just condensed back to liquid
+    // doesn't escape this tick). `None` is a no-op for tests and
+    // call sites that don't need atmospheric loss modelled.
+    atmospheric_escape: Option<&crate::atmospheric_escape::PlanetEscapeParams>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -703,6 +711,21 @@ pub fn integrate_civ_step(
                 );
             }
         }
+        // Multi-channel atmospheric escape (Sprint 5 Item 17). Runs
+        // after chemistry so it operates on the post-reaction
+        // composition (e.g. vapour just condensed back to liquid
+        // by hydrology won't be lost to space this tick). Like
+        // weathering, this is an intentional one-sided sink on
+        // atmospheric substances — the chemistry-mass invariant
+        // above wraps only the chemistry step, so escape's removal
+        // doesn't trip it.
+        if let Some(params) = atmospheric_escape {
+            crate::atmospheric_escape::atmospheric_escape_step(
+                state,
+                params,
+                cfg.chemistry_dt,
+            );
+        }
         // Advance the planetary clock at the end of every
         // macro-step so next iteration's tides see the new phase.
         state.advance_macro_step();
@@ -750,11 +773,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -807,7 +830,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);
