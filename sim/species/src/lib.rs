@@ -30,9 +30,9 @@ pub use sampling::{
 };
 pub use species::Species;
 pub use types::{
-    CognitionAxes, CognitionTopology, DynamicTool, DynamicToolEffects, Habitat, Manipulation,
-    ManipulationKind, Modality, ModalityKind, PopulationBiology, ToleranceEnvelope,
-    DYNAMIC_TOOL_ID_START,
+    CasteRole, CognitionAxes, CognitionTopology, DynamicTool, DynamicToolEffects, Fission, Habitat,
+    Lifecycle, Manipulation, ManipulationKind, Modality, ModalityKind, PopulationBiology,
+    ToleranceEnvelope, DYNAMIC_TOOL_ID_START,
 };
 
 #[cfg(test)]

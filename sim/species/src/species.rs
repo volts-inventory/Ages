@@ -2,7 +2,7 @@
 //! rise and fall within it.
 
 use crate::types::{
-    CognitionAxes, CognitionTopology, DynamicTool, Habitat, Manipulation, Modality,
+    CognitionAxes, CognitionTopology, DynamicTool, Habitat, Lifecycle, Manipulation, Modality,
     PopulationBiology, ToleranceEnvelope,
 };
 use sim_arith::Real;
@@ -132,6 +132,15 @@ pub struct Species {
     /// Defaults derive from `MetabolicSubstrate` and are jittered
     /// ±20% per axis from the species seed at derivation time.
     pub tolerance: ToleranceEnvelope,
+    /// Life-history topology. Determines which per-tick step
+    /// function the population engine runs each tick. Existing
+    /// species default to `Vertebrate` (4-bracket cohort
+    /// dynamics, unchanged); future-touch r=1 broadcast-spawner
+    /// derivations route through `Aquatic { semelparous: true }`,
+    /// social insects through `Eusocial`, etc. See
+    /// `sim_population::lifecycle_step` for the per-variant
+    /// dynamics.
+    pub lifecycle: Lifecycle,
 }
 
 impl Species {

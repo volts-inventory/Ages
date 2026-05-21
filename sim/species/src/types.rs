@@ -620,3 +620,115 @@ impl PopulationBiology {
         lifespan_years * self.fertile_fraction() * baseline_months_per_year
     }
 }
+
+/// Eusocial caste roles. A colony with `Eusocial { castes }`
+/// allocates its pop across these roles each tick; only
+/// `Reproductive` contributes to next-generation births.
+///
+/// `Ord` derive gives a deterministic BTreeMap iteration order
+/// across rebuilds — variants order: Reproductive < Worker <
+/// Soldier < Nurse (declaration order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CasteRole {
+    /// Queens, drones, primary reproductives. The only caste that
+    /// contributes to births.
+    Reproductive,
+    /// Sterile foragers. Consume food and contribute economic
+    /// weight but produce no offspring.
+    Worker,
+    /// Sterile defensive caste. Consume food, contribute war
+    /// strength, no offspring.
+    Soldier,
+    /// Tends young; modest food draw, no offspring. Boosts
+    /// effective infant survival when present (not implemented in
+    /// this PR; reserved for the next fidelity pass).
+    Nurse,
+}
+
+/// Microbial fission strategies. Drives doubling-time dynamics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Fission {
+    /// Bacteria / archaea. Fastest doubling.
+    Binary,
+    /// Yeast. Slower doubling — daughter cell forms as an
+    /// outgrowth on the parent.
+    Budding,
+    /// Some prokaryotes. Slowest doubling but unlocks an HGT
+    /// (horizontal gene transfer) bonus tracked in Sprint 3.
+    Conjugation,
+}
+
+/// Life-history topology for the species. Determines which
+/// per-tick step function the population engine runs each tick.
+/// `Vertebrate` keeps the existing 4-bracket cohort dynamics;
+/// every other variant routes through a topology-specific step
+/// function in `sim_population::lifecycle_step`. Defaults to
+/// `Vertebrate` so every existing `Species { ... }` literal stays
+/// compilable without per-call updates.
+///
+/// The literal variants pair with Sprint 1 Item 1's r/K
+/// classification — a future polish pass can route r=1
+/// broadcast-spawner species to `Aquatic { semelparous: true }`,
+/// social insects to `Eusocial`, etc. This PR ships the enum +
+/// per-variant step functions without re-sampling existing species
+/// off Vertebrate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lifecycle {
+    /// Existing 4-bracket cohort (infant/juvenile/fertile/elder).
+    /// The legacy step is preserved bit-for-bit so all existing
+    /// downstream consumers keep their numerics.
+    Vertebrate,
+    /// Aquatic life-history with a metamorphosis bottleneck.
+    /// `semelparous = true` models a single mass-spawn event
+    /// followed by adult mortality → 100% (Pacific salmon, mayfly-
+    /// like aquatic adults). `semelparous = false` is iteroparous
+    /// (frog-like): adults persist across reproductive seasons but
+    /// juveniles suffer an outsized metamorphosis bottleneck.
+    Aquatic {
+        semelparous: bool,
+    },
+    /// Egg / larva / pupa / adult — 4 distinct stages each with
+    /// their own lifespan and per-stage progression rate. Larva
+    /// stage typically dominates the lifetime; adult stage is
+    /// brief and reproduction-focused.
+    Insect,
+    /// Queen + worker castes. Per-caste bracket; only
+    /// `Reproductive` produces offspring. Sterile castes (Worker,
+    /// Soldier, Nurse) consume food and contribute economic /
+    /// military weight but never produce births.
+    Eusocial {
+        castes: Vec<CasteRole>,
+    },
+    /// Seed / seedling / mature / senescent. Similar 4-stage
+    /// shape to Vertebrate but with very high seed mortality, low
+    /// senescent mortality, and a dispersal-driven seed flow that
+    /// can colonise neighbour cells.
+    Plant,
+    /// Doubling-time microbe. No age structure — a single biomass
+    /// number that doubles every generation under unstressed
+    /// conditions. `fission_strategy` modulates doubling rate.
+    Microbial {
+        fission_strategy: Fission,
+    },
+    /// Colonial / modular organism (coral-equivalent). No age
+    /// structure — single biomass that grows and dies as a unit.
+    /// Reproduction is by budding from the existing biomass.
+    Modular,
+}
+
+impl Lifecycle {
+    /// Default lifecycle for back-compat: every existing
+    /// `Species { ... }` literal that doesn't set this field falls
+    /// through to Vertebrate, so existing 4-bracket dynamics stay
+    /// untouched.
+    #[must_use]
+    pub fn default_vertebrate() -> Self {
+        Lifecycle::Vertebrate
+    }
+}
+
+impl Default for Lifecycle {
+    fn default() -> Self {
+        Lifecycle::Vertebrate
+    }
+}
