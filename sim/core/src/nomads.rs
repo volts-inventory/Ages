@@ -1080,6 +1080,7 @@ mod tests {
     use sim_physics::HexGrid;
     use sim_world::{
         Atmosphere, BiosphereClass, Composition, Crust, Magnetosphere, MetabolicSubstrate,
+        SpectralType, Star,
     };
     use std::collections::BTreeSet;
 
@@ -1116,6 +1117,7 @@ mod tests {
             terrain_centre_q: 0,
             terrain_centre_r: 0,
             locking_state: sim_world::LockingState::FreeRotator,
+            star: Star::new(SpectralType::G, Real::from_int(1_361)),
         }
     }
 

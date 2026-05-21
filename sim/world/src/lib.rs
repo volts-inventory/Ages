@@ -41,6 +41,7 @@ mod hemisphere;
 mod init;
 mod planet;
 mod sampling;
+mod star;
 mod tidal_locking;
 mod types;
 
@@ -57,6 +58,7 @@ pub use habitability::{
 pub use init::{discharge_threshold_for, init_planet};
 pub use planet::Planet;
 pub use sampling::{planet_name_from_seed, sample_planet};
+pub use star::{bolometric_scale_at_age, SedFractions, SpectralType, Star};
 pub use tidal_locking::{step_eccentricity_damping, sub_stellar_point};
 pub use types::{
     Atmosphere, BiosphereClass, Composition, Crust, LockingState, Magnetosphere,

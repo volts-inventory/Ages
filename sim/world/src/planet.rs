@@ -3,6 +3,7 @@
 //! more.
 
 use crate::composition::{AtmosphericComposition, CrustalComposition, Moon};
+use crate::star::Star;
 use crate::types::{
     Atmosphere, BiosphereClass, Composition, Crust, LockingState, Magnetosphere,
     MetabolicSubstrate,
@@ -175,13 +176,13 @@ pub struct Planet {
     pub substrate_perturbation: Real,
     /// Tidal-locking regime of the planet's rotation relative to
     /// its orbit. Sampled at worldgen (Item 24) and consulted per-
-    /// tick by tidal-locking dynamics (Item 19): controls the
-    /// eccentricity-damping rate of each moon and whether the sub-
-    /// stellar point is fixed (Synchronous) or rotates.
-    ///
-    /// Defaults to `FreeRotator` in legacy worldgen paths so back-
-    /// compat fixtures don't have to populate this field.
+    /// tick by tidal-locking dynamics (Item 19).
     pub locking_state: LockingState,
+    /// Host star — spectral class + SED breakdown + main-sequence
+    /// age (Sprint 5 Item 18). `stellar_luminosity` (above) stays
+    /// as integrated W/m² for back-compat; `star.bolometric_luminosity`
+    /// is the age-and-SED-aware refinement.
+    pub star: Star,
 }
 
 impl Planet {
