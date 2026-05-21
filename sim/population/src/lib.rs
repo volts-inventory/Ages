@@ -29,6 +29,13 @@ use sim_arith::transcendental::{exp, ln};
 use sim_arith::{Pop, Real};
 use sim_species::PopulationBiology;
 
+pub mod lifecycle;
+
+pub use lifecycle::{
+    step_aquatic, step_eusocial, step_for_lifecycle, step_insect, step_microbial, step_modular,
+    step_plant, EusocialColony,
+};
+
 /// 4-bracket population cohort. Replaces the earlier scalar
 /// `count` with explicit age structure: infants, juveniles,
 /// fertile adults, and post-reproductive elders. Only the fertile

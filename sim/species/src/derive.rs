@@ -7,7 +7,7 @@ use crate::sampling::{
     species_name_from_seed, template_channels,
 };
 use crate::species::Species;
-use crate::types::{CognitionTopology, ModalityKind, DYNAMIC_TOOL_ID_START};
+use crate::types::{CognitionTopology, Lifecycle, ModalityKind, DYNAMIC_TOOL_ID_START};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
@@ -140,5 +140,12 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         initial_cosmology,
         biology,
         tolerance,
+        // Default to Vertebrate for back-compat. Sprint 2 Item 7
+        // ships the enum + per-variant step routing; the next
+        // pass wires the r/K + habitat traits into a lifecycle
+        // sampler so r=1 broadcast-spawners route through
+        // `Aquatic { semelparous: true }`, social insects through
+        // `Eusocial`, etc.
+        lifecycle: Lifecycle::Vertebrate,
     }
 }
