@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 sim-arith.workspace = true
+sim-physics.workspace = true
 sim-species.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
