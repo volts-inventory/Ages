@@ -19,19 +19,20 @@
 //!
 //! - `base` is a slow geological-timescale rate
 //!   (`WEATHERING_BASE = 1e-5` per tick).
-//! - `T_factor` rises with temperature in an Arrhenius-style way.
-//!   Real Arrhenius is `exp(-Ea / RT)`; `sim_arith` has an `exp`
-//!   but the goal here is "any monotone-in-T multiplier that
-//!   accelerates weathering on warm cells and decelerates it on
-//!   cold ones." A piecewise-linear ramp around a reference
-//!   temperature is plenty for the negative-feedback role and
-//!   keeps the per-cell cost trivial: `T_factor = (T - T_ref) / 50`
-//!   clamped to `[0.1, 10.0]` with `T_ref = 290 K`. Cold cells
-//!   never go below `0.1` (weathering doesn't completely stop on
-//!   frozen rock — Arrhenius asymptotes, not zeroes) and hot cells
-//!   cap at `10×` baseline (the silicate-rainwater reaction is
-//!   transport-limited above ~340 K, not reaction-limited; a hard
-//!   cap matches the shape of real `kinetic × supply` curves).
+//! - `T_factor` rises with temperature via true Arrhenius:
+//!   `factor = exp(Ea/R × (1/T_ref - 1/T))` with `T_ref = 290 K`
+//!   and `Ea/R ≈ 5000 K` (i.e. activation energy `Ea ≈ 41 kJ/mol`,
+//!   inside the 50-100 kJ/mol range geochemistry measures for
+//!   silicate weathering). The factor is 1.0 at `T_ref`, roughly
+//!   doubles per +10 K, and halves per −10 K — matching the
+//!   real-Earth "weathering ~10× per Gyr per ~10 K" response that
+//!   keeps the carbon-silicate cycle on a habitable equilibrium.
+//!   The exponent is clamped to `[-15, +15]` (well outside any
+//!   reachable per-cell temperature) so `exp()` stays in the
+//!   Q32.32-safe range, and the final factor is re-clamped to
+//!   `[0.001, 100]` so the bound stays sane on extreme hot/cold
+//!   worlds (Arrhenius asymptotes but doesn't zero out, and even
+//!   transport-limited weathering on a Venusian crust caps out).
 //! - `precipitation_factor` is "how much liquid water is around
 //!   to wash CO2-bearing rain over silicates." Dry cells weather
 //!   essentially nothing; oceans + heavily humid cells weather
@@ -66,30 +67,41 @@ use sim_arith::Real;
 pub const WEATHERING_BASE_NUM: i64 = 1;
 pub const WEATHERING_BASE_DEN: i64 = 100_000;
 
-/// Reference temperature for the piecewise-linear `T_factor`.
-/// `290 K` is mid-Earth surface temperature — cold polar cells
-/// fall well below, hot equatorial cells rise above, and the
-/// factor ramps symmetrically through 1.0 at the reference.
+/// Reference temperature for the Arrhenius `T_factor`. `290 K`
+/// is mid-Earth surface temperature; the factor is 1.0 exactly
+/// at `T_REF_K`, so cold polar cells fall below 1 and hot
+/// equatorial cells rise above 1.
 pub const T_REF_K: i64 = 290;
 
-/// Width (in K) of one unit step of the `T_factor` ramp. With a
-/// `50 K` slope, a +50 K excess above `T_REF` doubles the
-/// nominal rate (factor 2.0); a +500 K excess hits the upper
-/// clamp at `10.0`; a -200 K deficit hits the lower clamp at
-/// `0.1`. This shape is far gentler than true Arrhenius but
-/// suffices for the negative-feedback role.
-pub const T_FACTOR_SLOPE_K: i64 = 50;
+/// Effective activation energy over the gas constant for the
+/// Arrhenius factor, in kelvin. `5000 K` corresponds to
+/// `Ea ≈ 41 kJ/mol` (R ≈ 8.314 J/mol/K), inside the
+/// 50-100 kJ/mol range geochemistry measures for silicate
+/// weathering and tuned so the factor roughly doubles per +10 K
+/// near `T_REF_K` — the empirical "weathering ~10× per Gyr per
+/// ~10 K" response.
+pub const EA_OVER_R_K: i64 = 5000;
+
+/// Bound on the Arrhenius exponent before passing to `exp()`.
+/// `exp(15) ≈ 3.3e6` fits Q32.32; clamping at `±15` keeps the
+/// transcendental in its safe range on absurdly hot or cold
+/// cells (1/T blowing up at low T).
+pub const ARRHENIUS_EXPONENT_CLAMP: i64 = 15;
 
 /// Lower clamp on `T_factor`. Cold cells don't *stop* weathering
 /// entirely — Arrhenius asymptotes — so the multiplier floors at
-/// `0.1` rather than zero.
+/// `0.001` rather than zero. (Tighter than the old `0.1` floor
+/// because true Arrhenius drops faster than the linear ramp on
+/// snowball worlds.)
 pub const T_FACTOR_MIN_NUM: i64 = 1;
-pub const T_FACTOR_MIN_DEN: i64 = 10;
+pub const T_FACTOR_MIN_DEN: i64 = 1000;
 
 /// Upper clamp on `T_factor`. Above the cap, real silicate
 /// weathering is transport-limited (rainwater can only deliver
-/// CO2 so fast); the cap matches that shape.
-pub const T_FACTOR_MAX: i64 = 10;
+/// CO2 so fast); the cap matches that shape. Raised from the
+/// old `10` to `100` so the bound stays sane on Venus-hot
+/// worlds where Arrhenius rises faster than the linear ramp.
+pub const T_FACTOR_MAX: i64 = 100;
 
 /// Humidity normalisation for `precipitation_factor`. Matches the
 /// existing hydrology unit scale — `Hydrology`'s sub-boil
@@ -117,9 +129,9 @@ pub struct Weathering {
     /// Reference temperature (K) at which `T_factor == 1.0`. See
     /// [`T_REF_K`].
     pub t_ref: Real,
-    /// Width (K) of one unit of the linear `T_factor` ramp. See
-    /// [`T_FACTOR_SLOPE_K`].
-    pub t_slope: Real,
+    /// Activation energy / gas constant (K) for the Arrhenius
+    /// `T_factor`. See [`EA_OVER_R_K`].
+    pub ea_over_r: Real,
     /// Lower clamp on `T_factor`. See [`T_FACTOR_MIN_NUM`] /
     /// [`T_FACTOR_MIN_DEN`].
     pub t_factor_min: Real,
@@ -144,7 +156,7 @@ impl Weathering {
         Self {
             base: Real::from_ratio(WEATHERING_BASE_NUM, WEATHERING_BASE_DEN),
             t_ref: Real::from_int(T_REF_K),
-            t_slope: Real::from_int(T_FACTOR_SLOPE_K),
+            ea_over_r: Real::from_int(EA_OVER_R_K),
             t_factor_min: Real::from_ratio(T_FACTOR_MIN_NUM, T_FACTOR_MIN_DEN),
             t_factor_max: Real::from_int(T_FACTOR_MAX),
             ref_humidity: Real::from_int(REF_HUMIDITY),
@@ -152,17 +164,29 @@ impl Weathering {
         }
     }
 
-    /// Per-cell temperature multiplier. Piecewise-linear in
-    /// `(T - T_ref) / t_slope`, centred at 1.0 when `T == T_ref`,
-    /// clamped to `[t_factor_min, t_factor_max]`. Cold cells get
-    /// the floor (so weathering doesn't stop entirely on frozen
-    /// rock); hot cells cap at the ceiling (so the rate doesn't
-    /// run away when the climate spikes).
+    /// Per-cell temperature multiplier. True Arrhenius:
+    /// `factor = exp(Ea/R × (1/T_ref - 1/T))`, normalised so the
+    /// factor equals 1.0 at `T_ref`, grows above for warmer cells
+    /// and shrinks below for colder ones. Doubles per +10 K and
+    /// halves per −10 K around 290 K with the Earth-like
+    /// `Ea/R = 5000 K`. The exponent is clamped to keep `exp()`
+    /// in its Q32.32-safe range; the result is re-clamped to
+    /// `[t_factor_min, t_factor_max]` so absurd hot/cold worlds
+    /// stay bounded.
     #[must_use]
     pub fn t_factor(&self, temperature: Real) -> Real {
-        let excess = temperature - self.t_ref;
-        let linear = Real::ONE + excess / self.t_slope;
-        linear.max(self.t_factor_min).min(self.t_factor_max)
+        // Arrhenius: rate ∝ exp(-Ea / (R × T)).
+        // Normalised against the reference rate at T_ref so the
+        // factor is 1.0 at T == T_ref:
+        //   factor = exp(Ea/R × (1/T_ref - 1/T))
+        let inv_t = Real::ONE / temperature;
+        let inv_t_ref = Real::ONE / self.t_ref;
+        let exponent = self.ea_over_r * (inv_t_ref - inv_t);
+        // Clamp to keep exp() in Q32-safe range (exp(±15) ≈ 3.3e6).
+        let clamp = Real::from_int(ARRHENIUS_EXPONENT_CLAMP);
+        let exponent_clamped = exponent.max(-clamp).min(clamp);
+        let factor = sim_arith::transcendental::exp(exponent_clamped);
+        factor.max(self.t_factor_min).min(self.t_factor_max)
     }
 
     /// Per-cell precipitation multiplier. `(water_depth + vapour)`
@@ -225,6 +249,59 @@ impl Weathering {
 mod tests {
     use super::*;
     use crate::grid::HexGrid;
+
+    /// Arrhenius `T_factor` is normalised to 1.0 exactly at the
+    /// reference temperature (290 K). The exp(0) at T_ref should
+    /// land within rounding (Q32.32 LSB ≈ 2.3e-10, transcendental
+    /// tolerance a few orders looser).
+    #[test]
+    fn arrhenius_factor_at_290k_equals_one() {
+        let w = Weathering::earth_like();
+        let factor = w.t_factor(Real::from_int(290));
+        // Tolerance ±1e-3: the exp() series + 1/T rounding stack.
+        let lo = Real::from_ratio(999, 1000);
+        let hi = Real::from_ratio(1001, 1000);
+        assert!(
+            factor >= lo && factor <= hi,
+            "t_factor(290) should be ≈ 1.0; got {factor:?}"
+        );
+    }
+
+    /// Earth-equivalent `Ea/R = 5000 K` gives roughly 2× per +10 K
+    /// near the reference. Accept [1.5, 2.5] — the true ratio at
+    /// 300/290 is `exp(5000/290 - 5000/300) = exp(0.5747) ≈ 1.777`.
+    #[test]
+    fn arrhenius_factor_doubles_per_10k_increase() {
+        let w = Weathering::earth_like();
+        let f_290 = w.t_factor(Real::from_int(290));
+        let f_300 = w.t_factor(Real::from_int(300));
+        let ratio = f_300 / f_290;
+        let lo = Real::from_ratio(15, 10);
+        let hi = Real::from_ratio(25, 10);
+        assert!(
+            ratio >= lo && ratio <= hi,
+            "t_factor(300)/t_factor(290) should be ≈ 1.8 (in [1.5, 2.5]); \
+             got {ratio:?} (f_290={f_290:?}, f_300={f_300:?})"
+        );
+    }
+
+    /// Symmetric: −10 K should roughly halve the rate. True ratio
+    /// at 280/290 is `exp(5000/290 - 5000/280) = exp(-0.6158) ≈ 0.540`.
+    /// Accept [0.4, 0.7].
+    #[test]
+    fn arrhenius_factor_halves_per_10k_decrease() {
+        let w = Weathering::earth_like();
+        let f_290 = w.t_factor(Real::from_int(290));
+        let f_280 = w.t_factor(Real::from_int(280));
+        let ratio = f_280 / f_290;
+        let lo = Real::from_ratio(4, 10);
+        let hi = Real::from_ratio(7, 10);
+        assert!(
+            ratio >= lo && ratio <= hi,
+            "t_factor(280)/t_factor(290) should be ≈ 0.55 (in [0.4, 0.7]); \
+             got {ratio:?} (f_290={f_290:?}, f_280={f_280:?})"
+        );
+    }
 
     /// Same precipitation across both cells; hot cell consumes more
     /// CO2 than cold cell. Confirms the Arrhenius-style T-factor
@@ -333,14 +410,13 @@ mod tests {
         let grid = HexGrid::new(4, 4);
         let mut state = PhysicsState::new(grid);
         let n = state.grid().n_cells();
-        // Warm + wet earth-like seed. Temperature 340 K gives
-        // `T_factor = 1 + (340-290)/50 = 2.0` and humidity well
-        // above `5 × ref_humidity` saturates the precipitation
-        // multiplier at its `5.0` cap. Maximum per-cell sink
-        // rate is then `base × 2.0 × 5.0 = 1e-4` per tick, and
-        // over 10_000 ticks weathering can remove up to ~1.0
-        // per cell — leaves comfortable headroom for the source
-        // to be material but still containable.
+        // Warm + wet earth-like seed. Temperature 340 K gives an
+        // Arrhenius `T_factor = exp(5000 × (1/290 - 1/340)) ≈ 12.6`
+        // and humidity well above `5 × ref_humidity` saturates the
+        // precipitation multiplier at its `5.0` cap. Maximum
+        // per-cell sink rate is then `base × 12.6 × 5.0 ≈ 6.3e-4`
+        // per tick, well above the volcanism source so the sink
+        // wins (and the equilibrium settles low, not high).
         for t in state.temperature_mut() {
             *t = Real::from_int(340);
         }
@@ -366,13 +442,14 @@ mod tests {
         // volcanism (Item 12d) is concentrated at hotspots, but
         // for the equilibrium check a uniform source is the
         // strongest test of "does weathering keep up?" Source
-        // rate is `5e-5` per cell per tick — half the saturated
-        // sink rate of `1e-4`. Without weathering, 10_000 ticks
-        // would add `0.5` per cell on top of the `0.1` seed for
-        // a per-cell total of `0.6` (= 9.6 total, well above the
-        // `8.0` bound of `5× initial = 5 × 1.6`). With weathering
-        // engaged the sink overpowers the source until CO2 falls
-        // low enough that the rate-vs-stock floor kicks in.
+        // rate is `5e-5` per cell per tick — well below the
+        // saturated Arrhenius sink rate of ≈ 6.3e-4. Without
+        // weathering, 10_000 ticks would add `0.5` per cell on
+        // top of the `0.1` seed for a per-cell total of `0.6`
+        // (= 9.6 total, well above the `8.0` bound of
+        // `5× initial = 5 × 1.6`). With weathering engaged the
+        // sink overpowers the source until CO2 falls low enough
+        // that the rate-vs-stock floor kicks in.
         let volcanism_per_tick = Real::from_ratio(5, 100_000);
         for _ in 0..10_000 {
             // Add source first, then weather it down.
