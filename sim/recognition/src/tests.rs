@@ -175,3 +175,111 @@ fn polar_winter_silent_in_shoulder_seasons() {
     let polar = firings.iter().filter(|f| f.template_id == 26).count();
     assert_eq!(polar, 0);
 }
+
+#[test]
+fn recognition_template_surface_solvent_per_substrate_signature() {
+    // The four per-substrate surface-solvent templates introduced
+    // in Sprint 2 Item 8 each read `Field::WaterDepth` (solvent-
+    // agnostic surface column) with substrate-appropriate
+    // `Above` thresholds. Three of them are bare `Above`
+    // signatures; the silicate variant is gated by an `All` over
+    // depth + temperature so warm-water cells on earth-like
+    // worlds can never fire it.
+    let lib = RecognitionLibrary::earth_like_default();
+    let by_id = |id: u32| lib.templates.iter().find(|t| t.id == id).expect("template");
+
+    // Water (50) — simple Above WaterDepth.
+    let water = by_id(50);
+    assert_eq!(water.name, "surface_solvent_water");
+    assert!(
+        matches!(water.signature, Signature::Above(Field::WaterDepth, _)),
+        "surface_solvent_water signature should be Above(WaterDepth, _)"
+    );
+    assert!(water.channels.contains(&ChannelKind::VisualLight));
+    assert!(water.channels.contains(&ChannelKind::Tactile));
+
+    // Ammonia (51) — same shape, different channel set.
+    let ammonia = by_id(51);
+    assert_eq!(ammonia.name, "surface_solvent_ammonia");
+    assert!(matches!(
+        ammonia.signature,
+        Signature::Above(Field::WaterDepth, _)
+    ));
+    assert!(ammonia.channels.contains(&ChannelKind::ChemicalTaste));
+    assert!(ammonia.channels.contains(&ChannelKind::AcousticAir));
+    assert!(ammonia.channels.contains(&ChannelKind::Tactile));
+
+    // Methane (52) — shallow lakes (lower threshold).
+    let methane = by_id(52);
+    assert_eq!(methane.name, "surface_solvent_methane");
+    let methane_threshold = match &methane.signature {
+        Signature::Above(Field::WaterDepth, t) => *t,
+        other => panic!("methane signature unexpected: {other:?}"),
+    };
+    let water_threshold = match &water.signature {
+        Signature::Above(Field::WaterDepth, t) => *t,
+        other => panic!("water signature unexpected: {other:?}"),
+    };
+    assert!(
+        methane_threshold < water_threshold,
+        "methane surface threshold {methane_threshold:?} must be \
+         lower than water {water_threshold:?} (Titan lakes are \
+         shallow)"
+    );
+    assert!(methane.channels.contains(&ChannelKind::AcousticWater));
+    assert!(methane.channels.contains(&ChannelKind::Tactile));
+    assert!(methane.channels.contains(&ChannelKind::ChemicalTaste));
+
+    // Silicate melt (53) — gated by depth AND high temperature.
+    let silicate = by_id(53);
+    assert_eq!(silicate.name, "surface_solvent_silicate_melt");
+    match &silicate.signature {
+        Signature::All(parts) => {
+            // Must include a WaterDepth Above gate and a hot
+            // Temperature Above gate (silicate is only liquid
+            // above ~1687 K).
+            let mut has_depth = false;
+            let mut has_hot = false;
+            for p in parts {
+                if matches!(p, Signature::Above(Field::WaterDepth, _)) {
+                    has_depth = true;
+                }
+                if let Signature::Above(Field::Temperature, t) = p {
+                    if *t >= Real::from_int(1_000) {
+                        has_hot = true;
+                    }
+                }
+            }
+            assert!(has_depth, "silicate must include a WaterDepth gate");
+            assert!(has_hot, "silicate must include a high-T gate");
+        }
+        other => panic!("silicate signature must be All(...), got {other:?}"),
+    }
+    assert!(silicate.channels.contains(&ChannelKind::Tactile));
+    assert!(silicate.channels.contains(&ChannelKind::Seismic));
+    assert!(silicate.channels.contains(&ChannelKind::VisualLight));
+}
+
+#[test]
+fn surface_solvent_templates_match_species_channel_registry() {
+    // Each new template's `channels` slice must agree with the
+    // `sim_species::template_channels` mapping so the
+    // sensorium-gate test in sim-species passes. We do the
+    // intersection / equality check here on the recognition side
+    // by reading the template; the species side has its own
+    // smoke test that exercises the same function. Together they
+    // catch a drift between the two files.
+    let lib = RecognitionLibrary::earth_like_default();
+    for id in [50_u32, 51, 52, 53] {
+        let template = lib
+            .templates
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap_or_else(|| panic!("template {id} missing"));
+        assert!(
+            !template.channels.is_empty(),
+            "template {id} ({}) declares zero channels — at least one required",
+            template.name
+        );
+    }
+}

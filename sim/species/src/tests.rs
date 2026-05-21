@@ -287,6 +287,36 @@ fn tolerance_envelope_is_deterministic_across_fixtures() {
 }
 
 #[test]
+fn surface_solvent_template_channels_match_substrate() {
+    // Each of the four per-substrate surface-solvent templates
+    // (Sprint 2 Item 8) maps to a substrate-appropriate channel
+    // set. Water → visual + tactile; ammonia adds chemical-taste
+    // + acoustic-air; methane is acoustic-water-led; silicate
+    // melt is tactile + seismic + visual-light.
+    let water = template_channels(50);
+    assert!(water.contains(&ModalityKind::VisualLight));
+    assert!(water.contains(&ModalityKind::Tactile));
+
+    let ammonia = template_channels(51);
+    assert!(ammonia.contains(&ModalityKind::ChemicalTaste));
+    assert!(ammonia.contains(&ModalityKind::Tactile));
+    assert!(ammonia.contains(&ModalityKind::AcousticAir));
+
+    let methane = template_channels(52);
+    assert!(methane.contains(&ModalityKind::AcousticWater));
+    assert!(methane.contains(&ModalityKind::Tactile));
+    assert!(methane.contains(&ModalityKind::ChemicalTaste));
+
+    let silicate = template_channels(53);
+    assert!(silicate.contains(&ModalityKind::Tactile));
+    assert!(silicate.contains(&ModalityKind::Seismic));
+    assert!(silicate.contains(&ModalityKind::VisualLight));
+
+    // Non-existent template id stays empty.
+    assert!(template_channels(9999).is_empty());
+}
+
+#[test]
 fn cognition_axes_diverge_from_scalar() {
     // Earlier `derive` populated `cognition_axes` via
     // `CognitionAxes::uniform(cognition)`, so every axis aliased

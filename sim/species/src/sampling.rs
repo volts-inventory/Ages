@@ -256,6 +256,39 @@ pub fn template_channels(template_id: u32) -> &'static [ModalityKind] {
             ModalityKind::MagneticSense,
             ModalityKind::RadioNative,
         ],
+        // ============================================
+        // Per-substrate surface-solvent templates (Sprint 2 Item 8).
+        // surface_solvent_water (50): Earth-equivalent surface
+        // water — same channel set as the legacy `surface_water`
+        // (id 5): visual body, tactile contact.
+        50 => &[ModalityKind::VisualLight, ModalityKind::Tactile],
+        // surface_solvent_ammonia (51): liquid-ammonia ponds.
+        // Ammonia is pungent (ChemicalTaste), the cold liquid is
+        // felt (Tactile), and the surface acts as an acoustic
+        // medium for the cold reducing atmosphere (AcousticAir).
+        51 => &[
+            ModalityKind::ChemicalTaste,
+            ModalityKind::Tactile,
+            ModalityKind::AcousticAir,
+        ],
+        // surface_solvent_methane (52): Titan-style cryogenic
+        // methane lakes. Underwater acoustics carry through the
+        // liquid; tactile contact with cryogenic liquid is
+        // unmistakable; chemical-taste identifies the hydrocarbon.
+        52 => &[
+            ModalityKind::AcousticWater,
+            ModalityKind::Tactile,
+            ModalityKind::ChemicalTaste,
+        ],
+        // surface_solvent_silicate_melt (53): magma lakes. Heat
+        // and viscous flow are felt (Tactile); convective stirring
+        // is ground-coupled (Seismic); the melt glows in
+        // optical bands (VisualLight).
+        53 => &[
+            ModalityKind::Tactile,
+            ModalityKind::Seismic,
+            ModalityKind::VisualLight,
+        ],
         _ => &[],
     }
 }
