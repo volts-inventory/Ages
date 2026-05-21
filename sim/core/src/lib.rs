@@ -492,7 +492,15 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             let cap = civ.carrying_capacity_with_terrain(&state, &planet);
             let utilisation = if cap.raw().to_num::<i64>() > 0 {
                 let pop_r = pop.to_real_nonneg();
-                let cap_r = sim_arith::Real::from_int(cap.raw().to_num::<i64>().max(1));
+                // P0.6: route through `Pop::to_real_nonneg` (which
+                // saturates at the Q32.32 ceiling) rather than
+                // `Real::from_int(i64)` directly. `Pop` is Q96.32 so
+                // its integer part can exceed `i32::MAX` (2.1e9); a
+                // hyper-r-strategist seed whose terrain-aware
+                // capacity overshoots that bound would otherwise
+                // panic `Real::from_int`. Floor at 1 so the divide
+                // stays safe.
+                let cap_r = cap.to_real_nonneg().max(Real::ONE);
                 (pop_r / cap_r).clamp01()
             } else {
                 sim_arith::Real::ZERO

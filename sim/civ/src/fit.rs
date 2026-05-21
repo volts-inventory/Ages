@@ -158,6 +158,17 @@ where
     }
 
     // Normal equations: A = Σ ϕ(x) ϕ(x)ᵀ, c = Σ ϕ(x) · y.
+    //
+    // P0.6: saturating arithmetic on every product and running
+    // sum. For polynomial bases (`Polynomial3` has `[x³, x², x, 1]`)
+    // the cross-term `x³ × x³ = x⁶` already overflows Q32.32 at
+    // x ≈ 100. With wider sample distributions post-Items-12-24 the
+    // hypothesizer can sample physics deltas spanning four orders
+    // of magnitude in one observation window. Saturating clamps
+    // produce a degenerate (near-singular) normal-equations matrix
+    // that `solve_linear_system` rejects as `None`; the caller
+    // then treats the fit as failed and moves on to the next form.
+    // The pre-fix behaviour was a hard panic that aborted the run.
     let mut a = vec![vec![Real::ZERO; param_count]; param_count];
     let mut c = vec![Real::ZERO; param_count];
     for s in samples {
@@ -165,9 +176,11 @@ where
         debug_assert_eq!(phi.len(), param_count);
         for i in 0..param_count {
             for j in 0..param_count {
-                a[i][j] = a[i][j] + phi[i] * phi[j];
+                let prod = phi[i].saturating_mul(phi[j]);
+                a[i][j] = a[i][j].saturating_add(prod);
             }
-            c[i] = c[i] + phi[i] * s.y;
+            let prod = phi[i].saturating_mul(s.y);
+            c[i] = c[i].saturating_add(prod);
         }
     }
     solve_linear_system(a, c)
@@ -246,9 +259,22 @@ fn solve_linear_system(mut a: Vec<Vec<Real>>, mut c: Vec<Real>) -> Option<Vec<Re
                 continue;
             }
             for j in 0..n {
-                a[k][j] = a[k][j] - factor * a[i][j];
+                // P0.6: saturating arithmetic on the elimination
+                // step. The pivot-magnitude conditioning check above
+                // (`pivot_mag < max_abs * cond_threshold`) usually
+                // rejects matrices where this product would
+                // overflow, but with the saturating sums in
+                // `fit_linear_in_basis` above feeding this routine,
+                // a row whose entries already saturated at `Real::MAX`
+                // can produce a `factor * a[i][j]` term that would
+                // panic the subtract. Saturating the chain keeps the
+                // solver returning a clamped solution rather than
+                // aborting the whole run loop.
+                let prod = factor.saturating_mul(a[i][j]);
+                a[k][j] = a[k][j].saturating_sub(prod);
             }
-            c[k] = c[k] - factor * c[i];
+            let prod = factor.saturating_mul(c[i]);
+            c[k] = c[k].saturating_sub(prod);
         }
     }
     Some(c)
@@ -307,6 +333,17 @@ fn fit_exp(samples: &[Sample], growth: bool) -> Option<Vec<Real>> {
     let lin = fit_linear_in_basis(&mapped, 2, |x| vec![x, Real::ONE])?;
     let slope = lin[0];
     let intercept = lin[1];
+    // P0.6: `exp` panics when its argument exceeds ln(Real::MAX) ≈ 21.5.
+    // A wild least-squares regression on widely-spread y values can yield
+    // an intercept hundreds of orders of magnitude away from origin
+    // (e.g. heated cells whose `ln(y)` walks a steep ramp far from x=0).
+    // Reject the fit cleanly rather than panic the run loop — the caller
+    // already treats `None` as "no fit found" and falls back to other
+    // forms. The guard matches the `k <= 30` ceiling in
+    // `sim_arith::transcendental::exp`.
+    if intercept.abs() >= Real::from_int(20) {
+        return None;
+    }
     let a = exp(intercept);
     let b = if growth { slope } else { -slope };
     Some(vec![a, b])
@@ -329,6 +366,11 @@ fn fit_power_law(samples: &[Sample]) -> Option<Vec<Real>> {
         .collect();
     let lin = fit_linear_in_basis(&mapped, 2, |x| vec![x, Real::ONE])?;
     let b = lin[0];
+    // P0.6: same guard as `fit_exp`. `exp(intercept)` panics when
+    // the linear-regression intercept walks past ln(Real::MAX).
+    if lin[1].abs() >= Real::from_int(20) {
+        return None;
+    }
     let a = exp(lin[1]);
     Some(vec![a, b])
 }

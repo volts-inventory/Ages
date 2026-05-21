@@ -538,10 +538,22 @@ impl Law for Radiation {
                 CloudType::Stratus => stratus_gh,
             };
             let cloud_gh = cloud_gh_peak * cloud_fraction[i].clamp01();
-            let greenhouse_raw =
-                vapour[i] * h2o_k + co2[i] * co2_k + ch4[i] * ch4_k + cloud_gh;
+            // P0.6: saturating arithmetic so a hot seed whose
+            // `vapour[i]` is at the Clausius-Clapeyron-driven cap
+            // (`saturation_vapour_cap` peaks near ~4e7 at silicate-
+            // world temperatures) doesn't panic on the
+            // `vapour[i] * h2o_k` multiply or the four-way sum. The
+            // subsequent `min(greenhouse_cap)` clamps the meaningful
+            // contribution at 250 K regardless.
+            let v_term = vapour[i].saturating_mul(h2o_k);
+            let c_term = co2[i].saturating_mul(co2_k);
+            let m_term = ch4[i].saturating_mul(ch4_k);
+            let greenhouse_raw = v_term
+                .saturating_add(c_term)
+                .saturating_add(m_term)
+                .saturating_add(cloud_gh);
             let greenhouse_cell = greenhouse_raw.min(greenhouse_cap);
-            let t_eq = t_eq_base * day_factor + greenhouse_cell;
+            let t_eq = t_eq_base.saturating_mul(day_factor).saturating_add(greenhouse_cell);
             let gap = t_eq - temps_prev[i];
             temps_next[i] = temps_prev[i] + gap * dt_relax;
         }

@@ -74,10 +74,16 @@ use sim_arith::Real;
 /// `debug_assert!`-gated closures the optimiser strips).
 #[cfg(debug_assertions)]
 fn total_substance_mass(state: &PhysicsState) -> Real {
+    // P0.6: saturating_add so a Venus-runaway seed whose per-cell
+    // vapour density spikes near the saturation cap (~5e7 at hot
+    // silicate temperatures) doesn't panic the debug-mode
+    // conservation assert. Saturating at `Real::MAX` (~2.1e9) keeps
+    // the absolute-delta-against-pre invariant intact: as long as
+    // `pre` saturates the same way the delta stays bit-exact zero.
     let mut total = Real::ZERO;
     for s in 0..N_SUBSTANCES {
         for v in state.substance(s) {
-            total = total + *v;
+            total = total.saturating_add(*v);
         }
     }
     total
@@ -88,11 +94,17 @@ fn total_substance_mass(state: &PhysicsState) -> Real {
 /// catches future regressions in that loop.
 #[cfg(debug_assertions)]
 fn total_water_depth(state: &PhysicsState) -> Real {
+    // P0.6: saturating fold for parity with `total_substance_mass`
+    // above. Deep-ocean seeds with `water_depth ~ 15_000` per cell
+    // can hit ~1.5e6 over a small grid — comfortably under the
+    // Q32.32 ceiling — but extreme worldgen samples (broader future
+    // sea-level distributions) shouldn't be one bug away from
+    // panicking the tides conservation assert.
     state
         .water_depth()
         .iter()
         .copied()
-        .fold(Real::ZERO, |a, b| a + b)
+        .fold(Real::ZERO, Real::saturating_add)
 }
 
 /// `Σ water_depth + Σ Substance::Vapour`. Hydrology's three-step
@@ -105,13 +117,17 @@ fn total_water_depth(state: &PhysicsState) -> Real {
 /// three steps trips this assert.
 #[cfg(debug_assertions)]
 fn total_water_plus_vapour(state: &PhysicsState) -> Real {
+    // P0.6: saturating arithmetic — see `total_water_depth`. The
+    // vapour column at silicate-world temperatures can hit
+    // `saturation_vapour_cap` of ~4e7 per cell; sum across a 96-cell
+    // grid is ~4e9, brushing Q32.32's 2.1e9 ceiling.
     let water = total_water_depth(state);
     let vapour = state
         .substance(Substance::Vapour.idx())
         .iter()
         .copied()
-        .fold(Real::ZERO, |a, b| a + b);
-    water + vapour
+        .fold(Real::ZERO, Real::saturating_add);
+    water.saturating_add(vapour)
 }
 
 /// Conservation drift tolerance for the debug-mode asserts.
@@ -271,7 +287,12 @@ impl OrchestratorState {
     /// kernel.
     #[must_use]
     pub fn cumulative_conservation_drift(&self) -> Real {
-        self.tides_water_drift + self.hydrology_drift + self.chemistry_substance_drift
+        // P0.6: saturating_add so even a (debug-only) regression
+        // that pushes one accumulator past Real::MAX doesn't add a
+        // second panic on top of the original conservation assert.
+        self.tides_water_drift
+            .saturating_add(self.hydrology_drift)
+            .saturating_add(self.chemistry_substance_drift)
     }
 
     /// Cumulative `Σ water_depth` drift attributed to `Tides`.
@@ -469,7 +490,7 @@ pub fn integrate_civ_step(
                 // delta is exactly zero, so the accumulator never
                 // moves; the assert only trips on a structural
                 // regression that biases drift in one direction.
-                orch_state.tides_water_drift = orch_state.tides_water_drift + delta;
+                orch_state.tides_water_drift = orch_state.tides_water_drift.saturating_add(delta);
                 debug_assert!(
                     orch_state.tides_water_drift.abs() < cumulative_drift_bound(),
                     "cumulative tides water drift exceeded bound: {:?}",
@@ -572,7 +593,7 @@ pub fn integrate_civ_step(
                 // leak (always-positive or always-negative deltas)
                 // trips even when individual deltas stay under the
                 // scaled per-tick budget.
-                orch_state.hydrology_drift = orch_state.hydrology_drift + delta;
+                orch_state.hydrology_drift = orch_state.hydrology_drift.saturating_add(delta);
                 debug_assert!(
                     orch_state.hydrology_drift.abs() < cumulative_hydrology_drift_bound(),
                     "cumulative hydrology drift exceeded bound: {:?}",
@@ -596,7 +617,7 @@ pub fn integrate_civ_step(
             #[cfg(debug_assertions)]
             {
                 orch_state.weathering_co2_removed =
-                    orch_state.weathering_co2_removed + removed;
+                    orch_state.weathering_co2_removed.saturating_add(removed);
             }
             #[cfg(not(debug_assertions))]
             let _ = removed;
@@ -619,8 +640,10 @@ pub fn integrate_civ_step(
             let emission = v.integrate(state, cfg.heat_dt);
             #[cfg(debug_assertions)]
             {
-                orch_state.volcanism_co2_added = orch_state.volcanism_co2_added + emission.co2_added;
-                orch_state.volcanism_h2o_added = orch_state.volcanism_h2o_added + emission.h2o_added;
+                orch_state.volcanism_co2_added =
+                    orch_state.volcanism_co2_added.saturating_add(emission.co2_added);
+                orch_state.volcanism_h2o_added =
+                    orch_state.volcanism_h2o_added.saturating_add(emission.h2o_added);
             }
             #[cfg(not(debug_assertions))]
             let _ = emission;
@@ -703,7 +726,7 @@ pub fn integrate_civ_step(
                 // trips this cumulative assert long before the
                 // single-tick bound.
                 orch_state.chemistry_substance_drift =
-                    orch_state.chemistry_substance_drift + delta;
+                    orch_state.chemistry_substance_drift.saturating_add(delta);
                 debug_assert!(
                     orch_state.chemistry_substance_drift.abs() < cumulative_drift_bound(),
                     "cumulative chemistry substance drift exceeded bound: {:?}",
