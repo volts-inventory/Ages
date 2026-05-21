@@ -12,9 +12,10 @@
 use protocol::SpeciationTriggerKind;
 use sim_arith::Real;
 use sim_ecosystem::{
-    derive_daughter_species, divergence_pull, next_species_id, polyploid_check, step_speciation,
-    EcoSpecies, PlanetEcosystem, SpeciationTracker, SpeciationTrigger,
-    ALLOPATRIC_ISOLATION_TICKS, FOUNDER_BIOMASS_FRAC, POLYPLOID_PER_TICK_PROB_RECIP,
+    clamp_cosmic_ray_multiplier, derive_daughter_species, divergence_pull, next_species_id,
+    polyploid_check, step_speciation, EcoSpecies, PlanetEcosystem, SpeciationTracker,
+    SpeciationTrigger, ALLOPATRIC_ISOLATION_TICKS, COSMIC_RAY_MULTIPLIER_CEILING,
+    COSMIC_RAY_MULTIPLIER_FLOOR, FOUNDER_BIOMASS_FRAC, POLYPLOID_PER_TICK_PROB_RECIP,
     POST_EXTINCTION_BOOST_TICKS, POST_EXTINCTION_RADIATION_MULTIPLIER,
     SYMPATRIC_COMPETITION_BIOMASS_FRAC, SYMPATRIC_PRESSURE_TICKS,
 };
@@ -80,7 +81,13 @@ fn allopatric_isolation_triggers_speciation() {
     }
     // After the streak hits the threshold, the next step_speciation
     // should fire one Allopatric event.
-    let events = step_speciation(ALLOPATRIC_ISOLATION_TICKS, &eco, &registry, &mut tracker);
+    let events = step_speciation(
+        ALLOPATRIC_ISOLATION_TICKS,
+        &eco,
+        &registry,
+        &mut tracker,
+        Real::ONE,
+    );
 
     assert!(
         events.iter().any(|(_, e)| matches!(
@@ -110,7 +117,13 @@ fn allopatric_isolation_triggers_speciation() {
     for _ in 0..(ALLOPATRIC_ISOLATION_TICKS - 1) {
         tracker2.observe_allopatric_split(&[parent_id], &[parent_id]);
     }
-    let events2 = step_speciation(ALLOPATRIC_ISOLATION_TICKS - 1, &eco, &registry, &mut tracker2);
+    let events2 = step_speciation(
+        ALLOPATRIC_ISOLATION_TICKS - 1,
+        &eco,
+        &registry,
+        &mut tracker2,
+        Real::ONE,
+    );
     assert!(
         !events2.iter().any(|(_, e)| matches!(
             e.trigger,
@@ -166,7 +179,13 @@ fn niche_pressure_drives_sympatric_speciation() {
     for _ in 0..SYMPATRIC_PRESSURE_TICKS {
         tracker.observe_sympatric_pressure(&eco, &matrix, cap);
     }
-    let events = step_speciation(SYMPATRIC_PRESSURE_TICKS, &eco, &registry, &mut tracker);
+    let events = step_speciation(
+        SYMPATRIC_PRESSURE_TICKS,
+        &eco,
+        &registry,
+        &mut tracker,
+        Real::ONE,
+    );
     let sympatric_events: Vec<_> = events
         .iter()
         .filter(|(_, e)| matches!(e.trigger, SpeciationTriggerKind::Sympatric))
@@ -189,7 +208,13 @@ fn niche_pressure_drives_sympatric_speciation() {
     for _ in 0..SYMPATRIC_PRESSURE_TICKS {
         tracker2.observe_sympatric_pressure(&eco2, &matrix, cap);
     }
-    let events2 = step_speciation(SYMPATRIC_PRESSURE_TICKS, &eco2, &registry, &mut tracker2);
+    let events2 = step_speciation(
+        SYMPATRIC_PRESSURE_TICKS,
+        &eco2,
+        &registry,
+        &mut tracker2,
+        Real::ONE,
+    );
     assert!(
         !events2
             .iter()
@@ -227,7 +252,7 @@ fn polyploidy_speciation_only_for_plant_lifecycle() {
         eco_species(probe_id, EcosystemRole::PrimaryConsumer, Real::from_int(100)),
     );
     let mut tracker = SpeciationTracker::new();
-    let events_vert = step_speciation(tick, &eco, &registry_vert, &mut tracker);
+    let events_vert = step_speciation(tick, &eco, &registry_vert, &mut tracker, Real::ONE);
     assert!(
         !events_vert
             .iter()
@@ -241,7 +266,7 @@ fn polyploidy_speciation_only_for_plant_lifecycle() {
     assert_eq!(plant.lifecycle, Lifecycle::Plant);
     registry_plant.insert(probe_id, plant.clone());
     let mut tracker2 = SpeciationTracker::new();
-    let events_plant = step_speciation(tick, &eco, &registry_plant, &mut tracker2);
+    let events_plant = step_speciation(tick, &eco, &registry_plant, &mut tracker2, Real::ONE);
     let polyploid_events: Vec<_> = events_plant
         .iter()
         .filter(|(_, e)| matches!(e.trigger, SpeciationTriggerKind::Polyploid))
@@ -278,7 +303,7 @@ fn founder_effect_rapid_drift_in_bottleneck() {
     let mut tracker = SpeciationTracker::new();
     tracker.register_founder_seeding(parent_id, seed_biomass);
 
-    let events = step_speciation(1, &eco, &registry, &mut tracker);
+    let events = step_speciation(1, &eco, &registry, &mut tracker, Real::ONE);
     let founder_events: Vec<_> = events
         .iter()
         .filter(|(_, e)| matches!(e.trigger, SpeciationTriggerKind::FounderEffect))
@@ -301,7 +326,7 @@ fn founder_effect_rapid_drift_in_bottleneck() {
     let high_seed_biomass = parent_biomass * Real::from(FOUNDER_BIOMASS_FRAC) * Real::from_int(10); // 10× threshold
     let mut tracker2 = SpeciationTracker::new();
     tracker2.register_founder_seeding(parent_id, high_seed_biomass);
-    let events2 = step_speciation(2, &eco, &registry, &mut tracker2);
+    let events2 = step_speciation(2, &eco, &registry, &mut tracker2, Real::ONE);
     assert!(
         !events2
             .iter()
@@ -350,7 +375,7 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
     let mut baseline = SpeciationTracker::new();
     let mut baseline_count: u64 = 0;
     for t in 0..w {
-        let evts = step_speciation(t, &eco, &registry, &mut baseline);
+        let evts = step_speciation(t, &eco, &registry, &mut baseline, Real::ONE);
         baseline_count += evts.len() as u64;
     }
 
@@ -360,7 +385,7 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
     let mut boosted_count: u64 = 0;
     let mut radiation_count: u64 = 0;
     for t in 0..w {
-        let evts = step_speciation(t, &eco, &registry, &mut boosted);
+        let evts = step_speciation(t, &eco, &registry, &mut boosted, Real::ONE);
         boosted_count += evts.len() as u64;
         radiation_count += evts
             .iter()
@@ -386,7 +411,7 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
     for t in 0..w {
         let mut tracker_check = SpeciationTracker::new();
         tracker_check.register_extinction_event(0);
-        let evts = step_speciation(t, &eco, &registry, &mut tracker_check);
+        let evts = step_speciation(t, &eco, &registry, &mut tracker_check, Real::ONE);
         for (_, e) in &evts {
             if let SpeciationTriggerKind::PostExtinctionRadiation { generation } = e.trigger {
                 assert!(
@@ -401,7 +426,13 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
     let mut tracker_after = SpeciationTracker::new();
     tracker_after.register_extinction_event(0);
     // Walk forward past the window.
-    let evts_post = step_speciation(POST_EXTINCTION_BOOST_TICKS + 10, &eco, &registry, &mut tracker_after);
+    let evts_post = step_speciation(
+        POST_EXTINCTION_BOOST_TICKS + 10,
+        &eco,
+        &registry,
+        &mut tracker_after,
+        Real::ONE,
+    );
     assert!(
         !evts_post.iter().any(|(_, e)| matches!(
             e.trigger,
@@ -586,4 +617,197 @@ fn planet_ecosystem_keeps_compiling_after_speciation_module_added() {
         Real::from_int(100),
     )];
     let _eco = PlanetEcosystem::new(species, InteractionMatrix::new(), capacity());
+}
+
+/// P1.2 — magnetic-reversal window elevates the per-tick speciation
+/// rate. Set up a sympatric-pressure pair, run for N ticks first at
+/// the quiescent-field baseline (`cosmic_ray_multiplier = 1.0`), then
+/// reset and run the same N ticks at a deep-reversal multiplier
+/// (`5.0`), and confirm the reversal run produces strictly more
+/// speciation events.
+///
+/// Mechanic: the cosmic-ray multiplier clamps into `[1, 10]` and
+/// scales the daughter-count per firing. At `m=1` each sympatric
+/// pressure firing spawns one daughter; at `m=5` each firing spawns
+/// five. The pair fires once per `SYMPATRIC_PRESSURE_TICKS` ticks
+/// (streak resets after a fire), so a run of `2 ×
+/// SYMPATRIC_PRESSURE_TICKS` ticks fires twice on each branch — 2
+/// events at baseline, 10 events at reversal.
+#[test]
+fn reversal_window_elevates_speciation_rate() {
+    let a_id = SpeciesId(0);
+    let b_id = SpeciesId(1);
+    let parent_a = base_species(50);
+    let parent_b = base_species(51);
+    let mut registry: BTreeMap<SpeciesId, Species> = BTreeMap::new();
+    registry.insert(a_id, parent_a);
+    registry.insert(b_id, parent_b);
+
+    let cap = capacity();
+    let threshold = Real::from(SYMPATRIC_COMPETITION_BIOMASS_FRAC) * cap;
+    let biomass = threshold + Real::from_int(50);
+    let mut eco: BTreeMap<SpeciesId, EcoSpecies> = BTreeMap::new();
+    eco.insert(
+        a_id,
+        eco_species(a_id, EcosystemRole::PrimaryConsumer, biomass),
+    );
+    eco.insert(
+        b_id,
+        eco_species(b_id, EcosystemRole::PrimaryConsumer, biomass),
+    );
+
+    // Symmetric competition pair — the canonical sympatric trigger.
+    let mut matrix = InteractionMatrix::new();
+    matrix.insert(
+        a_id,
+        b_id,
+        Interaction {
+            kind: InteractionKind::Competition,
+            strength: Real::from((1, 100)),
+            functional_response: FunctionalResponse::Linear,
+        },
+    );
+    matrix.insert(
+        b_id,
+        a_id,
+        Interaction {
+            kind: InteractionKind::Competition,
+            strength: Real::from((1, 100)),
+            functional_response: FunctionalResponse::Linear,
+        },
+    );
+
+    // Run for 2× SYMPATRIC_PRESSURE_TICKS so each branch sees two
+    // streak completions (post-fire reset → new accumulation →
+    // second fire).
+    let n_ticks = SYMPATRIC_PRESSURE_TICKS * 2;
+    let count_events = |multiplier: Real| -> usize {
+        let mut tracker = SpeciationTracker::new();
+        let mut count = 0usize;
+        for t in 0..n_ticks {
+            tracker.observe_sympatric_pressure(&eco, &matrix, cap);
+            let events = step_speciation(t, &eco, &registry, &mut tracker, multiplier);
+            count += events
+                .iter()
+                .filter(|(_, e)| {
+                    matches!(e.trigger, protocol::SpeciationTriggerKind::Sympatric)
+                })
+                .count();
+        }
+        count
+    };
+
+    let baseline_count = count_events(Real::ONE);
+    let reversal_count = count_events(Real::from_int(5));
+
+    assert!(
+        baseline_count > 0,
+        "baseline (multiplier=1.0) produced no Sympatric events in {n_ticks} ticks — \
+         test fixture is degenerate"
+    );
+    assert!(
+        reversal_count > baseline_count,
+        "reversal window (multiplier=5.0) produced {reversal_count} events; \
+         baseline produced {baseline_count}. Expected strictly more under elevated \
+         cosmic-ray flux."
+    );
+    // Structural: with a clean 5× per-fire multiplier the reversal
+    // run should produce ~5× the baseline count. Use a loose floor
+    // of 4× to absorb edge-of-window timing.
+    assert!(
+        reversal_count >= baseline_count * 4,
+        "reversal_count ({reversal_count}) is not ~5× baseline ({baseline_count}); \
+         expected ≥ 4× the baseline."
+    );
+}
+
+/// P1.2 — the multiplier clamps at 10 (`COSMIC_RAY_MULTIPLIER_CEILING`).
+/// Passing a pathologically high value (50.0, as could arise mid-
+/// reversal if dipole_strength approaches zero) must behave exactly
+/// the same as passing the ceiling (10.0). Regression guard on the
+/// clamp so a future refactor doesn't accidentally route the raw
+/// flux straight into the daughter-count multiplier.
+#[test]
+fn cosmic_ray_multiplier_clamps_at_ten() {
+    // First a direct unit check on `clamp_cosmic_ray_multiplier`.
+    assert_eq!(
+        clamp_cosmic_ray_multiplier(Real::from_int(50)),
+        COSMIC_RAY_MULTIPLIER_CEILING as u64,
+        "50.0 should clamp down to {}",
+        COSMIC_RAY_MULTIPLIER_CEILING
+    );
+    assert_eq!(
+        clamp_cosmic_ray_multiplier(Real::from_int(COSMIC_RAY_MULTIPLIER_CEILING)),
+        COSMIC_RAY_MULTIPLIER_CEILING as u64,
+        "exactly {} should map to {}",
+        COSMIC_RAY_MULTIPLIER_CEILING,
+        COSMIC_RAY_MULTIPLIER_CEILING
+    );
+    // Floor check: a sub-1.0 flux (e.g. healthy dipole ≈ 0.91)
+    // should floor to 1, not zero out speciation.
+    assert_eq!(
+        clamp_cosmic_ray_multiplier(Real::from_ratio(91, 100)),
+        COSMIC_RAY_MULTIPLIER_FLOOR as u64,
+        "0.91 should floor to {}",
+        COSMIC_RAY_MULTIPLIER_FLOOR
+    );
+
+    // End-to-end equivalence: step_speciation with multiplier=50
+    // must emit the same number of events as multiplier=10. We use
+    // an allopatric streak (deterministic firing) so the test
+    // doesn't depend on the polyploid hash space.
+    let parent = base_species(60);
+    let parent_id = SpeciesId(0);
+    let mut registry: BTreeMap<SpeciesId, Species> = BTreeMap::new();
+    registry.insert(parent_id, parent);
+
+    let mut eco: BTreeMap<SpeciesId, EcoSpecies> = BTreeMap::new();
+    eco.insert(
+        parent_id,
+        eco_species(
+            parent_id,
+            EcosystemRole::PrimaryConsumer,
+            Real::from_int(100),
+        ),
+    );
+
+    let fire_with = |multiplier: Real| -> usize {
+        let mut tracker = SpeciationTracker::new();
+        for _ in 0..ALLOPATRIC_ISOLATION_TICKS {
+            tracker.observe_allopatric_split(&[parent_id], &[parent_id]);
+        }
+        let events = step_speciation(
+            ALLOPATRIC_ISOLATION_TICKS,
+            &eco,
+            &registry,
+            &mut tracker,
+            multiplier,
+        );
+        events
+            .iter()
+            .filter(|(_, e)| {
+                matches!(
+                    e.trigger,
+                    protocol::SpeciationTriggerKind::Allopatric { .. }
+                )
+            })
+            .count()
+    };
+
+    let at_ten = fire_with(Real::from_int(10));
+    let at_fifty = fire_with(Real::from_int(50));
+    assert_eq!(
+        at_ten, at_fifty,
+        "passing 50.0 ({at_fifty} events) must behave identically to 10.0 \
+         ({at_ten} events) — the clamp at COSMIC_RAY_MULTIPLIER_CEILING is \
+         the regression guard"
+    );
+    // And both must equal `COSMIC_RAY_MULTIPLIER_CEILING` since the
+    // streak fires exactly once (a single allopatric trigger).
+    assert_eq!(
+        at_ten, COSMIC_RAY_MULTIPLIER_CEILING as usize,
+        "one allopatric streak hit at multiplier=10 should spawn {} daughters \
+         (got {})",
+        COSMIC_RAY_MULTIPLIER_CEILING, at_ten
+    );
 }

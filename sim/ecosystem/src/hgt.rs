@@ -62,6 +62,7 @@
 //!   would correspond to a much rarer plasmid event; outside scope
 //!   for the per-tick low-rate trial.
 
+use crate::speciation::clamp_cosmic_ray_multiplier;
 use protocol::{HgtEvent, TraitName};
 use sim_arith::Real;
 use sim_species::{Lifecycle, Species, SpeciesId};
@@ -95,10 +96,24 @@ pub const HGT_INTERPOLATION: (i64, i64) = (5, 100);
 /// `lifecycle` check is the only place this path checks for
 /// Microbial. Mixed-lifecycle pairs (one Microbial, one Vertebrate)
 /// never participate.
+///
+/// `cosmic_ray_multiplier` carries the planet's
+/// `state.cosmic_ray_ground_flux()` for this tick. The raw value is
+/// clamped to `[1, 10]` (via
+/// [`speciation::clamp_cosmic_ray_multiplier`](crate::speciation::clamp_cosmic_ray_multiplier))
+/// and used to scale the per-trial probability — at full dipole
+/// strength the multiplier floors to `1` and HGT runs at the
+/// baseline `1e-4` per-pair-per-direction rate; during a deep
+/// magnetic reversal (`dipole_strength → 0`) the multiplier
+/// saturates at `10`, so prokaryote evolution accelerates by an
+/// order of magnitude. The scaled probability is capped at `1.0`
+/// inside `trial_succeeds` (mathematically `p_scaled` is always far
+/// below `1.0` for any realistic parameters — `10 × 1e-4 = 1e-3`).
 pub fn step_hgt(
     species: &mut BTreeMap<SpeciesId, Species>,
     tick: u64,
     rng_seed: u64,
+    cosmic_ray_multiplier: Real,
 ) -> Vec<HgtEvent> {
     // Collect Microbial species ids in sorted order — BTreeMap
     // iteration is deterministic.
@@ -129,7 +144,12 @@ pub fn step_hgt(
     // Time-overlap is always 1.0 within a single tick (both species
     // are extant for the full tick window or they aren't).
     let time_overlap = Real::ONE;
-    let p_per_pair = base_rate * cell_overlap * time_overlap;
+    // Cosmic-ray amplification (P1.2). Clamped to `[1, 10]` so a
+    // pathological dipole near zero (Item 20: flux → ∞) can't make
+    // the probability blow past the deterministic-draw resolution.
+    let cosmic_mult_int = clamp_cosmic_ray_multiplier(cosmic_ray_multiplier);
+    let cosmic_mult = Real::from_int(cosmic_mult_int as i64);
+    let p_per_pair = base_rate * cell_overlap * time_overlap * cosmic_mult;
     let interp = Real::from(HGT_INTERPOLATION);
     let one_minus_interp = Real::ONE - interp;
 
@@ -405,7 +425,7 @@ mod tests {
         let mut total_events = 0usize;
         let mut dormancy_events = 0usize;
         for tick in 0..200_000u64 {
-            let events = step_hgt(&mut species, tick, 0xC0FF_EE42);
+            let events = step_hgt(&mut species, tick, 0xC0FF_EE42, Real::ONE);
             for e in &events {
                 total_events += 1;
                 if matches!(e.trait_swapped, TraitName::DormancyCapability) {
@@ -469,7 +489,7 @@ mod tests {
 
         let mut events: Vec<HgtEvent> = Vec::new();
         for tick in 0..200_000u64 {
-            let e = step_hgt(&mut species, tick, 0xC0FF_EE42);
+            let e = step_hgt(&mut species, tick, 0xC0FF_EE42, Real::ONE);
             events.extend(e);
         }
         assert!(
@@ -498,7 +518,7 @@ mod tests {
 
         let mut events2: Vec<HgtEvent> = Vec::new();
         for tick in 0..200_000u64 {
-            let e = step_hgt(&mut species2, tick, 0xC0FF_EE42);
+            let e = step_hgt(&mut species2, tick, 0xC0FF_EE42, Real::ONE);
             events2.extend(e);
         }
         assert!(

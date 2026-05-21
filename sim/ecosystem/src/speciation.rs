@@ -104,6 +104,20 @@ pub const POST_EXTINCTION_BOOST_TICKS: u64 = 100;
 /// divergence.
 const DIVERGENCE_AXIS_RANGE: (i64, i64) = (5, 100);
 
+/// Lower bound applied to `cosmic_ray_multiplier` inside
+/// `step_speciation` / `step_hgt`. A multiplier ≤ 1.0 means "no
+/// reversal-window amplification" — fall back to the baseline rate
+/// (one daughter per fire) rather than zero out speciation.
+pub const COSMIC_RAY_MULTIPLIER_FLOOR: i64 = 1;
+
+/// Upper bound applied to `cosmic_ray_multiplier` inside
+/// `step_speciation` / `step_hgt`. Caps the worst-case reversal
+/// window so a pathological `dipole_strength` near zero (Item 20:
+/// `cosmic_ray_ground_flux = 1 / (dipole_strength + 0.1)`) doesn't
+/// drive instantaneous speciation cascades — at the deepest reversal
+/// the flux multiplier saturates at 10×.
+pub const COSMIC_RAY_MULTIPLIER_CEILING: i64 = 10;
+
 /// Trigger kind for a speciation event. Mirrors the wire-layer
 /// `protocol::SpeciationTriggerKind` but uses the in-crate naming so
 /// downstream consumers of `sim_ecosystem` don't need a protocol
@@ -461,6 +475,35 @@ pub fn derive_daughter_species(
     daughter
 }
 
+/// Clamp the raw cosmic-ray multiplier (typically
+/// `state.cosmic_ray_ground_flux()` ≈ `1 / (dipole_strength + 0.1)`)
+/// into a small positive integer in `[COSMIC_RAY_MULTIPLIER_FLOOR,
+/// COSMIC_RAY_MULTIPLIER_CEILING]`. The returned value is how many
+/// daughters get spawned per triggered speciation event this tick.
+///
+/// The clamp does two things at once:
+///   1. Floor at `1` — at full dipole strength the flux multiplier
+///      sits at ≈ 0.91; rounding-down would zero-out speciation. The
+///      floor preserves the baseline rate when the field is healthy.
+///   2. Ceiling at `10` — caps the worst-case reversal window so a
+///      pathological `dipole_strength → 0` (flux → ∞) doesn't
+///      collapse the whole speciation budget into a single tick.
+///
+/// The conversion is `Real → i64` via `raw().to_num::<i64>()`, which
+/// truncates toward zero — `1.5 → 1`, `5.7 → 5`, etc. Truncation
+/// (rather than rounding) keeps multiplier=1.0 mapping to a single
+/// daughter, the documented baseline.
+#[must_use]
+pub fn clamp_cosmic_ray_multiplier(raw_multiplier: Real) -> u64 {
+    let lo = Real::from_int(COSMIC_RAY_MULTIPLIER_FLOOR);
+    let hi = Real::from_int(COSMIC_RAY_MULTIPLIER_CEILING);
+    let clamped = raw_multiplier.max(lo).min(hi);
+    let as_int: i64 = clamped.raw().to_num::<i64>();
+    // `as_int` is guaranteed in [FLOOR, CEILING] by the clamp above.
+    // Cast to u64 is therefore safe — FLOOR ≥ 1 > 0.
+    as_int.max(COSMIC_RAY_MULTIPLIER_FLOOR) as u64
+}
+
 /// Decide whether a Plant species hits polyploidy this tick. Per-
 /// tick probability is `1 / POLYPLOID_PER_TICK_PROB_RECIP`; the
 /// deterministic check uses a SplitMix64 hash of `(tick, parent_id)`
@@ -497,15 +540,31 @@ pub fn polyploid_check(tick: u64, parent: SpeciesId) -> bool {
 ///
 /// Per-tick determinism: trackers iterated via `BTreeMap`, so the
 /// returned events are in `(SpeciesId, …)`-sorted order.
+///
+/// `cosmic_ray_multiplier` carries the planet's
+/// `state.cosmic_ray_ground_flux()` for this tick (Item 20: surface
+/// flux scales as `1 / (dipole_strength + 0.1)`). The raw value is
+/// clamped via [`clamp_cosmic_ray_multiplier`] into
+/// `[COSMIC_RAY_MULTIPLIER_FLOOR, COSMIC_RAY_MULTIPLIER_CEILING]`
+/// and used as a daughter-count multiplier: every triggered
+/// speciation event (Allopatric, Sympatric, Polyploid, FounderEffect,
+/// or PostExtinctionRadiation) spawns `clamped` daughters instead of
+/// one. At full dipole strength (`flux ≈ 0.91`) the clamp floors to
+/// `1` and the baseline rate is preserved; during a deep reversal
+/// (`dipole_strength → 0`, `flux → 10` after clamp) every fire
+/// spawns ten daughters — the wide-spectrum mutation burst that
+/// magnetic-reversal windows model.
 pub fn step_speciation(
     tick: u64,
     eco_species: &BTreeMap<SpeciesId, EcoSpecies>,
     species_registry: &BTreeMap<SpeciesId, Species>,
     tracker: &mut SpeciationTracker,
+    cosmic_ray_multiplier: Real,
 ) -> Vec<(Species, SpeciationEvent)> {
     tracker.advance_post_extinction_windows(tick);
     let mut events: Vec<(Species, SpeciationEvent)> = Vec::new();
     let mut next_id_counter = next_species_id(eco_species).0;
+    let multiplier = clamp_cosmic_ray_multiplier(cosmic_ray_multiplier);
 
     // 1. Allopatric path. Streaks ≥ ALLOPATRIC_ISOLATION_TICKS trigger.
     let allopatric_triggers: Vec<(SpeciesId, u64)> = tracker
@@ -516,19 +575,21 @@ pub fn step_speciation(
         .collect();
     for (parent_id, streak) in allopatric_triggers {
         if let Some(parent) = species_registry.get(&parent_id) {
-            let daughter_id = SpeciesId(next_id_counter);
-            next_id_counter += 1;
             let trigger = SpeciationTrigger::Allopatric {
                 isolation_ticks: streak,
             };
-            let daughter = derive_daughter_species(parent, daughter_id, trigger);
-            let event = SpeciationEvent {
-                tick,
-                parent_id: parent_id.0,
-                daughter_id: daughter_id.0,
-                trigger: trigger.to_wire(),
-            };
-            events.push((daughter, event));
+            for _ in 0..multiplier {
+                let daughter_id = SpeciesId(next_id_counter);
+                next_id_counter += 1;
+                let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                let event = SpeciationEvent {
+                    tick,
+                    parent_id: parent_id.0,
+                    daughter_id: daughter_id.0,
+                    trigger: trigger.to_wire(),
+                };
+                events.push((daughter, event));
+            }
             tracker.allopatric_streak.insert(parent_id, 0);
         }
     }
@@ -545,17 +606,19 @@ pub fn step_speciation(
     for pair in sympatric_triggers {
         let parent_id = pair.0;
         if let Some(parent) = species_registry.get(&parent_id) {
-            let daughter_id = SpeciesId(next_id_counter);
-            next_id_counter += 1;
             let trigger = SpeciationTrigger::Sympatric;
-            let daughter = derive_daughter_species(parent, daughter_id, trigger);
-            let event = SpeciationEvent {
-                tick,
-                parent_id: parent_id.0,
-                daughter_id: daughter_id.0,
-                trigger: trigger.to_wire(),
-            };
-            events.push((daughter, event));
+            for _ in 0..multiplier {
+                let daughter_id = SpeciesId(next_id_counter);
+                next_id_counter += 1;
+                let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                let event = SpeciationEvent {
+                    tick,
+                    parent_id: parent_id.0,
+                    daughter_id: daughter_id.0,
+                    trigger: trigger.to_wire(),
+                };
+                events.push((daughter, event));
+            }
             tracker.sympatric_streak.insert(pair, 0);
         }
     }
@@ -573,17 +636,19 @@ pub fn step_speciation(
             }
         }
         if polyploid_check(tick, *parent_id) {
-            let daughter_id = SpeciesId(next_id_counter);
-            next_id_counter += 1;
             let trigger = SpeciationTrigger::Polyploid;
-            let daughter = derive_daughter_species(parent, daughter_id, trigger);
-            let event = SpeciationEvent {
-                tick,
-                parent_id: parent_id.0,
-                daughter_id: daughter_id.0,
-                trigger: trigger.to_wire(),
-            };
-            events.push((daughter, event));
+            for _ in 0..multiplier {
+                let daughter_id = SpeciesId(next_id_counter);
+                next_id_counter += 1;
+                let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                let event = SpeciationEvent {
+                    tick,
+                    parent_id: parent_id.0,
+                    daughter_id: daughter_id.0,
+                    trigger: trigger.to_wire(),
+                };
+                events.push((daughter, event));
+            }
         }
     }
 
@@ -602,17 +667,19 @@ pub fn step_speciation(
         let threshold = Real::from(FOUNDER_BIOMASS_FRAC) * parent_biomass;
         if seed_biomass > Real::ZERO && seed_biomass < threshold {
             if let Some(parent) = species_registry.get(&parent_id) {
-                let daughter_id = SpeciesId(next_id_counter);
-                next_id_counter += 1;
                 let trigger = SpeciationTrigger::FounderEffect;
-                let daughter = derive_daughter_species(parent, daughter_id, trigger);
-                let event = SpeciationEvent {
-                    tick,
-                    parent_id: parent_id.0,
-                    daughter_id: daughter_id.0,
-                    trigger: trigger.to_wire(),
-                };
-                events.push((daughter, event));
+                for _ in 0..multiplier {
+                    let daughter_id = SpeciesId(next_id_counter);
+                    next_id_counter += 1;
+                    let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                    let event = SpeciationEvent {
+                        tick,
+                        parent_id: parent_id.0,
+                        daughter_id: daughter_id.0,
+                        trigger: trigger.to_wire(),
+                    };
+                    events.push((daughter, event));
+                }
             }
         }
     }
@@ -642,23 +709,28 @@ pub fn step_speciation(
             // 4 bonus rolls per tick (= multiplier - 1 = 5 - 1 = 4).
             // Each roll is the same polyploid hash with a unique
             // salt per (generation, roll) so the four draws are
-            // independent across the run.
+            // independent across the run. Each successful roll then
+            // spawns `multiplier` daughters under the cosmic-ray
+            // amplification — same fire-count scaling as the
+            // four streak-based triggers above.
             for roll in 0..(POST_EXTINCTION_RADIATION_MULTIPLIER - 1) {
                 let salted_tick = tick
                     .wrapping_add(generation.wrapping_mul(977))
                     .wrapping_add(roll.wrapping_mul(31));
                 if polyploid_check(salted_tick, *parent_id) {
-                    let daughter_id = SpeciesId(next_id_counter);
-                    next_id_counter += 1;
                     let trigger = SpeciationTrigger::PostExtinctionRadiation { generation };
-                    let daughter = derive_daughter_species(parent, daughter_id, trigger);
-                    let event = SpeciationEvent {
-                        tick,
-                        parent_id: parent_id.0,
-                        daughter_id: daughter_id.0,
-                        trigger: trigger.to_wire(),
-                    };
-                    events.push((daughter, event));
+                    for _ in 0..multiplier {
+                        let daughter_id = SpeciesId(next_id_counter);
+                        next_id_counter += 1;
+                        let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                        let event = SpeciationEvent {
+                            tick,
+                            parent_id: parent_id.0,
+                            daughter_id: daughter_id.0,
+                            trigger: trigger.to_wire(),
+                        };
+                        events.push((daughter, event));
+                    }
                 }
             }
         }
