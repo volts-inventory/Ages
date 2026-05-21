@@ -5,7 +5,7 @@
 //! sits next to its rationale rather than getting lost in the
 //! middle of the world-sampling pipeline.
 
-use crate::Planet;
+use crate::{Planet, Star};
 use sim_arith::Real;
 use sim_physics::PhysicsState;
 
@@ -137,12 +137,61 @@ pub fn terrain_glyph_at(state: &PhysicsState, planet: &Planet, cell: u32) -> cha
     }
 }
 
-/// Per-cell habitability multiplier computed straight from
-/// the cell's terrain glyph. Convenience wrapper that composes
-/// `terrain_glyph_at` with `habitability_multiplier`.
+/// Habitable-zone scalar factor for a planet at `orbital_distance_au`
+/// from the given star. Returns `1.0` inside the HZ; smaller as the
+/// orbit drifts past either edge:
+///
+/// - **Inside the inner edge** (`distance < hz_inner_edge`): factor =
+///   `distance / hz_inner_edge`, clamped to `[0, 1]`. A planet at 90%
+///   of the inner edge gets `0.9` — mostly habitable but starting to
+///   bake. A planet at 50% of the inner edge gets `0.5` — half-baked.
+/// - **Outside the outer edge** (`distance > hz_outer_edge`): factor =
+///   `hz_outer_edge / distance`, clamped to `[0, 1]`. Symmetric: at
+///   2× the outer edge the factor is `0.5`.
+/// - **Inside the HZ**: factor = `1.0`.
+///
+/// Item 18 + P1.4: this is the bridge between stellar-evolution-
+/// driven HZ migration (`Star::with_age` ramps bolometric luminosity
+/// up over the MS lifetime, pushing both edges outward as `sqrt(L)`)
+/// and per-cell habitability. A planet that was Earth-analog at ZAMS
+/// can be left inside the new inner edge after several Gyr.
+#[must_use]
+pub fn hz_factor(star: &Star, orbital_distance_au: Real) -> Real {
+    let inner = star.hz_inner_edge_au();
+    let outer = star.hz_outer_edge_au();
+    if orbital_distance_au < inner {
+        // Too hot — baking inside the moist-greenhouse boundary.
+        // factor = distance / inner_edge, clamped to [0, 1].
+        if inner <= Real::ZERO {
+            return Real::ZERO;
+        }
+        return (orbital_distance_au / inner).max(Real::ZERO).min(Real::ONE);
+    }
+    if orbital_distance_au > outer {
+        // Too cold — frozen past the maximum-greenhouse boundary.
+        // factor = outer_edge / distance, clamped to [0, 1].
+        if orbital_distance_au <= Real::ZERO {
+            return Real::ZERO;
+        }
+        return (outer / orbital_distance_au).max(Real::ZERO).min(Real::ONE);
+    }
+    // Inside the HZ — full habitability.
+    Real::ONE
+}
+
+/// Per-cell habitability multiplier computed from the cell's
+/// terrain glyph **and** the planet's habitable-zone factor.
+/// Composes `terrain_glyph_at` × `habitability_multiplier` × the
+/// `hz_factor` derived from `planet.star` and
+/// `planet.orbital_distance_au`. The HZ factor is per-planet, not
+/// per-cell, so it shifts the whole map's habitability scalar in
+/// lockstep as the star ages and the HZ edges migrate (Item 18 /
+/// P1.4).
 #[must_use]
 pub fn cell_habitability(state: &PhysicsState, planet: &Planet, cell: u32) -> Real {
-    habitability_multiplier(terrain_glyph_at(state, planet, cell))
+    let terrain = habitability_multiplier(terrain_glyph_at(state, planet, cell));
+    let hz = hz_factor(&planet.star, planet.orbital_distance_au);
+    terrain.saturating_mul(hz)
 }
 
 /// `true` if `glyph` represents a water cell (deep ocean,
