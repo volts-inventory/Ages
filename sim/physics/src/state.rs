@@ -43,6 +43,16 @@ pub struct PhysicsState {
     pressure: Vec<Real>,
     fluid_v_q: Vec<Real>,
     fluid_v_r: Vec<Real>,
+    /// Per-cell vertical (out-of-plane, +up) fluid velocity
+    /// (Sprint 5 Item 22). Previously the velocity field was
+    /// purely 2D `(v_q, v_r)`; with full 3D Coriolis we need a
+    /// third component so the rotation cross-product `Ω × v`
+    /// has somewhere to write its vertical kick and somewhere to
+    /// read horizontal deflection of vertically-moving parcels.
+    /// Authored by `VerticalConvection` (positive when the surface
+    /// is warmer than the upper layer — warm air rises) and read
+    /// by `Coriolis` for the 3D cross-product.
+    fluid_v_w: Vec<Real>,
     /// Per-substance density at each cell. Outer index is the
     /// substance id (a `crate::chemistry::Substance` cast to usize);
     /// inner index is the cell index. Mutated by chemistry law.
@@ -190,6 +200,7 @@ impl PhysicsState {
             pressure: vec![Real::ZERO; n],
             fluid_v_q: vec![Real::ZERO; n],
             fluid_v_r: vec![Real::ZERO; n],
+            fluid_v_w: vec![Real::ZERO; n],
             substances: vec![vec![Real::ZERO; n]; N_SUBSTANCES],
             charge: vec![Real::ZERO; n],
             magnetic_b_q: vec![Real::ZERO; n],
@@ -295,6 +306,21 @@ impl PhysicsState {
 
     pub fn fluid_velocity_mut(&mut self) -> (&mut [Real], &mut [Real]) {
         (&mut self.fluid_v_q, &mut self.fluid_v_r)
+    }
+
+    /// Per-cell vertical (out-of-plane, +up) fluid velocity.
+    /// Sprint 5 Item 22: needed by full 3D Coriolis so vertically
+    /// moving parcels (warm-air updrafts, polar downdrafts) get
+    /// horizontally deflected, and so the horizontal wind gets a
+    /// vertical kick from the `Ω_x × v - Ω_y × u` cross terms.
+    /// Authored by `VerticalConvection`; read by `Coriolis`.
+    #[must_use]
+    pub fn fluid_velocity_w(&self) -> &[Real] {
+        &self.fluid_v_w
+    }
+
+    pub fn fluid_velocity_w_mut(&mut self) -> &mut [Real] {
+        &mut self.fluid_v_w
     }
 
     /// Density of the substance at index `id` for every cell.

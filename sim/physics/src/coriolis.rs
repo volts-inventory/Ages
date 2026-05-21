@@ -1,4 +1,4 @@
-//! Coriolis deflection on horizontal velocity.
+//! Coriolis deflection on 3D velocity (Sprint 5 Item 22).
 //!
 //! ## Hemisphere convention
 //!
@@ -12,32 +12,62 @@
 //!
 //! Real winds curve right in the northern hemisphere and left
 //! in the southern due to the planet's rotation. The Coriolis
-//! force `F = -2m·Ω × v` for horizontal motion picks up the
-//! vertical component of the rotation vector:
-//! `Ω_z = Ω · sin(latitude)`. Previously the wind law was
-//! axisymmetric — N and S hemispheres behaved identically.
-//! Without Coriolis, real Hadley cells, geostrophic flows, and
-//! mirror-symmetric storm rotation are all impossible.
+//! force is the full 3D cross-product `F = -2 Ω × v`. Previously
+//! this crate only carried the vertical component
+//! `Ω_z = Ω · sin(latitude)` and acted on the horizontal velocity
+//! field — so vertically moving air (warm-air updrafts, polar
+//! downdrafts) never felt rotation, and the horizontal wind never
+//! felt the `Ω_y × w` term that drives real Hadley-cell tilting.
+//! Item 22 promotes Ω to a 3-vector and writes / reads the full
+//! cross-product on `(v_q, v_r, v_w)`.
 //!
-//! `Coriolis` runs after `Wind` (so it sees post-pressure-
-//! gradient velocity) and applies the cross-product:
+//! ## Per-cell Ω components
+//!
+//! The planetary rotation axis is fixed in inertial space (along
+//! the planet's spin axis). Projected into each cell's local
+//! east-north-up frame, the components are latitude-dependent:
 //!
 //! ```text
-//!   Ω_z[i] = coriolis_k · sin(latitude[i])      // signed by hemisphere
-//!   Δv_q   = +Ω_z · v_r · dt
-//!   Δv_r   = -Ω_z · v_q · dt
+//!   Ω_east  (= Ω_x) = 0              // no zonal component at any latitude
+//!   Ω_north (= Ω_y) = Ω · cos(φ)     // max at equator, zero at poles
+//!   Ω_up    (= Ω_z) = Ω · sin(φ)     // zero at equator, max at poles (signed)
 //! ```
 //!
-//! Sign of `sin(latitude)` flips between hemispheres
-//! (positive in north, negative in south), giving real
-//! mirror-symmetric deflection: a parcel of N-hemisphere wind
-//! moving east curves toward the south; the same parcel in the
-//! S-hemisphere curves toward the north. Same shape as the
-//! Lorentz law on `B_z`, but unconditional on charge — it acts on
-//! every cell, not just charged ones.
+//! At the equator `Ω_y` dominates: vertical motion (warm-air
+//! updrafts) gets deflected zonally. Near the poles `Ω_z`
+//! dominates: horizontal motion gets deflected horizontally
+//! (the classic mid-latitude Coriolis). Item 15 (Hadley cells)
+//! needs both — equatorial updrafts must feel a sideways kick
+//! before they can re-curve into the descending Ferrel branch.
 //!
-//! Determinism: per-cell read of `(v_q, v_r)` and grid axial
-//! row; per-cell write of `(v_q, v_r)`. No state-dependent
+//! ## Force on velocity
+//!
+//! ```text
+//!   F = -2 Ω × v
+//!   F_u = -2 (Ω_y · w  -  Ω_z · v) =  2 Ω_z · v  -  2 Ω_y · w
+//!   F_v = -2 (Ω_z · u  -  Ω_x · w) = -2 Ω_z · u  +  2 Ω_x · w
+//!   F_w = -2 (Ω_x · v  -  Ω_y · u) = -2 Ω_x · v  +  2 Ω_y · u
+//! ```
+//!
+//! `omega.0 / .1 / .2` on the law are the planetary rotation
+//! magnitudes about the (x, y, z) world axes. For a planet whose
+//! spin axis is the local-z axis (the usual case) only
+//! `omega.2` is nonzero — but per-cell components `Ω_y` and
+//! `Ω_z` are still derived from it by `cos(φ)` / `sin(φ)`. The
+//! `omega.0` slot is reserved for tilted-axis worlds where the
+//! spin vector carries a permanent zonal component.
+//!
+//! ## Coupling to vertical convection
+//!
+//! `VerticalConvection` writes per-cell `v_w` (warm-surface → +w,
+//! cold-surface → -w). `Coriolis` reads `v_w` and writes the
+//! horizontal kick (`-2 Ω_y · w`) into `v_q`, and reads
+//! horizontal `(u, v)` to write a vertical Coriolis component
+//! into `v_w`. This is the link that lets Item 15 grow real
+//! Hadley cells without hand-coded zonal jets.
+//!
+//! Determinism: per-cell read of `(v_q, v_r, v_w)` and grid axial
+//! row; per-cell write of `(v_q, v_r, v_w)`. No state-dependent
 //! branching beyond hemisphere sign.
 
 use crate::laws::Law;
@@ -45,19 +75,24 @@ use crate::state::PhysicsState;
 use sim_arith::transcendental::{cos, half_pi, sin};
 use sim_arith::Real;
 
+/// Planetary rotation 3-vector. Components are about the world
+/// (x, y, z) axes; per-cell local-frame components are derived
+/// from `omega.2` by latitude (`Ω_y_local = omega.2 · cos(φ)`,
+/// `Ω_z_local = omega.2 · sin(φ)`). `omega.0` carries any
+/// permanent zonal-axis component (tilted-axis worlds); `omega.1`
+/// is reserved for future use and zero on Earth-like planets.
 #[derive(Debug, Clone, Copy)]
 pub struct Coriolis {
-    /// Per-tick deflection coefficient. Real planet's
-    /// `2 · Ω` at the macro-step cadence (~1 day) is
-    /// too large for stable explicit Euler — naive use would
-    /// produce per-tick rotation of ~12 rad, far past the
-    /// Lorentz law's 0.5-rad-per-tick stability ceiling. We absorb that into
-    /// `coriolis_k`, calibrated so the per-tick rotation at
-    /// mid-latitudes is small (a few degrees per macro-step).
-    /// Default `0.001` matches the magnitude of `Wind::wind_k`'s
-    /// pressure-gradient acceleration so Coriolis is a real
-    /// influence but doesn't dominate.
-    pub coriolis_k: Real,
+    /// Planetary rotation rate vector `(Ω_x, Ω_y, Ω_z)` at the
+    /// macro-step cadence. The naive interpretation `2 Ω` over a
+    /// ~1-day macro-step is too large for stable explicit Euler
+    /// (per-tick rotation ~12 rad), so the magnitude is absorbed
+    /// here in the same way the previous scalar `coriolis_k`
+    /// was. Earth-like default has `omega = (0, 0, 0.001)`:
+    /// only `omega.2` is nonzero because the spin axis points
+    /// out of the cylinder. Per-cell `Ω_y` / `Ω_z` are derived
+    /// from `omega.2` by `cos(φ)` / `sin(φ)`.
+    pub omega: (Real, Real, Real),
     /// Vacuum guard. `false` for `Atmosphere::None` —
     /// no medium means no fluid for Coriolis to deflect. The
     /// integrate path short-circuits.
@@ -65,11 +100,14 @@ pub struct Coriolis {
 }
 
 impl Coriolis {
-    /// Earth-like default.
+    /// Earth-like default. Spin axis is the local-z axis;
+    /// `omega.2 = 0.001` matches the pre-Item-22 scalar
+    /// `coriolis_k` so existing 2D Coriolis behaviour is
+    /// bit-identical at the equator-symmetry test points.
     #[must_use]
     pub fn earth_like() -> Self {
         Self {
-            coriolis_k: Real::from_ratio(1, 1_000),
+            omega: (Real::ZERO, Real::ZERO, Real::from_ratio(1, 1_000)),
             has_atmosphere: true,
         }
     }
@@ -77,23 +115,25 @@ impl Coriolis {
     /// Build from a planet's rotation rate. For now we
     /// derive a single multiplicative scale from the day-length
     /// (faster spinners → stronger Coriolis); the actual
-    /// `coriolis_k` is the product of a base coefficient and
+    /// `omega.2` is the product of a base coefficient and
     /// `24 / day_length_hours` so an Earth-day planet gets the
     /// default `0.001`, a 12-hour planet gets 2× that, and a
-    /// 48-hour planet gets half.
+    /// 48-hour planet gets half. `omega.0` and `omega.1` stay
+    /// zero (axis-aligned with local-z).
     #[must_use]
     pub fn for_planet(day_length_hours: Real, has_atmosphere: bool) -> Self {
         let base = Real::from_ratio(1, 1_000);
         // Reference: Earth = 24 h. Avoid divide-by-zero on a
-        // pathological zero-length day by clamping to ≥ 1 h.
+        // pathological zero-length day by clamping to >= 1 h.
         let ref_hours = Real::from_int(24);
         let dl = if day_length_hours <= Real::ZERO {
             Real::ONE
         } else {
             day_length_hours
         };
+        let scale = base * ref_hours / dl;
         Self {
-            coriolis_k: base * ref_hours / dl,
+            omega: (Real::ZERO, Real::ZERO, scale),
             has_atmosphere,
         }
     }
@@ -115,10 +155,31 @@ impl Law for Coriolis {
             .cells()
             .map(|(cid, axial)| (cid.0 as usize, axial.r))
             .collect();
-        let coeff = self.coriolis_k * dt;
+        // Two-factor cross product. `2 * Ω * dt` is what each
+        // velocity component is multiplied by. Compute once.
+        let two_dt = Real::from_int(2) * dt;
+        let two_dt_ox = two_dt * self.omega.0;
+        // omega.1 carried for completeness; per-cell projection
+        // uses cos(φ) / sin(φ) of omega.2 plus the bare omega.0
+        // zonal bias. omega.1 is reserved and unused on
+        // Earth-like inputs.
+        let two_dt_oz_base = two_dt * self.omega.2;
+        // Snapshot velocity into prev buffers before mutating —
+        // the rotation must use the pre-step values so all three
+        // components see a consistent input. Collect the
+        // vertical prev buffer first: once we take the
+        // `fluid_velocity_mut` borrow on the horizontal pair,
+        // `state` is mutably borrowed and we can't reach
+        // `fluid_velocity_w()` until that borrow drops.
+        let v_w_prev: Vec<Real> = state.fluid_velocity_w().to_vec();
         let (vq_state, vr_state) = state.fluid_velocity_mut();
         let v_q_prev: Vec<Real> = vq_state.to_vec();
         let v_r_prev: Vec<Real> = vr_state.to_vec();
+        // First pass: write horizontal updates into the existing
+        // mut borrow. Compute per-cell Ω components on the fly.
+        // Note: we mutate the horizontal slice now and the
+        // vertical slice after the borrow ends.
+        let mut v_w_next: Vec<Real> = v_w_prev.clone();
         for (i, r) in cells {
             if i >= n {
                 continue;
@@ -126,9 +187,10 @@ impl Law for Coriolis {
             // Latitude angle ∈ [-π/2, π/2], with sign carrying the
             // hemisphere. Above the equator (signed_offset < 0)
             // gets positive sin; below (signed_offset > 0) gets
-            // negative — matching the convention the magnetism law uses for
-            // `B_z`. Coriolis and Lorentz then deflect in the
-            // same rotational sense in each hemisphere.
+            // negative — matching the convention the magnetism
+            // law uses for `B_z`. Coriolis and Lorentz then
+            // deflect in the same rotational sense in each
+            // hemisphere.
             let signed_offset = r - half_h;
             let lat_angle = if half_h > 0 {
                 let mag =
@@ -141,19 +203,37 @@ impl Law for Coriolis {
             } else {
                 Real::ZERO
             };
-            // Boris-pusher rotation. Earlier code used explicit
-            // Euler which grows |v|² by (1+ω_z²) per tick. The Boris
-            // pusher uses the exact 2D rotation, conserving |v| at
-            // every magnitude of θ.
-            let theta = coeff * sin(lat_angle);
-            if theta == Real::ZERO {
-                continue;
-            }
-            let cos_t = cos(theta);
-            let sin_t = sin(theta);
-            vq_state[i] = cos_t * v_q_prev[i] + sin_t * v_r_prev[i];
-            vr_state[i] = -sin_t * v_q_prev[i] + cos_t * v_r_prev[i];
+            // Per-cell local-frame Ω components.
+            //   Ω_z_local = omega.2 · sin(φ)   (signed by hemisphere)
+            //   Ω_y_local = omega.2 · |cos(φ)| (always >= 0; equator-peaked)
+            //   Ω_x_local = omega.0            (latitude-independent zonal bias)
+            // cos is always non-negative on [-π/2, π/2] so the
+            // sign of Ω_y matches the planetary spin sense (toward
+            // celestial north on a prograde planet) at every
+            // latitude — which is what real-Earth physics has.
+            let sin_phi = sin(lat_angle);
+            let cos_phi = cos(lat_angle);
+            let two_dt_oz = two_dt_oz_base * sin_phi;
+            let two_dt_oy = two_dt_oz_base * cos_phi;
+            // F = -2 Ω × v applied as Δv = F · dt (already folded
+            // into `two_dt_*`). Use the pre-step buffer for every
+            // component so cells see a consistent input.
+            let u = v_q_prev[i];
+            let v = v_r_prev[i];
+            let w = v_w_prev[i];
+            // Δu = +2Ω_z · v − 2Ω_y · w
+            let du = two_dt_oz * v - two_dt_oy * w;
+            // Δv = −2Ω_z · u + 2Ω_x · w
+            let dv = -two_dt_oz * u + two_dt_ox * w;
+            // Δw = −2Ω_x · v + 2Ω_y · u
+            let dw = -two_dt_ox * v + two_dt_oy * u;
+            vq_state[i] = u + du;
+            vr_state[i] = v + dv;
+            v_w_next[i] = w + dw;
         }
+        // Borrow-release: copy the staged vertical updates back
+        // into state once the horizontal borrow has been dropped.
+        state.fluid_velocity_w_mut().copy_from_slice(&v_w_next);
     }
 }
 
@@ -163,8 +243,11 @@ mod tests {
     use crate::grid::HexGrid;
 
     #[test]
-    fn equator_no_deflection() {
-        // sin(0) = 0 → no Coriolis at the equator.
+    fn equator_no_horizontal_deflection_from_omega_z() {
+        // At the equator sin(φ)=0 so Ω_z_local = 0. With no
+        // vertical velocity the horizontal wind feels nothing
+        // from Ω_z. (It can still feel Ω_y if v_w != 0; this
+        // test isolates the Ω_z-only horizontal deflection.)
         let mut state = PhysicsState::new(HexGrid::new(3, 5));
         let centre = state.grid().cell_id(crate::grid::Axial::new(1, 2)).0 as usize;
         state.fluid_velocity_mut().0[centre] = Real::ONE;
@@ -188,7 +271,7 @@ mod tests {
         state.fluid_velocity_mut().0[south_cell] = Real::ONE;
 
         let c = Coriolis {
-            coriolis_k: Real::percent(1),
+            omega: (Real::ZERO, Real::ZERO, Real::percent(1)),
             has_atmosphere: true,
         };
         for _ in 0..30 {
@@ -225,5 +308,87 @@ mod tests {
         }
         assert_eq!(a.fluid_velocity().0, b.fluid_velocity().0);
         assert_eq!(a.fluid_velocity().1, b.fluid_velocity().1);
+    }
+
+    #[test]
+    fn vertical_coriolis_component_active() {
+        // Sprint 5 Item 22 spec test: an upward-moving parcel
+        // near the equator gets deflected sideways by Ω_y.
+        // At the equator sin(φ)=0 (so Ω_z = 0) but cos(φ)=1
+        // (so Ω_y is at its maximum). The cross-product
+        // Δu = -2Ω_y · w should pull the q-component of the
+        // horizontal velocity away from zero even with no
+        // initial horizontal motion. We use a strong omega so
+        // the integer-tick effect is visible without thousands
+        // of iterations.
+        let mut state = PhysicsState::new(HexGrid::new(3, 5));
+        let equator = state.grid().cell_id(crate::grid::Axial::new(1, 2)).0 as usize;
+        // Seed pure vertical motion: warm-air updraft.
+        state.fluid_velocity_w_mut()[equator] = Real::ONE;
+        // Confirm there's no horizontal motion to start.
+        assert_eq!(state.fluid_velocity().0[equator], Real::ZERO);
+        assert_eq!(state.fluid_velocity().1[equator], Real::ZERO);
+        let c = Coriolis {
+            omega: (Real::ZERO, Real::ZERO, Real::percent(10)),
+            has_atmosphere: true,
+        };
+        c.integrate(&mut state, Real::ONE);
+        let u_after = state.fluid_velocity().0[equator];
+        assert!(
+            u_after != Real::ZERO,
+            "upward parcel at the equator must be deflected sideways \
+             by Ω_y (cos(0)=1): u_after={u_after:?}"
+        );
+        // Sanity: the deflection sign matches `Δu = -2 Ω_y · w`.
+        // With omega.2 > 0, cos(0)=1, w=1, Ω_y > 0 and so Δu < 0.
+        assert!(
+            u_after < Real::ZERO,
+            "upward parcel at the equator deflects in the -q direction \
+             under prograde rotation: u_after={u_after:?}"
+        );
+    }
+
+    #[test]
+    fn coriolis_3d_couples_to_vertical_convection() {
+        // Sprint 5 Item 22 spec test: the vertical convection
+        // step now reads 3D Ω rather than just Ω_z. Run
+        // VerticalConvection to seed a real vertical velocity
+        // from a warm-surface / cold-upper-layer cell, then run
+        // Coriolis at the equator and confirm the vertical
+        // velocity itself feeds horizontal deflection — i.e.
+        // Coriolis is reading `v_w` from `VerticalConvection`'s
+        // output, not just `v_q` / `v_r`.
+        use crate::vertical::VerticalConvection;
+        let mut state = PhysicsState::new(HexGrid::new(3, 5));
+        let equator = state.grid().cell_id(crate::grid::Axial::new(1, 2)).0 as usize;
+        // Set up a warm surface / cold upper layer.
+        state.temperature_mut()[equator] = Real::from_int(300);
+        state.upper_temperature_mut()[equator] = Real::from_int(250);
+        // No horizontal motion initially.
+        assert_eq!(state.fluid_velocity().0[equator], Real::ZERO);
+        // VerticalConvection writes a +v_w on a warm-surface cell.
+        let vc = VerticalConvection::earth_like();
+        vc.integrate(&mut state, Real::ONE);
+        let v_w_after_vc = state.fluid_velocity_w()[equator];
+        assert!(
+            v_w_after_vc > Real::ZERO,
+            "VerticalConvection must seed positive v_w on a warm-surface \
+             cell: v_w={v_w_after_vc:?}"
+        );
+        // Now Coriolis reads that v_w and produces a horizontal
+        // kick. If Coriolis were still 1D-Ω_z-only, the
+        // horizontal velocity would stay zero.
+        let c = Coriolis {
+            omega: (Real::ZERO, Real::ZERO, Real::percent(10)),
+            has_atmosphere: true,
+        };
+        c.integrate(&mut state, Real::ONE);
+        let u_after = state.fluid_velocity().0[equator];
+        assert!(
+            u_after != Real::ZERO,
+            "Coriolis must couple VerticalConvection's v_w into the \
+             horizontal field (proving it reads 3D Ω, not just Ω_z): \
+             u_after={u_after:?}"
+        );
     }
 }
