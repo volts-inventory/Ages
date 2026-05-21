@@ -35,6 +35,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
 use sim_physics::chemistry::{oxidiser_ladder, partition_chemoautotroph_growth, Oxidiser};
+use sim_physics::{PhysicsState, Substance};
 use sim_species::{
     EcosystemRole, FunctionalResponse, Interaction, InteractionKind, InteractionMatrix,
     MutualismKind, ParasiteKind, ProducerMetabolism, SpeciesId,
@@ -113,6 +114,29 @@ pub const EXTINCTION_THRESHOLD_FRAC: (i64, i64) = (1, 1000);
 /// trigger extinction, short enough that an actual collapse converts
 /// to an extinction event within the run.
 pub const EXTINCTION_CONFIRMATION_TICKS: u64 = 12;
+
+/// Per-tick consumer respiration rate — fraction of consumer biomass
+/// returned to atmospheric `CO2` each tick (Sprint 2 Item 6b). 1%/tick.
+///
+/// Mirror of the carbon side of the biogeochem loop: every consumer
+/// (PrimaryConsumer, SecondaryConsumer, ApexConsumer, Detritivore,
+/// Saprotroph, Mutualist, Parasite) respires a small fraction of its
+/// biomass back to atmospheric `CO2` each tick. Producers don't
+/// respire here — they're net carbon sinks (photosynthesis /
+/// chemosynthesis) over the daily-averaged tick budget.
+pub const RESPIRATION_RATE: (i64, i64) = (1, 100);
+
+/// Per-tick decomposition rate — fraction of all extant species'
+/// biomass that decomposers (Detritivore + Saprotroph) liberate to
+/// atmospheric `CO2` each tick (Sprint 2 Item 6b). 0.5%/tick.
+///
+/// This represents the dead-biomass channel: at any given moment a
+/// small fraction of every species' standing biomass is dead matter
+/// being broken down. The decomposer chain returns that carbon to
+/// the atmosphere. Drawn from total biomass (producers included);
+/// rate is gated on the presence of at least one Detritivore or
+/// Saprotroph.
+pub const DECOMPOSITION_RATE: (i64, i64) = (1, 200);
 
 /// One species' per-planet record. `species_id` is the dense per-
 /// planet index; `biomass` is the live pool (always ≥ 0); the
@@ -198,9 +222,10 @@ impl PlanetEcosystem {
         }
     }
 
-    /// Run one ecosystem tick. Convenience wrapper that discards
-    /// any extinction events; callers that want the event stream
-    /// should use `step_at_tick`. Six passes (each over `BTreeMap`):
+    /// Run one ecosystem tick without atmospheric coupling.
+    /// Convenience wrapper that discards any extinction events;
+    /// callers that want the event stream should use `step_at_tick`.
+    /// Six passes (each over `BTreeMap`):
     ///
     /// 1. Producer logistic growth toward `producer_capacity`
     ///    (Photoautotroph + Mixotroph).
@@ -220,6 +245,13 @@ impl PlanetEcosystem {
     ///    consecutive ticks is flagged `is_extant = false` and the
     ///    matching `SpeciesExtinct` event is returned by
     ///    `step_at_tick`.
+    ///
+    /// Kept for tests + callers that don't need biogeochemical
+    /// coupling. Production callers should prefer
+    /// [`PlanetEcosystem::step_with_biogeochem`] (Sprint 2 Item 6b)
+    /// so producer growth is rate-limited by atmospheric CO2 +
+    /// available energy and consumer/decomposer respiration returns
+    /// CO2 to the air.
     pub fn step(&mut self) {
         let _ = self.step_at_tick(0);
     }
@@ -237,6 +269,61 @@ impl PlanetEcosystem {
         self.decay_consumers();
         self.enforce_lindeman_pyramid();
         self.clamp_biomasses();
+        self.detect_extinctions(tick)
+    }
+
+    /// Run one ecosystem tick *and* exchange carbon with the
+    /// atmosphere via the supplied `PhysicsState` (Sprint 2 Item 6b).
+    ///
+    /// - Each Producer consumes atmospheric `CO2`, rate-limited by
+    ///   `min(co2_available, energy_available, base_potential)`.
+    ///   Energy comes from `solar_irradiance` for Photoautotrophs,
+    ///   from the planet-wide `Oxidiser` pool for Chemoautotrophs,
+    ///   and from their sum for Mixotrophs.
+    /// - Each Consumer (anything not a Producer) respires a fixed
+    ///   fraction of its biomass back to atmospheric `CO2`.
+    /// - When at least one Detritivore or Saprotroph is present, a
+    ///   small fraction of *all* species' biomass passes through the
+    ///   decomposer chain back to `CO2`.
+    ///
+    /// CO2 deltas are applied uniformly across grid cells (consumed
+    /// per-cell as `consumed / n_cells`, returned the same way), so
+    /// the per-tick mass change matches the aggregate-level budget
+    /// the biogeochem model balances at.
+    pub fn step_with_biogeochem(
+        &mut self,
+        state: &mut PhysicsState,
+        solar_irradiance: Real,
+    ) {
+        let _ = self.step_with_biogeochem_at_tick(state, solar_irradiance, 0);
+    }
+
+    /// Same as `step_with_biogeochem` but carries the current sim
+    /// tick and returns any `SpeciesExtinct` events that fired this
+    /// tick. The extinction sweep (Item 6a) runs after the
+    /// biogeochem-coupled passes so a species that lost biomass to
+    /// respiration / decomposition can be flagged extinct in the
+    /// same tick.
+    pub fn step_with_biogeochem_at_tick(
+        &mut self,
+        state: &mut PhysicsState,
+        solar_irradiance: Real,
+        tick: u64,
+    ) -> Vec<SpeciesExtinct> {
+        let co2_consumed = self.grow_producers_with_co2(state, solar_irradiance);
+        // Item 9 paths: Chemoautotroph oxidiser-ladder partition and
+        // syntrophy enforcement still run alongside the biogeochem
+        // coupling so a planet with both layers gets the full stack.
+        self.partition_chemoautotrophs();
+        self.apply_interactions();
+        self.enforce_syntrophy();
+        self.decay_consumers();
+        let respired = self.respire_consumers();
+        let decomposed = self.decomposer_chain();
+        self.enforce_lindeman_pyramid();
+        self.clamp_biomasses();
+        let co2_returned = respired + decomposed;
+        apply_co2_delta(state, co2_returned - co2_consumed);
         self.detect_extinctions(tick)
     }
 
@@ -368,6 +455,158 @@ impl PlanetEcosystem {
                 s.biomass = s.biomass * survival;
             }
         }
+    }
+
+    /// Producer growth coupled to atmospheric `CO2` + an energy
+    /// source (Sprint 2 Item 6b). Returns the *total* CO2 actually
+    /// consumed across all producers this tick — the caller
+    /// subtracts it from the atmosphere.
+    ///
+    /// For each producer:
+    ///   base_potential = r × B × (1 - B/K)      (same logistic shape)
+    ///   gated_growth   = min(co2_available_share,
+    ///                        energy_available_share,
+    ///                        base_potential)
+    ///   B' = B + gated_growth
+    ///
+    /// CO2 + energy are split equally between the producers that
+    /// would otherwise grow this tick — every producer "competes"
+    /// for the same atmosphere + sunlight pool, and the
+    /// equal-split prevents one species from greedily monopolising
+    /// the entire CO2 budget in one tick. Chemoautotroph growth via
+    /// the multi-oxidiser ladder (Item 9) is layered on top by
+    /// `partition_chemoautotrophs`; this path provides the carbon-
+    /// budgeted baseline shared by all three metabolism kinds.
+    fn grow_producers_with_co2(
+        &mut self,
+        state: &PhysicsState,
+        solar_irradiance: Real,
+    ) -> Real {
+        let growth_rate = Real::from(PRODUCER_GROWTH_RATE);
+        let cap = self.producer_capacity;
+        if cap <= Real::ZERO {
+            return Real::ZERO;
+        }
+        let total_co2 = sum_substance(state, Substance::CO2);
+        let total_oxidiser = sum_substance(state, Substance::Oxidiser);
+
+        // Producers that could grow this tick (extant, non-zero
+        // biomass, room under K). Equal-split of CO2 + energy
+        // across this set so a small atmosphere can't be drained
+        // entirely by the largest producer in one shot.
+        let producer_ids: Vec<SpeciesId> = self
+            .species
+            .iter()
+            .filter_map(|(id, s)| {
+                if !s.is_extant {
+                    return None;
+                }
+                if matches!(s.role, EcosystemRole::Producer { .. }) {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if producer_ids.is_empty() {
+            return Real::ZERO;
+        }
+        let n_prod = Real::from_int(producer_ids.len() as i64);
+        let co2_share = total_co2 / n_prod;
+        let solar_share = solar_irradiance / n_prod;
+        let oxidiser_share = total_oxidiser / n_prod;
+
+        let mut total_consumed = Real::ZERO;
+        for id in producer_ids {
+            let s = match self.species.get_mut(&id) {
+                Some(s) => s,
+                None => continue,
+            };
+            let metabolism = match s.role {
+                EcosystemRole::Producer { metabolism } => metabolism,
+                _ => continue,
+            };
+            let ratio = s.biomass / cap;
+            let slack = Real::ONE - ratio;
+            let base_potential = growth_rate * s.biomass * slack;
+            if base_potential <= Real::ZERO {
+                continue;
+            }
+            let energy_share = match metabolism {
+                ProducerMetabolism::Photoautotroph => solar_share,
+                ProducerMetabolism::Chemoautotroph => oxidiser_share,
+                ProducerMetabolism::Mixotroph => solar_share + oxidiser_share,
+            };
+            let gated = base_potential.min(co2_share).min(energy_share);
+            if gated <= Real::ZERO {
+                continue;
+            }
+            s.biomass = s.biomass + gated;
+            total_consumed = total_consumed + gated;
+        }
+        total_consumed
+    }
+
+    /// Apply `RESPIRATION_RATE` to every extant consumer (anything
+    /// not a Producer). Returns total CO2 returned to the atmosphere.
+    /// Consumers lose biomass; that biomass becomes atmospheric CO2.
+    fn respire_consumers(&mut self) -> Real {
+        let rate = Real::from(RESPIRATION_RATE);
+        let mut total = Real::ZERO;
+        for s in self.species.values_mut() {
+            if !s.is_extant {
+                continue;
+            }
+            if let EcosystemRole::Producer { .. } = s.role {
+                continue;
+            }
+            let respired = s.biomass * rate;
+            if respired <= Real::ZERO {
+                continue;
+            }
+            s.biomass = s.biomass - respired;
+            total = total + respired;
+        }
+        total
+    }
+
+    /// Decomposer chain — when at least one Detritivore or
+    /// Saprotroph is extant, free `DECOMPOSITION_RATE` × total
+    /// biomass back to atmospheric CO2 *and* deduct that mass
+    /// proportionally from every extant species pool.
+    ///
+    /// Closes the carbon budget: each unit of CO2 released to the
+    /// atmosphere is balanced by a unit of biomass removed from
+    /// the living pool. Models the steady-state dead-matter
+    /// pipeline — even healthy populations are shedding some
+    /// carbon through the decomposer compartment each tick, and
+    /// the carbon that ends up in the atmosphere came from
+    /// somebody's biomass.
+    fn decomposer_chain(&mut self) -> Real {
+        let has_decomposer = self.species.values().any(|s| {
+            s.is_extant
+                && matches!(
+                    s.role,
+                    EcosystemRole::Detritivore | EcosystemRole::Saprotroph
+                )
+        });
+        if !has_decomposer {
+            return Real::ZERO;
+        }
+        let rate = Real::from(DECOMPOSITION_RATE);
+        let mut total_released = Real::ZERO;
+        for s in self.species.values_mut() {
+            if !s.is_extant {
+                continue;
+            }
+            let released = s.biomass * rate;
+            if released <= Real::ZERO {
+                continue;
+            }
+            s.biomass = s.biomass - released;
+            total_released = total_released + released;
+        }
+        total_released
     }
 
     fn apply_interactions(&mut self) {
@@ -686,6 +925,38 @@ impl PlanetEcosystem {
             *v = *v / Real::from_int(2);
         }
         centrality
+    }
+}
+
+/// Aggregate per-substance density across every cell of the planet.
+fn sum_substance(state: &PhysicsState, substance: Substance) -> Real {
+    state
+        .substance(substance.idx())
+        .iter()
+        .copied()
+        .fold(Real::ZERO, |a, b| a + b)
+}
+
+/// Apply a planet-wide CO2 delta — positive = add to atmosphere,
+/// negative = remove from atmosphere. Distributes the change
+/// uniformly across cells (per-cell delta = total / n_cells). When
+/// the requested removal exceeds the per-cell stock, the per-cell
+/// value clamps at zero — the *available* CO2 was already gated by
+/// the producer-growth path so this clamp protects against rounding
+/// drift only.
+fn apply_co2_delta(state: &mut PhysicsState, delta: Real) {
+    if delta == Real::ZERO {
+        return;
+    }
+    let co2 = state.substance_mut(Substance::CO2.idx());
+    let n = co2.len();
+    if n == 0 {
+        return;
+    }
+    let per_cell = delta / Real::from_int(n as i64);
+    for c in co2.iter_mut() {
+        let next = *c + per_cell;
+        *c = if next < Real::ZERO { Real::ZERO } else { next };
     }
 }
 

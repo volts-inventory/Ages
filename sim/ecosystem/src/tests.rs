@@ -1,4 +1,4 @@
-//! Sprint 2 Item 6 + Item 9 tests.
+//! Sprint 2 Item 6 + Item 6b + Item 9 tests.
 //!
 //! Item 6 (five required cases per plan v2):
 //! 1. `planet_has_trophic_pyramid_with_lindeman_ratio`
@@ -11,12 +11,18 @@
 //! 6. `chemolithotroph_species_partition_by_reduction_potential`
 //! 7. `syntrophy_pair_extinction_when_separated`
 //! 8. `co2_atmosphere_combustion_works_via_alt_oxidiser`
+//!
+//! Item 6b — biogeochem coupling (three required cases):
+//! 9. `producer_growth_consumes_atmospheric_co2`
+//! 10. `consumer_respiration_returns_co2_to_atmosphere`
+//! 11. `decomposer_chain_balances_carbon_budget`
 
 use super::*;
 use sim_arith::Real;
 use sim_physics::chemistry::{
     alt_oxidiser_combustion_energy, energy_yield_factor, oxidiser_ladder, Oxidiser,
 };
+use sim_physics::{HexGrid, PhysicsState, Substance};
 use sim_species::{
     EcosystemRole, FunctionalResponse, Interaction, InteractionKind, InteractionMatrix,
     MutualismKind, ProducerMetabolism, SpeciesId,
@@ -1138,5 +1144,202 @@ fn extinction_event_emits_on_pool_collapse() {
     assert!(
         later_events.is_empty(),
         "extinct species should not emit a second event",
+    );
+}
+
+// ---------------------------------------------------------------
+// Sprint 2 Item 6b — biogeochem coupling tests
+// ---------------------------------------------------------------
+
+/// Build a fresh single-cell `PhysicsState` with `co2` seeded into
+/// the atmosphere. Single cell keeps the test bookkeeping trivial —
+/// `apply_co2_delta` spreads uniformly so a 1-cell grid receives
+/// the whole delta in that one cell.
+fn fresh_state_with_co2(co2: Real) -> PhysicsState {
+    let mut state = PhysicsState::new(HexGrid::new(1, 1));
+    state.substance_mut(Substance::CO2.idx())[0] = co2;
+    state
+}
+
+#[test]
+fn producer_growth_consumes_atmospheric_co2() {
+    // Seed atmosphere with CO2 = 100; run one tick with a producer
+    // that has room to grow; assert CO2 < 100.
+    let prod = SpeciesId(0);
+    let species = vec![EcoSpecies {
+        species_id: prod,
+        role: EcosystemRole::Producer {
+            metabolism: ProducerMetabolism::Photoautotroph,
+        },
+        biomass: Real::from_int(500),
+        is_extant: true,
+        low_biomass_streak: 0,
+    }];
+    let mut eco = PlanetEcosystem::new(
+        species,
+        InteractionMatrix::new(),
+        Real::from_int(1000),
+    );
+    let mut state = fresh_state_with_co2(Real::from_int(100));
+    // Photoautotroph needs solar > 0 for growth to be unblocked.
+    let solar = Real::from_int(1000);
+
+    let co2_before = state.substance(Substance::CO2.idx())[0];
+    eco.step_with_biogeochem(&mut state, solar);
+    let co2_after = state.substance(Substance::CO2.idx())[0];
+    let biomass_after = eco.species.get(&prod).unwrap().biomass;
+
+    assert!(
+        co2_after < co2_before,
+        "atmospheric CO2 did not drop after producer growth (before={co2_before:?}, after={co2_after:?})",
+    );
+    assert!(
+        biomass_after > Real::from_int(500),
+        "producer biomass did not grow (started 500, ended {biomass_after:?})",
+    );
+}
+
+#[test]
+fn consumer_respiration_returns_co2_to_atmosphere() {
+    // Seed atmosphere with CO2 = 0, consumer biomass = 100; run a
+    // tick; assert atmospheric CO2 > 0.
+    let cons = SpeciesId(0);
+    let species = vec![EcoSpecies {
+        species_id: cons,
+        role: EcosystemRole::PrimaryConsumer,
+        biomass: Real::from_int(100),
+        is_extant: true,
+        low_biomass_streak: 0,
+    }];
+    let mut eco = PlanetEcosystem::new(
+        species,
+        InteractionMatrix::new(),
+        Real::from_int(1000),
+    );
+    let mut state = fresh_state_with_co2(Real::ZERO);
+
+    let co2_before = state.substance(Substance::CO2.idx())[0];
+    eco.step_with_biogeochem(&mut state, Real::ZERO);
+    let co2_after = state.substance(Substance::CO2.idx())[0];
+
+    assert_eq!(co2_before, Real::ZERO, "test setup expected 0 CO2");
+    assert!(
+        co2_after > Real::ZERO,
+        "consumer respiration did not return CO2 (after={co2_after:?})",
+    );
+}
+
+#[test]
+fn decomposer_chain_balances_carbon_budget() {
+    // Long-term (1000 ticks) run with all role types; assert the
+    // closed-loop carbon budget (atmospheric CO2 + total biomass)
+    // stays within a drift tolerance. The decomposer loop is the
+    // closing edge: producers pull CO2 from the air, consumers +
+    // decomposers return it. Without an external pump in, the total
+    // (atmosphere CO2 + biomass carbon) is bounded; over 1000 ticks
+    // it should drift by < 25% of the starting value. Initial
+    // biomass values stay above the Item 6a extinction floor
+    // (`0.001 × 500 = 0.5`) so the consumers don't flip extinct
+    // before the budget can be balanced.
+    let producer = SpeciesId(0);
+    let primary = SpeciesId(1);
+    let detritivore = SpeciesId(2);
+    let saprotroph = SpeciesId(3);
+    let species = vec![
+        EcoSpecies {
+            species_id: producer,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: Real::from_int(400),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: primary,
+            role: EcosystemRole::PrimaryConsumer,
+            biomass: Real::from_int(40),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: detritivore,
+            role: EcosystemRole::Detritivore,
+            biomass: Real::from_int(10),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+        EcoSpecies {
+            species_id: saprotroph,
+            role: EcosystemRole::Saprotroph,
+            biomass: Real::from_int(10),
+            is_extant: true,
+            low_biomass_streak: 0,
+        },
+    ];
+    // Modest predation so consumers can sustain themselves on the
+    // producer flow.
+    let mut matrix = InteractionMatrix::new();
+    matrix.insert(
+        primary,
+        producer,
+        Interaction {
+            kind: InteractionKind::Predation,
+            strength: Real::from((5, 100)),
+            functional_response: FunctionalResponse::Saturating,
+        },
+    );
+    let mut eco = PlanetEcosystem::new(species, matrix, Real::from_int(500));
+    // Seed atmosphere with enough CO2 that producers can grow for
+    // many ticks before the air runs dry, and a modest solar input.
+    let mut state = fresh_state_with_co2(Real::from_int(500));
+    let solar = Real::from_int(50);
+
+    let total_carbon = |state: &PhysicsState, eco: &PlanetEcosystem| -> Real {
+        let co2 = state.substance(Substance::CO2.idx())[0];
+        let biomass: Real = eco
+            .species
+            .values()
+            .filter(|s| s.is_extant)
+            .map(|s| s.biomass)
+            .fold(Real::ZERO, |a, b| a + b);
+        co2 + biomass
+    };
+
+    let initial = total_carbon(&state, &eco);
+    for _ in 0..1000 {
+        eco.step_with_biogeochem(&mut state, solar);
+    }
+    let final_total = total_carbon(&state, &eco);
+
+    // 25% drift tolerance — predation + Lindeman caps drop a small
+    // amount of biomass each tick that isn't recovered by the
+    // decomposer pathway (the dead-matter pool here is the only
+    // way back to CO2; biomass scaled down by enforce_lindeman is
+    // not run back through respiration). The bound is loose enough
+    // to accommodate that bookkeeping but tight enough to catch a
+    // missing flux entirely.
+    let drift = (final_total - initial).abs();
+    let bound = initial / Real::from_int(4);
+    assert!(
+        drift <= bound,
+        "carbon budget drifted >25%: initial={initial:?}, final={final_total:?}, drift={drift:?}, bound={bound:?}",
+    );
+    // Also sanity: neither pool collapsed to zero. The system is
+    // closed-loop; collapse to zero would indicate one direction
+    // of the cycle is broken.
+    assert!(
+        state.substance(Substance::CO2.idx())[0] > Real::ZERO,
+        "atmospheric CO2 collapsed to zero — decomposer return path missing",
+    );
+    let final_biomass: Real = eco
+        .species
+        .values()
+        .filter(|s| s.is_extant)
+        .map(|s| s.biomass)
+        .fold(Real::ZERO, |a, b| a + b);
+    assert!(
+        final_biomass > Real::ZERO,
+        "total biomass collapsed to zero — producer growth path missing",
     );
 }
