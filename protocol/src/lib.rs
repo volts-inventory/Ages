@@ -204,6 +204,14 @@ pub enum Event {
     /// nudged a small fraction toward the donor's value. Emitted
     /// in `(donor_id, recipient_id)`-sorted order per tick.
     HorizontalGeneTransfer(HgtEvent),
+    /// Sprint 3 Item 11 — the ecosystem speciation step generated
+    /// a new daughter species from a parent under one of five
+    /// triggers (allopatric / sympatric / polyploid / founder
+    /// effect / post-extinction radiation). The daughter inherits
+    /// parent traits with correlated allometric drift; the parent
+    /// stays extant. Speciation and extinction together bound
+    /// per-planet registry growth.
+    SpeciationOccurred(SpeciationEvent),
     /// A relation almost crossed the inter-civ
     /// transmission gate but didn't quite — the comprehension
     /// score landed in the mythologization band so the relation's

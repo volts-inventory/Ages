@@ -282,6 +282,63 @@ pub struct HgtEvent {
     pub trait_swapped: TraitName,
 }
 
+/// Trigger kind for a `SpeciationOccurred` event. Sprint 3 Item 11
+/// emits one of five trigger kinds, mapped from the
+/// `sim_ecosystem::speciation::SpeciationTrigger` enum. The wire
+/// schema enumerates all five up front so downstream consumers can
+/// switch exhaustively without a schema migration as new triggers
+/// (HGT-driven, sexual-selection-driven, …) are wired in later items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SpeciationTriggerKind {
+    /// Population split into geographically disconnected groups for
+    /// more than the configured isolation window. The daughter
+    /// species inherits the isolated subpopulation.
+    Allopatric {
+        /// Number of consecutive ticks the two subpopulations were
+        /// disconnected before speciation fired.
+        isolation_ticks: u64,
+    },
+    /// Sympatric — two species competed intensely on overlapping
+    /// resources for longer than the configured sympatric pressure
+    /// window, and the parent drifted into a distinct niche.
+    Sympatric,
+    /// Polyploidy — instant chromosome-duplication event. Only
+    /// emitted for `Lifecycle::Plant` parents.
+    Polyploid,
+    /// Founder effect — a small bottleneck population (< 1% of the
+    /// parent's normal pool) seeded new territory and drifted toward
+    /// fixation differently from the parent stock.
+    FounderEffect,
+    /// Post-extinction adaptive radiation — speciation rate is
+    /// boosted 5× for 100 generations after a mass-extinction event.
+    /// `generation` identifies which post-extinction cohort the
+    /// daughter species belongs to (0 = first, growing monotonically
+    /// through the boosted window).
+    PostExtinctionRadiation {
+        generation: u64,
+    },
+}
+
+/// A daughter species was generated from a parent by the speciation
+/// step. Sprint 3 Item 11 emits one event per speciation. The
+/// daughter id is the newly allocated `SpeciesId` (one past the
+/// current registry max); the parent id is the species the daughter
+/// drifted from. Trait drift is correlated via the allometry helper
+/// — see `sim_ecosystem::speciation::divergence_pull`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SpeciationEvent {
+    pub tick: u64,
+    /// Dense per-planet parent species id (`SpeciesId.0`).
+    pub parent_id: u32,
+    /// Dense per-planet daughter species id (`SpeciesId.0`).
+    /// Allocated as `max(existing_id) + 1` at speciation time so the
+    /// id space stays monotonic across the run.
+    pub daughter_id: u32,
+    /// Trigger kind. See `SpeciationTriggerKind`.
+    pub trigger: SpeciationTriggerKind,
+}
+
 /// Snapshot of the species' nomadic population per cell.
 /// Emitted on tick boundaries when the nomad pool's per-cell
 /// distribution changes meaningfully (births, civ absorption,

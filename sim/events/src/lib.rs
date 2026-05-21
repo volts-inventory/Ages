@@ -198,6 +198,7 @@ impl Emitter for CountingEmitter {
             Event::AllianceDissolved(_) => "alliance_dissolved",
             Event::SpeciesExtinct(_) => "species_extinct",
             Event::HorizontalGeneTransfer(_) => "horizontal_gene_transfer",
+            Event::SpeciationOccurred(_) => "speciation_occurred",
         };
         *self.counts.entry(key).or_insert(0) += 1;
         Ok(())

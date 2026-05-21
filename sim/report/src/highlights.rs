@@ -225,6 +225,11 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // shifts; the events themselves stay out of the highlight
         // reel.
         Event::HorizontalGeneTransfer(_) => None,
+        // Speciation events likewise reshape the planet's biota —
+        // new daughter species joining the registry. Pin slightly
+        // below extinction (0.88) so a run with both events shows
+        // the extinction-then-radiation arc with extinction first.
+        Event::SpeciationOccurred(_) => Some(0.88),
     }
 }
 

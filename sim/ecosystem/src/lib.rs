@@ -45,6 +45,15 @@ use sim_species::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod speciation;
+pub use speciation::{
+    daughter_eco_role, derive_daughter_species, divergence_pull, next_species_id,
+    polyploid_check, step_speciation, SpeciationTracker, SpeciationTrigger,
+    ALLOPATRIC_ISOLATION_TICKS, FOUNDER_BIOMASS_FRAC, POLYPLOID_PER_TICK_PROB_RECIP,
+    POST_EXTINCTION_BOOST_TICKS, POST_EXTINCTION_RADIATION_MULTIPLIER,
+    SYMPATRIC_COMPETITION_BIOMASS_FRAC, SYMPATRIC_PRESSURE_TICKS,
+};
+
 /// Lindeman 10:1 ratio — each consumer tier is capped at 10% of the
 /// preceding tier's biomass.
 pub const LINDEMAN_RATIO: (i64, i64) = (1, 10);

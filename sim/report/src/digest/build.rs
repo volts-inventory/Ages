@@ -587,6 +587,13 @@ impl Digest {
             // civ_id. A future ecosystem-side chapter (planet
             // census, microbial trait drift) can roll these up.
             Event::HorizontalGeneTransfer(_) => {}
+            // Sprint 3 Item 11: speciation events surface in the event
+            // log + highlights stream. Per-civ digest aggregation is
+            // not in scope (the daughter species is a planet-level
+            // bookkeeping unit, not a civ event); a follow-up can grow
+            // ecosystem-side chapters (planet species census) without
+            // changing the wire format.
+            Event::SpeciationOccurred(_) => {}
         }
     }
 

@@ -16,3 +16,8 @@ sim-physics.workspace = true
 sim-species.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+
+[dev-dependencies]
+sim-recognition.workspace = true
+sim-world.workspace = true
+serde_json.workspace = true
