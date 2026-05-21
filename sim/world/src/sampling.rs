@@ -53,12 +53,6 @@ pub fn sample_planet(seed: u64) -> Planet {
     let name = planet_name_from_seed(seed);
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
 
-    // Surface gravity in m/s². Sample 100..=3000 hundredths giving
-    // 1.0–30.0 m/s² (Earth ≈ 9.81). The lower bound rules out
-    // micro-gravity bodies; the upper covers super-Earths.
-    let gravity_hundredths: i64 = rng.gen_range(100..=3000);
-    let gravity = Real::from_ratio(gravity_hundredths, 100);
-
     // Pick the metabolic substrate first. Aqueous biased high
     // (water is the most common solvent in the universe); the
     // remaining 40% rotates rarer chemistries.
@@ -68,6 +62,38 @@ pub fn sample_planet(seed: u64) -> Planet {
         15..=17 => MetabolicSubstrate::Hydrocarbon, // 15%
         _ => MetabolicSubstrate::Silicate,          // 10%
     };
+
+    // Sample mass + radius in Earth units, biased by substrate.
+    // Sprint 5 Item 21: gravity is now derived from (mass, radius)
+    // instead of sampled directly, so atmospheric retention
+    // (Item 17) and tidal Love numbers (Item 16) can be consistent
+    // with the planet's bulk pair.
+    //
+    // Ranges (Earth-relative):
+    //   Aqueous     : mass 0.5-2.0, radius 0.8-1.4  (Earth-like)
+    //   Silicate    : mass 0.5-2.5, radius 0.7-1.3  (rocky variant
+    //                 with hot dense lattice; can be heavier)
+    //   Ammoniacal  : mass 0.5-2.0, radius 0.9-1.6  (cold ammonia
+    //                 worlds tend larger / lower-density)
+    //   Hydrocarbon : mass 0.3-1.5, radius 0.6-1.3  (Titan-style
+    //                 low-mass ices)
+    //
+    // Derived gravity (Earth-relative `g = M/R²` ×9.81 m/s²)
+    // ends up inside 2.5-50 m/s² across the four substrates —
+    // a wider plausible band than the prior 1.0-30.0 m/s² scalar
+    // sampling, picking up super-Earth and high-density silicate
+    // edge cases. Integers ×10 → Real ratio so the deterministic
+    // path stays integer-only.
+    let (mass_lo_x10, mass_hi_x10, radius_lo_x10, radius_hi_x10) = match metabolic_substrate {
+        MetabolicSubstrate::Aqueous => (5, 20, 8, 14),
+        MetabolicSubstrate::Silicate => (5, 25, 7, 13),
+        MetabolicSubstrate::Ammoniacal => (5, 20, 9, 16),
+        MetabolicSubstrate::Hydrocarbon => (3, 15, 6, 13),
+    };
+    let mass_x10: i64 = rng.gen_range(mass_lo_x10..=mass_hi_x10);
+    let radius_x10: i64 = rng.gen_range(radius_lo_x10..=radius_hi_x10);
+    let mass = Real::from_ratio(mass_x10, 10);
+    let radius = Real::from_ratio(radius_x10, 10);
 
     // Composition biased per substrate. Aqueous / Ammoniacal /
     // Silicate live on rocky-or-ocean worlds; Hydrocarbon also
@@ -343,7 +369,8 @@ pub fn sample_planet(seed: u64) -> Planet {
     Planet {
         seed,
         name,
-        gravity,
+        mass,
+        radius,
         composition,
         mean_temperature,
         temperature_gradient,

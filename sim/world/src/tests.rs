@@ -9,7 +9,8 @@ fn sample_planet_is_deterministic() {
     let a = sample_planet(42);
     let b = sample_planet(42);
     assert_eq!(a.seed, b.seed);
-    assert_eq!(a.gravity, b.gravity);
+    assert_eq!(a.mass, b.mass);
+    assert_eq!(a.radius, b.radius);
     assert_eq!(a.composition, b.composition);
     assert_eq!(a.mean_temperature, b.mean_temperature);
     assert_eq!(a.terrain_peak, b.terrain_peak);
@@ -24,7 +25,8 @@ fn different_seeds_produce_different_planets() {
     // At least one major property should differ. With a few
     // properties sampled independently, probability of all
     // matching is astronomically low.
-    let same_everything = a.gravity == b.gravity
+    let same_everything = a.mass == b.mass
+        && a.radius == b.radius
         && a.composition == b.composition
         && a.mean_temperature == b.mean_temperature
         && a.terrain_peak == b.terrain_peak;
@@ -73,9 +75,17 @@ fn sampled_planets_lie_in_si_ranges() {
     // band silently slips back to legacy sim-units.
     for seed in 0..256u64 {
         let p = sample_planet(seed);
-        // Gravity 1.0 to 30.0 m/s².
-        assert!(p.gravity >= Real::from_int(1));
-        assert!(p.gravity <= Real::from_int(30));
+        // Mass + radius in Earth units; gravity is derived
+        // via Planet::gravity() (Sprint 5 Item 21). Across the
+        // four substrate sampling bands the derived
+        // gravity sits inside ~1.7-50.0 m/s² (wider than the
+        // prior 1.0-30.0 m/s² band because super-Earth silicate
+        // and dense rocky outliers are now reachable).
+        assert!(p.mass > Real::ZERO);
+        assert!(p.radius > Real::ZERO);
+        let g = p.gravity();
+        assert!(g >= Real::ONE);
+        assert!(g <= Real::from_int(60));
         // Temperature spans every substrate's window:
         // Hydrocarbon 90 K floor, Silicate 1500 K ceiling.
         assert!(p.mean_temperature >= Real::from_int(90));
@@ -136,7 +146,9 @@ fn synthetic_planet(
     Planet {
         seed: 0,
         name: "TestPlanet".to_string(),
-        gravity: Real::from_int(10),
+        // Earth-like mass/radius pair yields ~9.81 m/s² gravity.
+        mass: Real::ONE,
+        radius: Real::ONE,
         composition,
         mean_temperature: Real::from_int(280),
         temperature_gradient: Real::from_int(20),
@@ -436,3 +448,178 @@ fn peaks_respect_minimum_distance() {
         }
     }
 }
+
+// Sprint 5 Item 21 — mass/radius/density coupling tests.
+
+/// Build a minimal Planet with the given (mass, radius, substrate)
+/// for the Sprint 5 Item 21 mass/radius/density assertions. Other
+/// fields are neutral.
+fn mr_planet(mass: Real, radius: Real, substrate: MetabolicSubstrate) -> Planet {
+    Planet {
+        seed: 0,
+        name: "MRTestPlanet".to_string(),
+        mass,
+        radius,
+        composition: Composition::Rocky,
+        mean_temperature: Real::from_int(280),
+        temperature_gradient: Real::from_int(20),
+        terrain_peak: Real::from_int(5_000),
+        terrain_centre_q: 0,
+        terrain_centre_r: 0,
+        sea_level: Real::from_int(1_000),
+        atmosphere: Atmosphere::Oxidising,
+        atmospheric_composition: AtmosphericComposition::vacuum(),
+        surface_pressure: Real::from_int(101_325),
+        biosphere: BiosphereClass::Sparse,
+        biosphere_density: Real::from_ratio(3, 10),
+        magnetosphere: Magnetosphere::Strong,
+        crust: Crust::Basaltic,
+        crustal_composition: CrustalComposition::empty(),
+        stellar_luminosity: Real::from_int(1_361),
+        moon_count: 0,
+        moons: vec![],
+        orbital_eccentricity_x100: 2,
+        axial_tilt_deg: Real::from_int(23),
+        day_length_hours: Real::from_int(24),
+        orbital_period_months: 12,
+        metabolic_substrate: substrate,
+        substrate_perturbation: Real::ZERO,
+    }
+}
+
+#[test]
+fn gravity_correctly_derived_from_mass_and_radius() {
+    // Sprint 5 Item 21: mass=4, radius=2 has M/R² = 4/4 = 1.0
+    // in Earth-relative units, so the derived surface gravity
+    // equals Earth gravity (~9.81 m/s²). Within 1% tolerance to
+    // cover the EARTH_GRAVITY_MS2_X100 = 981 hundredths anchor.
+    let p = mr_planet(
+        Real::from_int(4),
+        Real::from_int(2),
+        MetabolicSubstrate::Aqueous,
+    );
+    let g = p.gravity();
+    let earth_g = Real::from_ratio(981, 100);
+    let delta = if g > earth_g { g - earth_g } else { earth_g - g };
+    let tolerance = Real::from_ratio(10, 100); // 0.10 m/s²
+    assert!(
+        delta < tolerance,
+        "gravity({}) should equal Earth gravity ({}); diff {}",
+        g.to_f64_for_display(),
+        earth_g.to_f64_for_display(),
+        delta.to_f64_for_display(),
+    );
+
+    // Sanity-check the doubling/halving relationship: doubling
+    // mass at the same radius doubles gravity; halving radius
+    // at the same mass quadruples gravity.
+    let p2 = mr_planet(
+        Real::from_int(2),
+        Real::ONE,
+        MetabolicSubstrate::Aqueous,
+    );
+    let p3 = mr_planet(
+        Real::ONE,
+        Real::from_ratio(5, 10),
+        MetabolicSubstrate::Aqueous,
+    );
+    let earth_g_int = earth_g.to_f64_for_display();
+    let g2 = p2.gravity().to_f64_for_display();
+    let g3 = p3.gravity().to_f64_for_display();
+    assert!(
+        (g2 - 2.0 * earth_g_int).abs() < 0.10,
+        "M=2,R=1 → 2×Earth-g; got {g2}"
+    );
+    assert!(
+        (g3 - 4.0 * earth_g_int).abs() < 0.20,
+        "M=1,R=0.5 → 4×Earth-g; got {g3}"
+    );
+}
+
+#[test]
+fn escape_velocity_correct_for_earth_analog() {
+    // Sprint 5 Item 21: Earth-analog (mass=1, radius=1) → escape
+    // velocity ≈ 11.186 km/s. Within 5% slack (~0.56 km/s) to
+    // absorb the EARTH_RADIUS_M/1000 truncation and the
+    // Q32.32 sqrt iteration's LSB drift.
+    let p = mr_planet(
+        Real::ONE,
+        Real::ONE,
+        MetabolicSubstrate::Aqueous,
+    );
+    let v = p.escape_velocity();
+    let v_kms = v.to_f64_for_display();
+    let expected = 11.186_f64;
+    let rel_err = (v_kms - expected).abs() / expected;
+    assert!(
+        rel_err < 0.05,
+        "Earth-analog escape velocity = {v_kms} km/s; expected ≈ {expected}; rel err {rel_err}",
+    );
+
+    // Mass scaling: doubling mass at fixed radius scales v_escape
+    // by sqrt(2) ≈ 1.414.
+    let p_heavy = mr_planet(
+        Real::from_int(2),
+        Real::ONE,
+        MetabolicSubstrate::Aqueous,
+    );
+    let v_heavy = p_heavy.escape_velocity().to_f64_for_display();
+    let scale = v_heavy / v_kms;
+    assert!(
+        (scale - 1.414).abs() < 0.05,
+        "doubling mass should scale escape velocity by sqrt(2) ≈ 1.414; got ratio {scale}",
+    );
+}
+
+#[test]
+fn mass_radius_relation_per_substrate_yields_correct_density() {
+    // Sprint 5 Item 21: density is substrate-driven (Aqueous ~1,
+    // Silicate ~5, Hydrocarbon ~0.5, Ammoniacal ~0.7 g/cm³),
+    // independent of the specific mass/radius pair within each
+    // substrate. Tested at Earth-mass-equivalent inputs but the
+    // method is mass/radius-agnostic by design.
+    let mass = Real::ONE;
+    let radius = Real::ONE;
+
+    let aqueous = mr_planet(mass, radius, MetabolicSubstrate::Aqueous);
+    let silicate = mr_planet(mass, radius, MetabolicSubstrate::Silicate);
+    let hydrocarbon = mr_planet(mass, radius, MetabolicSubstrate::Hydrocarbon);
+    let ammoniacal = mr_planet(mass, radius, MetabolicSubstrate::Ammoniacal);
+
+    let d_aq = aqueous.density(&MetabolicSubstrate::Aqueous);
+    let d_si = silicate.density(&MetabolicSubstrate::Silicate);
+    let d_hc = hydrocarbon.density(&MetabolicSubstrate::Hydrocarbon);
+    let d_am = ammoniacal.density(&MetabolicSubstrate::Ammoniacal);
+
+    // Aqueous ~1 g/cm³.
+    assert!(
+        d_aq == Real::ONE,
+        "Aqueous density should be 1 g/cm³; got {}",
+        d_aq.to_f64_for_display(),
+    );
+    // Silicate ~5 g/cm³.
+    assert!(
+        d_si == Real::from_int(5),
+        "Silicate density should be ~5 g/cm³; got {}",
+        d_si.to_f64_for_display(),
+    );
+    // Hydrocarbon ~0.5 g/cm³.
+    assert!(
+        d_hc == Real::from_ratio(5, 10),
+        "Hydrocarbon density should be ~0.5 g/cm³; got {}",
+        d_hc.to_f64_for_display(),
+    );
+    // Ammoniacal ~0.7 g/cm³.
+    assert!(
+        d_am == Real::from_ratio(7, 10),
+        "Ammoniacal density should be ~0.7 g/cm³; got {}",
+        d_am.to_f64_for_display(),
+    );
+
+    // Ordering invariant: silicate is the densest, hydrocarbon
+    // the least dense, aqueous between.
+    assert!(d_si > d_aq);
+    assert!(d_aq > d_am);
+    assert!(d_am > d_hc);
+}
+

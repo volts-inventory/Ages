@@ -6,7 +6,18 @@ use crate::composition::{AtmosphericComposition, CrustalComposition, Moon};
 use crate::types::{
     Atmosphere, BiosphereClass, Composition, Crust, Magnetosphere, MetabolicSubstrate,
 };
+use sim_arith::transcendental::sqrt;
 use sim_arith::Real;
+
+/// Earth-equivalent surface gravity in m/s². Used as the
+/// reference constant so `gravity(M, R) = EARTH_G * M / R²`
+/// where M and R are in Earth units.
+const EARTH_GRAVITY_MS2_X100: i64 = 981;
+
+/// Earth's mean radius in metres. Used to lift the
+/// Earth-relative escape velocity into km/s for human-friendly
+/// output and downstream physics consumers.
+const EARTH_RADIUS_M: i64 = 6_371_000;
 
 /// Bulk planet properties sampled at run start. Subset of the full
 /// ~50-property seed; expands as later milestones need more.
@@ -27,9 +38,23 @@ pub struct Planet {
     /// Pure flavour; no physics depends on it. Used by the
     /// viewport / report layers for human-readable identification.
     pub name: String,
-    /// Surface gravitational acceleration in m/s² (Earth ≈ 9.81).
-    /// Range ~1.0 to ~30.0.
-    pub gravity: Real,
+    /// Planet mass in Earth masses (Earth = 1.0). Range depends
+    /// on composition: Earth-like rocky 0.5-2.0, gas-giant-style
+    /// gaseous shells up to ~50, low-mass sub-surface oceans
+    /// down to ~0.1. Together with `radius` this derives surface
+    /// gravity via the closed-form `g = EARTH_G × M / R²` and
+    /// escape velocity via `v_escape = sqrt(2 × g × R)`. Sprint
+    /// 5 Item 21 separated the mass/radius pair from the prior
+    /// `gravity` scalar so atmospheric retention (Item 17) and
+    /// tidal Love numbers (Item 16) can be derived rather than
+    /// re-sampled.
+    pub mass: Real,
+    /// Planet radius in Earth radii (Earth = 1.0). Range
+    /// depends on composition: Earth-like rocky 0.7-1.4,
+    /// gas-giant gaseous shells up to ~11 (Jupiter ≈ 11
+    /// Earth-radii), sub-surface oceans 0.3-0.7. Couples with
+    /// `mass` for derived gravity / escape velocity.
+    pub radius: Real,
     pub composition: Composition,
     /// Mean surface temperature in K (Earth ≈ 288). Range varies
     /// by composition.
@@ -150,6 +175,83 @@ pub struct Planet {
 }
 
 impl Planet {
+    /// Surface gravitational acceleration in m/s² derived from
+    /// the planet's mass / radius pair. Earth-relative closed
+    /// form: `g = EARTH_G × M / R²` where M and R are in
+    /// Earth units and `EARTH_G ≈ 9.81 m/s²`. The Sprint 5 Item
+    /// 21 refactor moved `gravity` from a stored scalar to this
+    /// derived accessor so atmospheric retention (Item 17) and
+    /// tidal coupling (Item 16) can read consistent
+    /// mass/radius-driven values.
+    #[must_use]
+    pub fn gravity(&self) -> Real {
+        // g = (EARTH_G / 100) * mass / (radius * radius), with
+        // the divide-by-100 baked into the Real constant so the
+        // intermediate stays inside Q32.32 range.
+        let earth_g = Real::from_ratio(EARTH_GRAVITY_MS2_X100, 100);
+        if self.radius == Real::ZERO {
+            return Real::ZERO;
+        }
+        earth_g * self.mass / (self.radius * self.radius)
+    }
+
+    /// Escape velocity in km/s at the planet's surface. Formula:
+    /// `v_escape = sqrt(2 × g × R)` lifted into km/s. In
+    /// Earth-relative units this reduces to
+    /// `v_escape_kms = sqrt(2 × g_earth_ms2 × R_earth_m × M / R) / 1000`.
+    /// Earth analog (M=1, R=1) yields ≈11.186 km/s. Used by
+    /// Item 17's atmospheric retention calculation.
+    #[must_use]
+    pub fn escape_velocity(&self) -> Real {
+        // Derivation:
+        //   v_kms² = 2 * g_ms2 * R_meters / 1_000_000
+        //          = 2 * (g_earth_ms2 * M/R²) * (R * R_earth_m) / 1e6
+        //          = 2 * g_earth_ms2 * R_earth_m / 1e6 * M/R
+        //
+        // 2 × 9.81 × 6_371_000 / 1_000_000 ≈ 124.99 km²/s². With
+        // M=R=1 (Earth), v ≈ sqrt(124.99) ≈ 11.18 km/s. We pack
+        // the constant as a `Real::from_ratio` to stay integer-
+        // only on the deterministic path. The `100 × 1000`
+        // denominator absorbs both the EARTH_GRAVITY_MS2_X100
+        // hundredths anchor and the metres→kilometres divide.
+        if self.radius == Real::ZERO || self.mass == Real::ZERO {
+            return Real::ZERO;
+        }
+        let two_g_r_earth_km2_s2 = Real::from_ratio(
+            2 * EARTH_GRAVITY_MS2_X100 * (EARTH_RADIUS_M / 1_000),
+            100 * 1_000,
+        );
+        let v_squared = two_g_r_earth_km2_s2 * self.mass / self.radius;
+        sqrt(v_squared)
+    }
+
+    /// Bulk density in g/cm³ derived from the planet's
+    /// metabolic substrate. Earth ≈ 5.5 g/cm³ (silicate rock);
+    /// water-substrate ocean worlds drop to ~1; ammonia ~0.7;
+    /// hydrocarbon ices ~0.5. Used by Item 16 tidal Love-number
+    /// coupling and Item 21's mass/radius consistency.
+    ///
+    /// The mapping is substrate-driven by design (Item 21:
+    /// "density derived per substrate"); mass/radius vary
+    /// independently within each substrate's class.
+    #[must_use]
+    pub fn density(&self, substrate: &MetabolicSubstrate) -> Real {
+        match substrate {
+            // Water-substrate ocean worlds: liquid-water-dominated
+            // bulk, density ~1 g/cm³.
+            MetabolicSubstrate::Aqueous => Real::ONE,
+            // Ammonia-substrate cold worlds: ammonia is 0.68
+            // g/cm³ liquid; ammonia/ice mix lands near 0.7.
+            MetabolicSubstrate::Ammoniacal => Real::from_ratio(7, 10),
+            // Methane/ethane Titan-style: bulk density ~0.5
+            // g/cm³ (methane-water-ice hybrid worlds).
+            MetabolicSubstrate::Hydrocarbon => Real::from_ratio(5, 10),
+            // Silicate rock worlds: Earth ≈ 5.5 g/cm³; round
+            // to 5 g/cm³ as the substrate-typical anchor.
+            MetabolicSubstrate::Silicate => Real::from_int(5),
+        }
+    }
+
     /// Every sampled planet is habitable by construction (the
     /// substrate-first sampler picks a metabolic chemistry, then
     /// constrains atmosphere/temperature/crust to that chemistry's

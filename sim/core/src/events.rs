@@ -54,7 +54,7 @@ pub(crate) fn planet_to_event(p: &Planet) -> PlanetDerived {
     PlanetDerived {
         seed: p.seed,
         name: p.name.clone(),
-        gravity_q32: p.gravity.raw().to_bits(),
+        gravity_q32: p.gravity().raw().to_bits(),
         composition: match p.composition {
             Composition::Rocky => "rocky".into(),
             Composition::OceanWorld => "ocean_world".into(),
