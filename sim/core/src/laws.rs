@@ -36,6 +36,13 @@ pub(crate) struct Laws {
     pub tectonics: sim_physics::Tectonics,
     /// Sprint 4 Item 12d: volcanic CO2 + H2O outgassing.
     pub volcanism: sim_physics::Volcanism,
+    /// Sprint 5 Item 20: geomagnetic-reversal Markov chain. Drives the
+    /// per-planet `dipole_state` / `dipole_strength` envelope that
+    /// feeds `state.cosmic_ray_ground_flux()`. Earth-like trial rate
+    /// (~1/250 000 per tick) + 1000-tick reversal window; planets
+    /// without a magnetosphere still get this law installed but the
+    /// effect is invisible because the per-cell vector field is zero.
+    pub magnetic_reversal: sim_physics::MagneticReversal,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -239,6 +246,16 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // Volcanic CO2 + H2O outgassing (Sprint 4 Item 12d).
     let volcanism = sim_physics::Volcanism::earth_like();
 
+    // Geomagnetic-reversal Markov chain (Sprint 5 Item 20). One
+    // earth-like calibration covers every planet — trial rate +
+    // reversal duration are not currently substrate-tuned. Planets
+    // with `Magnetosphere::None` still install the law: the
+    // `cosmic_ray_ground_flux()` accessor reads the per-planet
+    // dipole-strength envelope unconditionally, so the law continues
+    // to mutate state even on no-dipole worlds (downstream couplings
+    // can decide whether to ignore the result).
+    let magnetic_reversal = sim_physics::MagneticReversal::earth_like();
+
     Laws {
         fluid,
         heat,
@@ -256,6 +273,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         ice_albedo,
         tectonics,
         volcanism,
+        magnetic_reversal,
     }
 }
 

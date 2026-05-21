@@ -48,7 +48,7 @@ pub use hydrology::Hydrology;
 pub use isostasy::{apply_isostasy, continental_factor, oceanic_factor};
 pub use laws::Law;
 pub use lorentz::Lorentz;
-pub use magnetism::Magnetism;
+pub use magnetism::{DipoleState, MagneticReversal, Magnetism};
 pub use mechanics::Mechanics;
 pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorState};
 pub use radiation::Radiation;
