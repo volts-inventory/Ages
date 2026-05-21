@@ -1,10 +1,33 @@
-//! Tectonics + fluvial-erosion foundation (Sprint 4 Item 12).
+//! Tectonics + fluvial-erosion foundation (Sprint 4 Item 12) plus
+//! slab-pull velocity dynamics (Sprint 4 Item 12e).
 //!
 //! This is the base layer of Sprint 4's rock-cycle stack. It introduces
 //! the per-cell plate identity, per-plate kinematics, boundary-driven
 //! uplift / depression, and slope × precipitation fluvial erosion that
 //! Sprint 4 sub-items (subduction, crust_age, isostasy, volcanism,
 //! slab-pull) extend.
+//!
+//! ## Slab-pull dynamics (Item 12e)
+//!
+//! Plate velocities are not static. Each tick, oceanic plates that
+//! abut continental plates (or, in a future Item 12b world, older
+//! oceanic plates) accelerate *toward* the consuming boundary under
+//! the integrated slab-pull force:
+//!
+//! ```text
+//! slab_pull = Σ (slab_length × density_contrast × PULL_FACTOR)
+//!             × (unit vector toward the subduction edge)
+//! plate.velocity += slab_pull × dt
+//! ```
+//!
+//! `slab_length` is the number of cells along the subducting edge,
+//! `density_contrast` is `0.22` for oceanic-vs-continental and `0.05`
+//! for oceanic-vs-oceanic (placeholder until Item 12b ages crust),
+//! and `PULL_FACTOR = 1 / 10_000` gives geological-scale acceleration.
+//! Velocity is capped per axis at `MAX_PLATE_VELOCITY` to keep the
+//! simulation from running away under pathological boundary topology.
+//! This closes the loop subduction begins: subduction creates pull,
+//! pull drives velocity, velocity drives further subduction.
 //!
 //! ## Data model
 //!
@@ -83,6 +106,7 @@ use crate::laws::Law;
 use crate::state::PhysicsState;
 use sim_arith::transcendental::sqrt as sqrt_real;
 use sim_arith::Real;
+use std::cell::RefCell;
 
 /// Hex-direction axial offsets matching `HexGrid::neighbours` canonical
 /// order (E, NE, NW, W, SW, SE). Duplicated from `hydrology.rs` /
@@ -180,6 +204,58 @@ pub const AGE_TICK_SCALE: i64 = 10_000;
 pub const OCEAN_DEPTH_K_NUM: i64 = 1;
 pub const OCEAN_DEPTH_K_DEN: i64 = 100;
 
+/// Slab-pull coupling coefficient (Sprint 4 Item 12e). Multiplies
+/// `slab_length × density_contrast` to give the per-tick velocity
+/// kick. `1 / 10_000` keeps the response geological: an Earth-scale
+/// 30-cell subduction zone at 0.22 contrast accumulates
+/// ~6.6e-4 per axis per tick — many thousands of ticks to reach the
+/// `MAX_PLATE_VELOCITY` cap, matching real plates' multi-million-year
+/// acceleration timescales. Returned by a function (not a `const`)
+/// because `Real::from_ratio` is not const-evaluable; the value
+/// still resolves at link time and the call has no runtime cost.
+#[must_use]
+pub fn slab_pull_factor() -> Real {
+    Real::from_ratio(1, 10_000)
+}
+
+/// Density contrast for an oceanic slab subducting beneath continental
+/// crust (Sprint 4 Item 12e). Real-Earth oceanic basalt is ~3.0 g/cm³;
+/// continental granite is ~2.7 g/cm³, so the fractional contrast is
+/// ~0.10 — but the *effective* pull (oceanic minus mantle minus the
+/// overriding plate's resistance) is higher because the overriding
+/// plate transfers no buoyancy back through the trench. 0.22 sits in
+/// the geophysical literature's range and is large enough to give a
+/// visible signal in a few-tick test.
+#[must_use]
+pub fn slab_pull_density_contrast_oc_cont() -> Real {
+    Real::from_ratio(22, 100)
+}
+
+/// Density contrast for an oceanic slab subducting beneath older
+/// oceanic crust (Sprint 4 Item 12e). Both sides are basaltic so the
+/// contrast is small — the cooler, denser older slab still wins, but
+/// only marginally. Set to `0.05` per spec. Active once
+/// `PhysicsState::crust_age` is populated (Sprint 4 Item 12b): the
+/// per-cell side with the *greater* age is the diving slab, mirror
+/// of the `Tectonics::pick_subducting_side` tie-break for oceanic-
+/// oceanic boundaries.
+#[must_use]
+pub fn slab_pull_density_contrast_oc_oc() -> Real {
+    Real::from_ratio(5, 100)
+}
+
+/// Per-axis velocity cap (Sprint 4 Item 12e). Without a cap, an
+/// oceanic plate whose every edge is consuming would accelerate
+/// without bound; the cap keeps the system stable at any boundary
+/// topology. `5` (cells per macro-tick per axis) is 2.5× the
+/// worldgen sampler's initial `[-2, +2]` window, leaving headroom
+/// for slab-pull to meaningfully change the initial velocity while
+/// preventing teleportation-scale drift.
+#[must_use]
+pub fn max_plate_velocity() -> Real {
+    Real::from_int(5)
+}
+
 /// Crust archetype carried by each `Plate`.
 ///
 /// - `Oceanic` — thin (~7 km), basaltic, dense. Sinks at convergent
@@ -249,8 +325,29 @@ pub struct Tectonics {
     /// Plate roster, indexed by `plate_id`. Cell `i` belongs to
     /// `plates[state.plate_id()[i] as usize]`. Sorted by id so the
     /// vector index *is* the plate id; the worldgen sampler enforces
-    /// this contract.
+    /// this contract. `Plate::velocity` is the *initial* (worldgen)
+    /// drift velocity — the evolved per-tick velocity lives in
+    /// `current_velocity` so the initial roster stays inspectable
+    /// (e.g. for the `tectonics_is_deterministic` test that checks
+    /// the immediate post-sampling layout).
     pub plates: Vec<Plate>,
+    /// Per-plate slab-pull force `(fq, fr)` accumulated this tick
+    /// (Sprint 4 Item 12e). Re-computed on every `integrate` call
+    /// before being applied to `current_velocity`. Exposed (and
+    /// `RefCell`-wrapped) so callers — and the test suite — can
+    /// inspect what the slab-pull pass produced this tick without
+    /// having to re-derive it. Length matches `plates.len()` once
+    /// `integrate` has run at least once.
+    pub slab_pull_force: RefCell<Vec<(Real, Real)>>,
+    /// Per-plate evolved velocity `(vq, vr)` (Sprint 4 Item 12e).
+    /// Lazily initialised from `plates[i].velocity` on first
+    /// `integrate` call. Subsequent calls add `slab_pull × dt` and
+    /// clamp each axis to `[-MAX_PLATE_VELOCITY, +MAX_PLATE_VELOCITY]`.
+    /// Reads through this field (not `plates[i].velocity`) so the
+    /// uplift / divergence + subduction passes below see the
+    /// up-to-date kinematic state — closes the "subduction drives
+    /// velocity, velocity drives subduction" feedback loop.
+    pub current_velocity: RefCell<Vec<(Real, Real)>>,
 }
 
 impl Tectonics {
@@ -266,6 +363,11 @@ impl Tectonics {
             divergence_rate: Real::from_ratio(1, 1_000),
             erosion_k: Real::from_ratio(1, 100_000),
             plates: Vec::new(),
+            // Empty until plates land; `integrate` resizes lazily so
+            // tests that wire a plate roster after `earth_like()`
+            // don't need a separate init step.
+            slab_pull_force: RefCell::new(Vec::new()),
+            current_velocity: RefCell::new(Vec::new()),
         }
     }
 
@@ -422,6 +524,33 @@ impl Tectonics {
             }
         }
     }
+
+    /// Lazily size `slab_pull_force` and `current_velocity` to match
+    /// the current plate roster (Sprint 4 Item 12e). On first call
+    /// `current_velocity[i]` is seeded from `plates[i].velocity`; on
+    /// subsequent calls the existing evolved values are preserved
+    /// and only the tail (if the roster grew) is appended. Idempotent
+    /// so `integrate` can call it every tick without paying for a
+    /// full re-init.
+    fn ensure_velocity_buffers(&self) {
+        let n = self.plates.len();
+        {
+            let mut pull = self.slab_pull_force.borrow_mut();
+            if pull.len() != n {
+                pull.resize(n, (Real::ZERO, Real::ZERO));
+            }
+        }
+        {
+            let mut vel = self.current_velocity.borrow_mut();
+            if vel.len() < n {
+                for p in &self.plates[vel.len()..] {
+                    vel.push(p.velocity);
+                }
+            } else if vel.len() > n {
+                vel.truncate(n);
+            }
+        }
+    }
 }
 
 impl Law for Tectonics {
@@ -461,6 +590,148 @@ impl Law for Tectonics {
         let n = grid.n_cells();
         let mut at_ridge = vec![false; n];
 
+        // ---- Slab-pull velocity update (Sprint 4 Item 12e). ----
+        //
+        // Phase 1: lazily size the evolved-velocity and slab-pull-force
+        // vectors to match the current plate roster. The roster is
+        // immutable per tick but a future sub-item (e.g. plate merge
+        // after full subduction) may grow / shrink it across ticks;
+        // we re-extend defensively on every call rather than locking
+        // the vectors at `earth_like()` time.
+        self.ensure_velocity_buffers();
+
+        // Phase 2: detect subducting edges and accumulate per-plate
+        // slab-pull force vectors. A subducting edge is a hex pair
+        // `(i, j)` where:
+        //   - `plate_ids[i] != plate_ids[j]` (cross-plate)
+        //   - plate(i) is Oceanic AND plate(j) is Continental, OR
+        //   - both are Oceanic AND `crust_age[i] > crust_age[j]` so
+        //     `i` is the colder / denser / diving side (Item 12b
+        //     wired the per-cell age field; Item 12a's
+        //     `pick_subducting_side` uses the same older-wins rule
+        //     for its uplift pass).
+        // The oceanic plate gets a force vector pointing *into* the
+        // neighbour cell (toward the trench it's diving beneath).
+        // Density contrast is `SLAB_PULL_DENSITY_CONTRAST_OC_CONT`
+        // (0.22) for oceanic-continental and
+        // `SLAB_PULL_DENSITY_CONTRAST_OC_OC` (0.05) for the smaller
+        // age-driven contrast between two oceanic plates. The
+        // `slab_length` is implicit in the per-edge accumulation —
+        // each edge contributes once, so a longer subducting
+        // boundary contributes proportionally more total force.
+        //
+        // Iterates *all six* directions per cell so each oceanic-side
+        // cell sees every neighbour edge it owns — slab-pull is
+        // per-edge with direction, not per-unordered-pair. The
+        // opposite cell's pass picks up the mirrored edge; that's
+        // intentional and preserves the spec's "force vector toward
+        // the subduction edge" semantics on both sides without an
+        // `if j > i` filter (the filter would halve the force on the
+        // lower-index side).
+        //
+        // Continental-continental boundaries do not accumulate
+        // slab-pull (no slab dives at those edges; the uplift pass
+        // already drives Himalayan thickening).
+        let pull_factor = slab_pull_factor();
+        let oc_cont = slab_pull_density_contrast_oc_cont();
+        let oc_oc = slab_pull_density_contrast_oc_oc();
+        // The crust-age field is length-matched once Item 12b's
+        // worldgen sampler has populated it, otherwise an empty
+        // slice. Snapshot once outside the loop so we don't hold a
+        // borrow on `state` while also pushing into the per-plate
+        // pull accumulator.
+        let crust_age: Vec<u64> = state.crust_age().to_vec();
+        let crust_age_present = crust_age.len() == state.grid().n_cells();
+        // Reset accumulator. Each tick's slab pull is fresh — the
+        // *velocity* is the integrator (it carries history), the
+        // force itself does not.
+        {
+            let mut pull = self.slab_pull_force.borrow_mut();
+            for f in pull.iter_mut() {
+                *f = (Real::ZERO, Real::ZERO);
+            }
+        }
+        for (cid, axial) in grid.cells() {
+            let i = cid.0 as usize;
+            let plate_i_id = plate_ids[i];
+            let Some(pi) = self.plate_for(plate_i_id) else {
+                continue;
+            };
+            // Only the oceanic plate accumulates pull; the overriding
+            // continental plate gets pushed *upward* (handled by the
+            // existing convergent-uplift pass), not horizontally
+            // toward the trench. Bailing here saves the inner
+            // direction loop on the non-oceanic majority.
+            if pi.crust_type != CrustType::Oceanic {
+                continue;
+            }
+            for (k, nb) in grid.neighbours(axial).iter().enumerate() {
+                let j = nb.0 as usize;
+                let plate_j_id = plate_ids[j];
+                if plate_i_id == plate_j_id {
+                    continue;
+                }
+                let Some(pj) = self.plate_for(plate_j_id) else {
+                    continue;
+                };
+                let density_contrast = match pj.crust_type {
+                    CrustType::Continental => oc_cont,
+                    // Oceanic-vs-oceanic: only the older side dives.
+                    // Skip when no crust-age field exists yet (no Item
+                    // 12b worldgen sampler run), and skip when this
+                    // cell is the *younger* side (the other cell's
+                    // pass will accumulate the mirror force).
+                    CrustType::Oceanic => {
+                        if !crust_age_present {
+                            continue;
+                        }
+                        if crust_age[i] <= crust_age[j] {
+                            continue;
+                        }
+                        oc_oc
+                    }
+                };
+                // Direction unit vector from `i` (oceanic) to `j`.
+                // The pull on plate `i` points toward `j` — the slab
+                // is being yanked into the subduction zone at that
+                // edge.
+                let (dir_q, dir_r) = NEIGHBOUR_DIRECTIONS[k];
+                let dir_q_r = Real::from_int(dir_q);
+                let dir_r_r = Real::from_int(dir_r);
+                let force_step = pull_factor * density_contrast;
+                let mut pull = self.slab_pull_force.borrow_mut();
+                let cur = pull[plate_i_id as usize];
+                pull[plate_i_id as usize] = (
+                    cur.0 + force_step * dir_q_r,
+                    cur.1 + force_step * dir_r_r,
+                );
+            }
+        }
+
+        // Phase 3: apply force to evolved velocity, clamped per axis.
+        let cap = max_plate_velocity();
+        let neg_cap = Real::ZERO - cap;
+        {
+            let pull = self.slab_pull_force.borrow();
+            let mut vel = self.current_velocity.borrow_mut();
+            for (idx, v) in vel.iter_mut().enumerate() {
+                let f = pull[idx];
+                let new_q = v.0 + f.0 * dt;
+                let new_r = v.1 + f.1 * dt;
+                *v = (
+                    new_q.max(neg_cap).min(cap),
+                    new_r.max(neg_cap).min(cap),
+                );
+            }
+        }
+
+        // Snapshot evolved velocities once for the convergent /
+        // subduction passes below. Holding the borrow across those
+        // passes would force a `try_borrow` discipline I'd rather
+        // not impose on this code path; the snapshot copy is small
+        // (one `(Real, Real)` per plate).
+        let velocities = self.current_velocity.borrow().clone();
+
         // ---- Tectonic uplift / divergence at plate boundaries. ----
         //
         // Pair-iteration: each unordered pair `(i, j)` is visited
@@ -489,13 +760,9 @@ impl Law for Tectonics {
                 // ids are skipped (defensive; would only fire if a
                 // future sub-item shrinks the roster without
                 // remapping cells).
-                let (pi, pj) = match (
-                    self.plate_for(plate_i),
-                    self.plate_for(plate_j),
-                ) {
-                    (Some(a), Some(b)) => (a, b),
-                    _ => continue,
-                };
+                if self.plate_for(plate_i).is_none() || self.plate_for(plate_j).is_none() {
+                    continue;
+                }
                 // Direction unit vector from i to j in axial coords.
                 let (dir_q, dir_r) = NEIGHBOUR_DIRECTIONS[k];
                 let dir_q_r = Real::from_int(dir_q);
@@ -505,8 +772,15 @@ impl Law for Tectonics {
                 // away from i along the i→j direction → divergent.
                 // A *negative* projection means j is moving toward i
                 // along i→j → convergent.
-                let rel_q = pj.velocity.0 - pi.velocity.0;
-                let rel_r = pj.velocity.1 - pi.velocity.1;
+                //
+                // Reads velocity from `velocities` (Item 12e) — the
+                // slab-pull-evolved values, not the immutable
+                // `plates[i].velocity`. Closes the loop in a single
+                // operator-split pass.
+                let vel_i = velocities[plate_i as usize];
+                let vel_j = velocities[plate_j as usize];
+                let rel_q = vel_j.0 - vel_i.0;
+                let rel_r = vel_j.1 - vel_i.1;
                 let projection = rel_q * dir_q_r + rel_r * dir_r_r;
                 let magnitude = projection.abs();
                 if projection < Real::ZERO {
@@ -729,10 +1003,16 @@ impl Law for Tectonics {
                     };
                     // Convergence test reuses the uplift step's
                     // projection: negative projection = i and j
-                    // approach along the i→j direction.
+                    // approach along the i→j direction. Reads from
+                    // `velocities` (Item 12e evolved) so slab-pull
+                    // can drive an initially-parallel pair into
+                    // convergence on the same tick subduction kicks
+                    // in — the feedback loop.
                     let (dir_q, dir_r) = NEIGHBOUR_DIRECTIONS[k];
-                    let rel_q = pj.velocity.0 - pi.velocity.0;
-                    let rel_r = pj.velocity.1 - pi.velocity.1;
+                    let vel_i = velocities[plate_i as usize];
+                    let vel_j = velocities[plate_j as usize];
+                    let rel_q = vel_j.0 - vel_i.0;
+                    let rel_r = vel_j.1 - vel_i.1;
                     let projection =
                         rel_q * Real::from_int(dir_q) + rel_r * Real::from_int(dir_r);
                     if projection >= Real::ZERO {
@@ -887,6 +1167,7 @@ mod tests {
             convergence_rate: Real::percent(10),
             divergence_rate: Real::percent(10),
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
         for _ in 0..20 {
             tect.integrate(&mut state, Real::ONE);
@@ -952,6 +1233,7 @@ mod tests {
             convergence_rate: Real::percent(10),
             divergence_rate: Real::percent(10),
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
         for _ in 0..20 {
             tect.integrate(&mut state, Real::ONE);
@@ -1011,6 +1293,7 @@ mod tests {
             divergence_rate: Real::ZERO,
             // Large erosion_k so the signal lands in a few ticks.
             erosion_k: Real::from_ratio(1, 1_000),
+            ..Tectonics::earth_like()
         };
         for _ in 0..10 {
             tect.integrate(&mut state, Real::ONE);
@@ -1151,6 +1434,7 @@ mod tests {
             convergence_rate: Real::ZERO,
             divergence_rate: Real::ZERO,
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
         // Run well past SUBDUCTION_DT_TICKS so even with the
         // per-tick decrement scaled by OCEANIC_THICKNESS_KM /
@@ -1238,6 +1522,7 @@ mod tests {
             convergence_rate: Real::ZERO,
             divergence_rate: Real::ZERO,
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
 
         // Roll the simulation forward over geological time. 1000
@@ -1307,6 +1592,7 @@ mod tests {
             convergence_rate: Real::percent(10),
             divergence_rate: Real::percent(10),
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
         for _ in 0..200 {
             tect.integrate(&mut state, Real::ONE);
@@ -1383,6 +1669,7 @@ mod tests {
             convergence_rate: Real::percent(10),
             divergence_rate: Real::percent(10),
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
 
         let n_ticks = 5u64;
@@ -1459,6 +1746,7 @@ mod tests {
             convergence_rate: Real::ZERO,
             divergence_rate: Real::ZERO,
             erosion_k: Real::ZERO,
+            ..Tectonics::earth_like()
         };
         tect.integrate(&mut state, Real::ONE);
 
@@ -1498,6 +1786,312 @@ mod tests {
             (50..=70).contains(&pct),
             "oceanic share {pct}% outside [50, 70] across 200 seeds: \
              oceanic={oceanic} continental={continental}"
+        );
+    }
+
+    /// Sprint 4 Item 12e: an oceanic plate seated next to a
+    /// continental plate accelerates *toward* the continental plate
+    /// under slab-pull.
+    ///
+    /// Grid is a torus, so any two-plate split has a *pair* of
+    /// boundaries (east + wraparound-west) whose slab-pull vectors
+    /// cancel by symmetry. To get a measurable net force we wire a
+    /// three-plate strip:
+    ///
+    /// - plate 0 (oceanic): single column at q=0.
+    /// - plate 1 (continental): middle columns q=1..3.
+    /// - plate 2 (oceanic): right columns q=3..6.
+    ///
+    /// Plate 0 sees plate 1 (continental → subducting boundary on
+    /// the east) and plate 2 (oceanic → no slab-pull on the west
+    /// wrap, since both sides are oceanic with no age field yet).
+    /// Net pull is positive q. Run 10 macro-ticks. Plate 0's
+    /// q-velocity should have evolved positive (east → toward the
+    /// continent); plate 1 stays at rest because the overriding
+    /// plate doesn't accumulate slab-pull. Plate 2 mirrors plate 0
+    /// in reverse.
+    #[test]
+    fn plate_velocities_evolve_via_slab_pull() {
+        let grid = HexGrid::new(6, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        let mut plate_id = vec![0u32; n];
+        for (cid, axial) in grid.cells() {
+            plate_id[cid.0 as usize] = match axial.q {
+                0 => 0,         // oceanic strip on the west
+                1 | 2 => 1,     // continental middle
+                _ => 2,         // oceanic east (q = 3..5)
+            };
+        }
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Continental,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+            Plate {
+                id: 2,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+        ];
+        let crust_thickness = vec![Real::from_int(OCEANIC_THICKNESS_KM); n];
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        let tect = Tectonics {
+            plates,
+            ..Tectonics::earth_like()
+        };
+        for _ in 0..10 {
+            tect.integrate(&mut state, Real::ONE);
+        }
+
+        let vels = tect.current_velocity.borrow();
+        let oceanic_west_v = vels[0];
+        let continental_v = vels[1];
+        let oceanic_east_v = vels[2];
+
+        // Plate 0 (oceanic, west strip) accumulates positive-q pull
+        // from its eastern boundary with the continental middle.
+        // The western boundary with plate 2 is oceanic-oceanic and
+        // contributes nothing.
+        assert!(
+            oceanic_west_v.0 > Real::ZERO,
+            "oceanic plate 0 q-velocity should evolve positive \
+             (toward continental neighbour to the east); \
+             got {oceanic_west_v:?}"
+        );
+        // Plate 2 (oceanic, east block) accumulates *negative*-q pull
+        // from its western boundary with the continental middle —
+        // mirror image of plate 0.
+        assert!(
+            oceanic_east_v.0 < Real::ZERO,
+            "oceanic plate 2 q-velocity should evolve negative \
+             (toward continental neighbour to the west); \
+             got {oceanic_east_v:?}"
+        );
+        // Plate 1 (continental, overriding) does not accumulate
+        // slab-pull. It should remain at rest.
+        assert_eq!(
+            continental_v,
+            (Real::ZERO, Real::ZERO),
+            "continental overriding plate velocity should not evolve \
+             under slab-pull; got {continental_v:?}"
+        );
+
+        // The slab-pull force buffer should also be populated this
+        // tick — confirms the recompute path actually ran.
+        let forces = tect.slab_pull_force.borrow();
+        assert!(
+            forces[0].0 > Real::ZERO,
+            "plate 0 slab-pull force q should be positive (east); \
+             got {force:?}",
+            force = forces[0]
+        );
+        assert_eq!(
+            forces[1],
+            (Real::ZERO, Real::ZERO),
+            "continental plate accumulates no slab-pull; got {force:?}",
+            force = forces[1]
+        );
+        assert!(
+            forces[2].0 < Real::ZERO,
+            "plate 2 slab-pull force q should be negative (west); \
+             got {force:?}",
+            force = forces[2]
+        );
+    }
+
+    /// Sprint 4 Item 12e: plates initialised with *parallel*
+    /// velocities (no convergence at the shared boundary) should
+    /// nevertheless see the oceanic side accelerate toward the
+    /// continental side as soon as slab-pull engages. This is the
+    /// "subduction zone initiation" path — the moment the geometry
+    /// becomes an oceanic-continental edge, regardless of the
+    /// kinematic relative velocity, the dynamics begin to converge.
+    ///
+    /// Same three-plate strip as `plate_velocities_evolve_via_slab_pull`
+    /// (see that test for why two plates on a torus cancel by
+    /// symmetry). The novelty here is that *all three* plates start
+    /// with the same eastward parallel velocity — the existing
+    /// tectonic-uplift pass would emit no kick at the boundaries —
+    /// yet plate 0's (oceanic west) velocity along q must drift
+    /// above the shared parallel baseline, confirming slab-pull's
+    /// independence from initial relative motion.
+    #[test]
+    fn subduction_zone_initiation_changes_plate_velocity() {
+        let grid = HexGrid::new(6, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        let mut plate_id = vec![0u32; n];
+        for (cid, axial) in grid.cells() {
+            plate_id[cid.0 as usize] = match axial.q {
+                0 => 0,         // oceanic west strip
+                1 | 2 => 1,     // continental middle block
+                _ => 2,         // oceanic east block
+            };
+        }
+        // All three plates start with the *same* eastward velocity —
+        // no convergence at any boundary in the kinematic sense.
+        let parallel_v = (Real::ONE, Real::ZERO);
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Oceanic,
+                velocity: parallel_v,
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Continental,
+                velocity: parallel_v,
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+            Plate {
+                id: 2,
+                crust_type: CrustType::Oceanic,
+                velocity: parallel_v,
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+        ];
+        let crust_thickness = vec![Real::from_int(OCEANIC_THICKNESS_KM); n];
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        let tect = Tectonics {
+            plates,
+            ..Tectonics::earth_like()
+        };
+
+        // A few ticks of slab-pull should make plate 0 (oceanic west)
+        // faster eastward than its initial parallel velocity, while
+        // plate 1 (continental) holds steady.
+        for _ in 0..5 {
+            tect.integrate(&mut state, Real::ONE);
+        }
+
+        let vels = tect.current_velocity.borrow();
+        let oceanic_west_v = vels[0];
+        let continental_v = vels[1];
+        let oceanic_east_v = vels[2];
+
+        // Plate 0 accelerated *past* its initial parallel velocity
+        // along q — confirms slab-pull engages on initiation even
+        // when there's no kinematic convergence at the start.
+        assert!(
+            oceanic_west_v.0 > parallel_v.0,
+            "oceanic plate 0 should accelerate beyond initial parallel \
+             velocity along q under slab-pull; \
+             initial={parallel_v:?} after={oceanic_west_v:?}"
+        );
+        // Plate 2 *decelerated* along q (slab-pull yanks it west,
+        // into the trench under plate 1) — moves below the parallel
+        // baseline.
+        assert!(
+            oceanic_east_v.0 < parallel_v.0,
+            "oceanic plate 2 should decelerate below initial parallel \
+             velocity along q under slab-pull; \
+             initial={parallel_v:?} after={oceanic_east_v:?}"
+        );
+        // Continental plate held its parallel velocity (no slab-pull
+        // on overriding plates in this implementation).
+        assert_eq!(
+            continental_v, parallel_v,
+            "continental overriding plate should retain parallel \
+             velocity; initial={parallel_v:?} after={continental_v:?}"
+        );
+    }
+
+    /// Sprint 4 Item 12e: the per-axis velocity cap
+    /// (`MAX_PLATE_VELOCITY` = 5) prevents runaway acceleration. Run
+    /// the three-plate oceanic-continental-oceanic strip for many
+    /// ticks with an inflated `dt` to push past the cap quickly; the
+    /// resulting velocity must not exceed the documented bound on
+    /// either axis, and the oceanic plate's q must saturate exactly
+    /// at the cap (confirms the cap is what's binding, not just a
+    /// vanishing pull).
+    #[test]
+    fn slab_pull_velocity_cap_prevents_runaway() {
+        let grid = HexGrid::new(6, 3);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+
+        let mut plate_id = vec![0u32; n];
+        for (cid, axial) in grid.cells() {
+            plate_id[cid.0 as usize] = match axial.q {
+                0 => 0,
+                1 | 2 => 1,
+                _ => 2,
+            };
+        }
+        let plates = vec![
+            Plate {
+                id: 0,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+            Plate {
+                id: 1,
+                crust_type: CrustType::Continental,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(CONTINENTAL_THICKNESS_KM),
+            },
+            Plate {
+                id: 2,
+                crust_type: CrustType::Oceanic,
+                velocity: (Real::ZERO, Real::ZERO),
+                thickness: Real::from_int(OCEANIC_THICKNESS_KM),
+            },
+        ];
+        let crust_thickness = vec![Real::from_int(OCEANIC_THICKNESS_KM); n];
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        let tect = Tectonics {
+            plates,
+            ..Tectonics::earth_like()
+        };
+
+        // Hammer with an inflated dt to drive the velocity past the
+        // cap if it were unbounded. The cap clamp must still hold.
+        let big_dt = Real::from_int(100_000);
+        for _ in 0..50 {
+            tect.integrate(&mut state, big_dt);
+        }
+
+        let vels = tect.current_velocity.borrow();
+        let cap = max_plate_velocity();
+        for (idx, v) in vels.iter().enumerate() {
+            assert!(
+                v.0.abs() <= cap,
+                "plate {idx} q-velocity {v:?} exceeds cap {cap:?}"
+            );
+            assert!(
+                v.1.abs() <= cap,
+                "plate {idx} r-velocity {v:?} exceeds cap {cap:?}"
+            );
+        }
+        // Plate 0 (oceanic west) saturates *at* the positive cap on
+        // q; plate 2 (oceanic east) saturates at the negative cap on
+        // q. Confirms the cap is what's binding (not just a vanishing
+        // pull).
+        assert_eq!(
+            vels[0].0, cap,
+            "oceanic plate 0 q-velocity should saturate at +MAX_PLATE_VELOCITY"
+        );
+        assert_eq!(
+            vels[2].0,
+            Real::ZERO - cap,
+            "oceanic plate 2 q-velocity should saturate at -MAX_PLATE_VELOCITY"
         );
     }
 }
