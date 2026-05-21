@@ -4,7 +4,8 @@
 
 use crate::composition::{AtmosphericComposition, CrustalComposition, Moon};
 use crate::types::{
-    Atmosphere, BiosphereClass, Composition, Crust, Magnetosphere, MetabolicSubstrate,
+    Atmosphere, BiosphereClass, Composition, Crust, LockingState, Magnetosphere,
+    MetabolicSubstrate,
 };
 use sim_arith::Real;
 
@@ -147,6 +148,15 @@ pub struct Planet {
     /// Sampled deterministically from the seed so byte-replay
     /// holds.
     pub substrate_perturbation: Real,
+    /// Tidal-locking regime of the planet's rotation relative to
+    /// its orbit. Sampled at worldgen (Item 24) and consulted per-
+    /// tick by tidal-locking dynamics (Item 19): controls the
+    /// eccentricity-damping rate of each moon and whether the sub-
+    /// stellar point is fixed (Synchronous) or rotates.
+    ///
+    /// Defaults to `FreeRotator` in legacy worldgen paths so back-
+    /// compat fixtures don't have to populate this field.
+    pub locking_state: LockingState,
 }
 
 impl Planet {

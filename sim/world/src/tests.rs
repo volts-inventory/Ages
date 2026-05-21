@@ -158,6 +158,7 @@ fn synthetic_planet(
             mass_relative_x100: 100,
             orbital_period_macros: 28,
             inclination_deg_x10: 51,
+            eccentricity: Real::ZERO,
         }],
         orbital_eccentricity_x100: 2,
         axial_tilt_deg: Real::from_int(23),
@@ -165,6 +166,7 @@ fn synthetic_planet(
         orbital_period_months: 12,
         metabolic_substrate: MetabolicSubstrate::Aqueous,
         substrate_perturbation: Real::ZERO,
+        locking_state: LockingState::FreeRotator,
     }
 }
 

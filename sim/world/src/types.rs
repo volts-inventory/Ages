@@ -4,6 +4,29 @@
 //! `CrustalComposition`) live in `composition`; `Planet` itself
 //! lives in `planet`.
 
+/// Tidal-locking regime of a planet's rotation relative to its
+/// orbit. Sampled at worldgen (Item 24) and evolved per-tick (Item
+/// 19): eccentricity damping rate depends on which regime the world
+/// is in, and locked planets get a fixed sub-stellar point rather
+/// than a rotating one.
+///
+/// - `Synchronous`: rotation period == orbital period. One face
+///   perpetually toward the star. Eccentricity damps quickly toward
+///   zero (locked orbits become circular).
+/// - `Resonance { p, q }`: rotation:orbit period ratio is `p:q`
+///   (Mercury is 3:2 — three spins per two orbits). Gravitational
+///   forcing from other bodies (Laplace-type resonances, Io-Europa-
+///   Ganymede) sustains a non-zero eccentricity rather than letting
+///   it damp out.
+/// - `FreeRotator`: not locked. Eccentricity damps slowly through
+///   ordinary tidal dissipation. Earth is here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockingState {
+    Synchronous,
+    Resonance { p: u8, q: u8 },
+    FreeRotator,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Composition {
     Rocky,

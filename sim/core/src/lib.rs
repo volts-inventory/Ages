@@ -93,7 +93,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     // Constructed once here; threaded into every `physics_phase`
     // call so the per-tick deltas accumulate into a single tally.
     let mut orch_state = OrchestratorState::new();
-    let planet = sample_planet(cfg.seed);
+    // `planet` is mutable to let Sprint 5 Item 19's per-tick tidal-
+    // locking dynamics damp each moon's eccentricity over time. The
+    // bulk-property fields the rest of the run reads (gravity,
+    // composition, atmosphere, ...) are still effectively immutable
+    // — only `planet.moons[*].eccentricity` is touched per tick.
+    let mut planet = sample_planet(cfg.seed);
     emitter.emit(&Event::Planet(planet_to_event(&planet)))?;
     init_planet(&mut state, &planet);
 
@@ -305,6 +310,19 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         );
 
     for tick in 0..cfg.max_ticks {
+        // Sprint 5 Item 19: per-tick tidal-locking dynamics. Damp
+        // each moon's orbital eccentricity at a rate driven by the
+        // planet's locking_state: Synchronous damps fast, FreeRotator
+        // slowly, Resonance not at all (gravitational forcing from
+        // other bodies sustains a steady-state e). One macro-step's
+        // worth of damping per civ-tick.
+        {
+            let dt = Real::ONE;
+            let locking = planet.locking_state;
+            for moon in &mut planet.moons {
+                sim_world::step_eccentricity_damping(moon, locking, dt);
+            }
+        }
         let prev_state_for_measurements = phases::physics_phase(
             emitter,
             tick,
