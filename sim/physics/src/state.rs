@@ -103,6 +103,25 @@ pub struct PhysicsState {
     /// future tuning may want spatial variation (terrain, microclimate
     /// modifiers) that's awkward to derive from scratch each tick.
     biofuel_ceiling: Vec<Real>,
+    /// Per-cell fraction of cell surface covered by snow.
+    /// Authored by the `IceAlbedo` law each macro-step from
+    /// temperature + precipitation. Drives the highest-albedo
+    /// channel (`0.85 × snow_fraction`). On land + on top of
+    /// sea ice. Range `[0, 1]`.
+    snow_fraction: Vec<Real>,
+    /// Per-cell fraction of cell surface covered by sea ice
+    /// without snow on top. Gray albedo (`0.55`), not white —
+    /// younger / refrozen sea ice is darker than glacial / snow-
+    /// capped ice. Authored by the `IceAlbedo` law from surface
+    /// temperature alone. Range `[0, 1]`.
+    sea_ice_fraction: Vec<Real>,
+    /// Per-cell fraction of cell covered by cloud. Stub for
+    /// now (initialised to 0 and not yet updated by any law); the
+    /// `IceAlbedo` law reads it so the cloud contribution to
+    /// effective albedo (`0.4 × cloud_fraction × (1 - max(snow,
+    /// sea_ice))`) is already wired through for the follow-up
+    /// that drives clouds from the hydrologic cycle.
+    cloud_fraction: Vec<Real>,
 }
 
 impl PhysicsState {
@@ -127,6 +146,9 @@ impl PhysicsState {
             macro_step: 0,
             upper_temperature: vec![Real::ZERO; n],
             biofuel_ceiling: vec![Real::ZERO; n],
+            snow_fraction: vec![Real::ZERO; n],
+            sea_ice_fraction: vec![Real::ZERO; n],
+            cloud_fraction: vec![Real::ZERO; n],
             grid,
         }
     }
@@ -297,6 +319,45 @@ impl PhysicsState {
 
     pub fn biofuel_ceiling_mut(&mut self) -> &mut [Real] {
         &mut self.biofuel_ceiling
+    }
+
+    /// Per-cell snow-cover fraction (`[0, 1]`). Authored by the
+    /// `IceAlbedo` law; read by the per-cell effective-albedo
+    /// helper that modulates `Radiation`'s per-row T_eq table.
+    #[must_use]
+    pub fn snow_fraction(&self) -> &[Real] {
+        &self.snow_fraction
+    }
+
+    pub fn snow_fraction_mut(&mut self) -> &mut [Real] {
+        &mut self.snow_fraction
+    }
+
+    /// Per-cell sea-ice cover fraction, gray-channel (no snow on
+    /// top). `[0, 1]`. Authored by the `IceAlbedo` law from
+    /// surface temperature alone; read by the effective-albedo
+    /// helper.
+    #[must_use]
+    pub fn sea_ice_fraction(&self) -> &[Real] {
+        &self.sea_ice_fraction
+    }
+
+    pub fn sea_ice_fraction_mut(&mut self) -> &mut [Real] {
+        &mut self.sea_ice_fraction
+    }
+
+    /// Per-cell cloud-cover fraction (`[0, 1]`). Stub channel —
+    /// initialised to zero and not yet updated by any law. The
+    /// `IceAlbedo` helper reads it so the cloud contribution to
+    /// effective albedo is already wired through for the
+    /// follow-up that drives clouds from the hydrologic cycle.
+    #[must_use]
+    pub fn cloud_fraction(&self) -> &[Real] {
+        &self.cloud_fraction
+    }
+
+    pub fn cloud_fraction_mut(&mut self) -> &mut [Real] {
+        &mut self.cloud_fraction
     }
 }
 

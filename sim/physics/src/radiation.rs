@@ -34,6 +34,7 @@
 //! Per-cell day/night insolation (diurnal cycling) is still a
 //! deferred follow-up.
 
+use crate::albedo::{albedo_radiation_factor, effective_albedo_slice};
 use crate::laws::Law;
 use crate::state::PhysicsState;
 use sim_arith::transcendental::{cos, exp, half_pi, ln};
@@ -81,7 +82,28 @@ pub struct Radiation {
     /// row per macro-step — significant cost over a 24,000-tick
     /// run. The table is `height × 12` entries (~108 for Earth-
     /// sized grids), computed once at planet build.
+    ///
+    /// Entries are *baseline* equilibrium temperatures with the
+    /// planet-mean albedo baked in; per-cell deviation from that
+    /// baseline is applied each tick by multiplying with
+    /// `((1 - A_cell) / (1 - A_baseline))^(1/4)` so the per-row
+    /// table can stay precomputed without recomputing the
+    /// Stefan-Boltzmann root for every cell.
     pub t_eq_per_row_per_season: Vec<Vec<Real>>,
+    /// Pre-computed `(1 - A_baseline)^(1/4)` factor used to
+    /// invert the baseline albedo from
+    /// `t_eq_per_row_per_season` when applying the per-cell
+    /// `(1 - A_cell)^(1/4)` factor each tick. Caches a single
+    /// `sqrt(sqrt)` so the per-cell ratio reduces to one
+    /// multiply + one divide.
+    pub baseline_albedo_factor: Real,
+    /// Greenhouse offset (K) baked into the per-row table; held
+    /// separately so the per-cell albedo rescaling can subtract
+    /// it before applying the `(1 - A_cell)` ratio, then re-add
+    /// it after. Without the separation, the per-cell rescaling
+    /// would erroneously scale the greenhouse contribution by
+    /// the albedo ratio.
+    pub greenhouse_k: Real,
     /// Macro-steps per full orbital year. Indexes into
     /// `t_eq_per_row_per_season`'s season axis. Defaults to 360
     /// for Earth (12 months × 30 macro-steps/month at the
@@ -252,6 +274,11 @@ impl Radiation {
 
         Self {
             t_eq_per_row_per_season,
+            baseline_albedo_factor: albedo_radiation_factor(Real::from_ratio(
+                albedo_x100.clamp(0, 100),
+                100,
+            )),
+            greenhouse_k,
             year_macros,
             relaxation: relaxation_rate(),
             day_length_macros: day_length_macros_real,
@@ -281,6 +308,23 @@ impl Law for Radiation {
         let width_i = i32::try_from(grid.width()).unwrap_or(1).max(1);
         let height_i = i32::try_from(grid.height()).unwrap_or(i32::MAX).max(1);
 
+        // Per-cell effective albedo from the snow / sea-ice /
+        // cloud channels (authored by `IceAlbedo` upstream) plus
+        // the surface base type. Pre-computed once per
+        // `integrate` so the per-cell hot loop just multiplies
+        // by a slice index.
+        let effective_albedo = effective_albedo_slice(state);
+        // Guard against a divide-by-zero on a degenerate
+        // baseline (`albedo_x100 = 100`). The albedo helper
+        // already clamps at 0.9999, so the baseline factor
+        // stays positive; the explicit floor keeps the math
+        // robust against future tuning.
+        let baseline_factor = if self.baseline_albedo_factor > Real::ZERO {
+            self.baseline_albedo_factor
+        } else {
+            Real::from_ratio(1, 10_000)
+        };
+
         // Per-cell diurnal modulation. Sub-solar longitude
         // advances at rate 1 / day_length_macros per macro-step.
         // For tidally-locked planets it advances ~0; for Earth
@@ -306,12 +350,22 @@ impl Law for Radiation {
         for (cid, axial) in grid.cells() {
             let i = cid.0 as usize;
             let row = usize::try_from(axial.r.rem_euclid(height_i)).unwrap_or(0);
-            let t_eq_base = self
+            let t_eq_table = self
                 .t_eq_per_row_per_season
                 .get(row)
                 .and_then(|row_seasons| row_seasons.get(season))
                 .copied()
                 .unwrap_or(temps_prev[i]);
+
+            // Strip the planet-mean greenhouse offset, swap the
+            // baseline-mean albedo for this cell's effective
+            // albedo, then re-add the greenhouse. The
+            // `(1 - A_cell)^(1/4) / (1 - A_baseline)^(1/4)`
+            // ratio rescales the Stefan-Boltzmann root without
+            // recomputing exp/ln per cell.
+            let t_no_greenhouse = t_eq_table - self.greenhouse_k;
+            let cell_factor = albedo_radiation_factor(effective_albedo[i]);
+            let t_eq_base = t_no_greenhouse * cell_factor / baseline_factor + self.greenhouse_k;
 
             // Diurnal modulation factor in `[1 - amp,
             // 1 + amp]`. amp=0 → 1 (no modulation, original

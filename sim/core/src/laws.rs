@@ -27,6 +27,7 @@ pub(crate) struct Laws {
     pub coriolis: sim_physics::Coriolis,
     pub vertical: sim_physics::VerticalConvection,
     pub weathering: sim_physics::Weathering,
+    pub ice_albedo: sim_physics::IceAlbedo,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -207,6 +208,20 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // habitable equilibrium instead of drifting toward Venus.
     let weathering = sim_physics::Weathering::earth_like();
 
+    // Ice-albedo feedback (Sprint 3 Item 13). Sigmoid +
+    // bimodal-channel albedo lets the radiative-balance loop
+    // fall into one of two basins (snowball or habitable)
+    // instead of relaxing to a unique intermediate
+    // equilibrium. The freeze point is derived from the
+    // planet's substrate so methane / ammonia / silicate
+    // worlds transition at their own substrate's phase
+    // boundary rather than Earth-water's 273 K.
+    let substrate_tag = planet.metabolic_substrate.tag();
+    let (substrate_freeze_k, _) =
+        sim_physics::chemistry::substrate_phase_thresholds(substrate_tag);
+    let perturb = Real::ONE + planet.substrate_perturbation;
+    let ice_albedo = sim_physics::IceAlbedo::for_freeze_point(substrate_freeze_k * perturb);
+
     Laws {
         fluid,
         heat,
@@ -221,6 +236,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         coriolis,
         vertical,
         weathering,
+        ice_albedo,
     }
 }
 

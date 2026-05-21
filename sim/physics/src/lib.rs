@@ -10,6 +10,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+pub mod albedo;
 pub mod chemistry;
 pub mod coriolis;
 pub mod em;
@@ -30,6 +31,10 @@ pub mod vertical;
 pub mod weathering;
 pub mod wind;
 
+pub use albedo::{
+    albedo_radiation_factor, base_albedo_for, effective_albedo_for, effective_albedo_slice,
+    sigmoid_real, IceAlbedo,
+};
 pub use chemistry::{Chemistry, Substance};
 pub use coriolis::Coriolis;
 pub use em::Electromagnetism;
