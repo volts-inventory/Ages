@@ -267,6 +267,14 @@ impl Star {
     /// Construct a star with explicit age and lifetime — used
     /// by tests that need to probe specific points in stellar
     /// evolution (e.g. `red_giant_phase_renders_inner_planets_uninhabitable`).
+    ///
+    /// The EUV channel additionally decays with age following
+    /// `(1 + age_gyr / EUV_DECAY_GYR)^(-1.5)` — see
+    /// `euv_decay_factor` for the calibration. Young stars
+    /// (age ≈ 0) emit EUV at the unmodulated SED-derived level
+    /// (~10-100× modern Sun); old stars (age ≫ EUV_DECAY_GYR)
+    /// emit far less ionising flux. Item 17 consumes this
+    /// channel for hydrodynamic atmospheric escape.
     #[must_use]
     pub fn with_age(
         spectral_type: SpectralType,
@@ -283,7 +291,15 @@ impl Star {
         let bol = bolometric_at_planet_zams.saturating_mul(scale);
         let sed = spectral_type.sed_fractions();
         star.bolometric_luminosity = bol;
-        star.euv_flux = bol.saturating_mul(sed.euv);
+        // EUV decays with age following a `t^(-1.5)` power law
+        // (real stellar EUV evolution). The base SED-derived
+        // EUV is computed off the ZAMS bolometric, *not* the
+        // age-drifted one — the EUV channel is dominated by
+        // chromospheric / coronal activity rather than
+        // photospheric blackbody, so it doesn't share the MS
+        // bolometric drift; it follows its own decay law.
+        let base_euv = bolometric_at_planet_zams.saturating_mul(sed.euv);
+        star.euv_flux = base_euv.saturating_mul(euv_decay_factor(age_gyr));
         star.uv_flux = bol.saturating_mul(sed.uv);
         star.visible_flux = bol.saturating_mul(sed.visible);
         star.ir_flux = bol.saturating_mul(sed.ir);
@@ -388,6 +404,55 @@ pub fn bolometric_scale_at_age(age_gyr: Real, lifetime_gyr: Real) -> Real {
         // Past MS end — cap at 1000×.
         Real::from_int(1_000)
     }
+}
+
+/// EUV decay timescale in Gyr — sets the knee of the EUV
+/// `t^(-1.5)` power law. Calibrated so that at `age = 0` the
+/// factor is `1.0` (young-star EUV is at the SED-derived base
+/// level, which represents the ~10-100× modern Sun ionising
+/// flux young G dwarfs exhibit), and the factor drops by an
+/// order of magnitude by `age ≈ 0.5 Gyr` and by ~2-3 orders
+/// of magnitude by `age ≈ 5 Gyr`.
+///
+/// 0.1 Gyr = ~100 Myr corresponds to the saturation timescale
+/// for rapid spin-down → coronal-activity decay observed in
+/// young Sun-like stars.
+pub const EUV_DECAY_GYR_NUM: i64 = 1;
+/// Denominator of `EUV_DECAY_GYR`. Stored as a rational so we
+/// can divide-by-EUV_DECAY_GYR without round-tripping through
+/// `Real` division.
+pub const EUV_DECAY_GYR_DEN: i64 = 10;
+
+/// EUV decay factor at a given main-sequence age, expressed
+/// as a multiplier of the ZAMS (young-star) EUV flux.
+///
+/// Formula: `(1 + age_gyr / EUV_DECAY_GYR)^(-1.5)`. This is
+/// the canonical Ribas-et-al / Sanz-Forcada-et-al power-law
+/// fit to FUSE/EUVE/XMM observations of Sun-like stars across
+/// 10 Myr-10 Gyr — young G dwarfs emit ~100× modern Sun in
+/// the 1-100 nm band, and ionising flux decays as a roughly
+/// `t^(-1.5)` power law.
+///
+/// At `age = 0`: factor = `1.0` (base level).
+/// At `age = EUV_DECAY_GYR` (~100 Myr): factor ≈ `2^(-1.5) ≈ 0.354`.
+/// At `age = 5 Gyr`: factor ≈ `51^(-1.5) ≈ 0.00275`.
+/// At `age = 10 Gyr`: factor ≈ `101^(-1.5) ≈ 0.000986`.
+///
+/// Item 17 reads `Star::euv_flux` (the SED-derived base × this
+/// factor) for hydrodynamic atmospheric escape: a young star
+/// drives runaway loss of light volatiles; an old star is
+/// nearly inert in the ionising channel.
+#[must_use]
+pub fn euv_decay_factor(age_gyr: Real) -> Real {
+    // (1 + age_gyr / EUV_DECAY_GYR) — compute as
+    // 1 + age_gyr × (EUV_DECAY_GYR_DEN / EUV_DECAY_GYR_NUM).
+    // For EUV_DECAY_GYR = 1/10 = 0.1, the inverse is 10.
+    let inv_decay = Real::from_ratio(EUV_DECAY_GYR_DEN, EUV_DECAY_GYR_NUM);
+    let arg = Real::ONE.saturating_add(age_gyr.saturating_mul(inv_decay));
+    // Power: `arg^(-1.5)`. Implemented via the workspace
+    // `transcendental::pow(a, b) = exp(b · ln(a))`.
+    let exponent = Real::from_ratio(-3, 2);
+    sim_arith::transcendental::pow(arg, exponent)
 }
 
 // Helper trait impl on Real: saturating_div / saturating_add.
