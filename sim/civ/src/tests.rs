@@ -27,7 +27,12 @@ fn fresh_civ_is_active_with_no_collapse_state() {
 #[test]
 fn collapse_fires_on_sustained_food_crisis() {
     let mut civ = Civ::new(1, 0, Pop::from_int(1000));
-    let state = empty_state(); // capacity = 0 → security = 0 every tick
+    let state = empty_state();
+    // P0.5 — capacity now reads `self.producer_biomass` rather
+    // than `Substance::Fuel`. Drive producer to zero so the legacy
+    // "capacity = 0 → security = 0 every tick" intent still
+    // collapses the civ on the food-crisis streak.
+    civ.producer_biomass = Real::ZERO;
     let mut reason = None;
     for tick in 1..=(FOOD_CRISIS_STREAK_TICKS + 100) {
         // Mark a recent discovery so plateau doesn't fire first.
@@ -1065,5 +1070,150 @@ fn eusocial_civ_only_reproductive_caste_breeds() {
     assert!(
         final_repro >= Pop::from_int(10),
         "Reproductive caste should grow from births: {final_repro:?}"
+    );
+}
+
+// P0.5 — civ carrying capacity tracks live producer biomass.
+//
+// Three properties pinned:
+//  1. `civ.carrying_capacity` scales linearly with
+//     `self.producer_biomass`.
+//  2. Driving producer biomass to zero on a per-tick step
+//     collapses the civ's aggregate population over 30 ticks.
+//  3. `ecological_resilience` reads `producer_biomass /
+//     initial_producer_biomass` clamped to `[0, 2]` — thriving
+//     biosphere ⇒ resilience > 1.0; collapsed ⇒ < 0.5.
+
+/// Same civ, two producer biomass readings: capacity must
+/// differ by the same ratio as the biomass scalars (every other
+/// multiplier in the capacity formula — `tech_multiplier`,
+/// `tool_capacity_multiplier`, `carrying_capacity_per_unit`,
+/// claimed-cell fraction — is shared between the two reads).
+#[test]
+fn civ_capacity_tracks_producer_biomass() {
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
+    let state = empty_state();
+
+    // High-biomass world (thriving producers, anchor reading).
+    civ.producer_biomass = Real::from_int(100);
+    let cap_high = civ.carrying_capacity(&state);
+
+    // Zero-biomass world (cascading-extinction endpoint).
+    civ.producer_biomass = Real::ZERO;
+    let cap_zero = civ.carrying_capacity(&state);
+
+    assert_eq!(
+        cap_zero,
+        Pop::ZERO,
+        "zero producer biomass must collapse civ capacity to zero, got {cap_zero:?}",
+    );
+    assert!(
+        cap_high > Pop::ZERO,
+        "thriving producer biomass must yield non-zero capacity, got {cap_high:?}",
+    );
+
+    // 10× linearity: 10× the biomass ⇒ 10× the cap.
+    civ.producer_biomass = Real::from_int(10);
+    let cap_ten = civ.carrying_capacity(&state);
+    // 100 / 10 = 10. Compare via Q32.32 raw bits — pop = cap_high
+    // raw / cap_ten raw should equal 10 to within Q32.32 noise.
+    let ratio_q32 = cap_high.raw().to_bits() / cap_ten.raw().to_bits().max(1);
+    assert_eq!(
+        ratio_q32, 10,
+        "capacity must scale linearly with producer_biomass; ratio_q32={ratio_q32}",
+    );
+}
+
+/// Zero producer biomass for 30 ticks: civ population must
+/// fall. Drives `step_population_per_cell` directly with
+/// `producer_biomass = ZERO` on each tick so the per-cell step
+/// sees zero capacity and the cohort's logistic step pulls the
+/// population down each tick.
+///
+/// Acceptance: aggregate population after 30 ticks is strictly
+/// below the initial 1000-pop seed. (Exact decay is calibrated by
+/// the population dynamics' default mortality; what matters here
+/// is monotonic decline under starvation.)
+#[test]
+fn zero_producer_biomass_causes_civ_population_decline() {
+    use sim_recognition::RecognitionLibrary;
+    use sim_world::sample_planet;
+    let planet = sample_planet(1);
+    let lib = RecognitionLibrary::earth_like_default();
+    let species = sim_species::derive(&planet, &lib);
+
+    let mut civ = Civ::new(1, 0, Pop::from_int(1_000));
+    civ.configure_lifecycle_state(&species.lifecycle);
+    let state = empty_state();
+    let initial_pop = civ.aggregate_population();
+    assert!(initial_pop > Pop::ZERO, "fresh civ should have a population");
+
+    // 30 ticks at zero producer biomass — `step_population_per_cell`
+    // caches `producer_biomass = ZERO` on every call, so the per-
+    // cell capacity collapses and the cohort dynamics' food-stress
+    // mortality drains the population.
+    for tick in 1..=30 {
+        civ.step_population_per_cell(&state, tick, &planet, &species, Real::ZERO);
+    }
+    let final_pop = civ.aggregate_population();
+    assert!(
+        final_pop < initial_pop,
+        "civ population must decline under zero producer biomass; initial={initial_pop:?} final={final_pop:?}",
+    );
+}
+
+/// `ecological_resilience` is a signed, meaningful scalar:
+/// thriving producer biomass (2× the anchor) yields resilience >
+/// 1.0; collapsed producer biomass (10% of the anchor) yields
+/// resilience < 0.5. The anchor is captured on the civ's first
+/// non-default `update_producer_biomass` call so the ratio reads
+/// "this tick's biomass relative to first-observed."
+#[test]
+fn ecological_resilience_is_signed_and_meaningful() {
+    let mut civ = Civ::new(1, 0, Pop::from_int(50));
+
+    // Anchor the civ on a non-default biomass reading so the
+    // resilience denominator becomes the captured anchor rather
+    // than the constructor's `Real::ONE` sentinel.
+    let anchor = Real::from_int(100);
+    civ.update_producer_biomass(anchor);
+    assert_eq!(
+        civ.initial_producer_biomass, anchor,
+        "first non-default update must capture the anchor",
+    );
+    assert_eq!(
+        civ.ecological_resilience,
+        Real::ONE,
+        "anchor reading must yield baseline 1.0 resilience",
+    );
+
+    // Thriving — 2× the anchor.
+    civ.update_producer_biomass(anchor * Real::from_int(2));
+    assert!(
+        civ.ecological_resilience > Real::ONE,
+        "thriving biosphere must raise resilience above 1.0; got {:?}",
+        civ.ecological_resilience,
+    );
+    // [0, 2] clamp — even a 10× spike caps at 2.0.
+    civ.update_producer_biomass(anchor * Real::from_int(10));
+    assert!(
+        civ.ecological_resilience <= Real::from_int(2),
+        "resilience must clamp at the upper 2.0 ceiling; got {:?}",
+        civ.ecological_resilience,
+    );
+
+    // Collapsed — 10% of the anchor → resilience 0.1 << 0.5.
+    civ.update_producer_biomass(anchor / Real::from_int(10));
+    assert!(
+        civ.ecological_resilience < Real::percent(50),
+        "collapsed biosphere must drop resilience below 0.5; got {:?}",
+        civ.ecological_resilience,
+    );
+    // Zero — resilience clamps at 0.
+    civ.update_producer_biomass(Real::ZERO);
+    assert_eq!(
+        civ.ecological_resilience,
+        Real::ZERO,
+        "zero biosphere must clamp resilience at 0.0",
     );
 }

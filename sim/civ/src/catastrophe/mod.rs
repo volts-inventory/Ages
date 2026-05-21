@@ -656,11 +656,13 @@ mod tests {
     fn disease_fires_under_crowding_after_age_floor() {
         let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let mut state = empty_state();
-        // Tiny capacity (no fuel) → infinite crowding... actually
-        // capacity=0 means food_security=0 → other path. Use a
-        // small fuel value tuned for the 50_000/fuel-unit baseline:
-        // 0.001 × 50_000 = 50, matching the civ's pop so crowding = 1.0.
+        // P0.5 — capacity now reads `civ.producer_biomass` rather
+        // than `Substance::Fuel`. Calibration mirrors the legacy
+        // fuel-tuned setup: producer_biomass = 0.001 × claimed_frac
+        // (1.0 for empty claim) × per_unit (50_000) = 50, matching
+        // civ pop so crowding = 1.0.
         state.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
+        civ.producer_biomass = Real::from_ratio(1, 1000);
         let r = check_and_apply(
             &mut civ,
             &mut state,
@@ -680,6 +682,7 @@ mod tests {
         let mut civ = Civ::new(1, 0, Pop::from_int(50));
         let mut state = empty_state();
         state.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
+        civ.producer_biomass = Real::from_ratio(1, 1000);
         let r = check_and_apply(
             &mut civ,
             &mut state,
@@ -707,6 +710,9 @@ mod tests {
         let mut civ_low = Civ::new(1, 0, baseline_pop);
         let mut state_low = empty_state();
         state_low.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
+        // P0.5 — match the disease trigger's `civ.producer_biomass`
+        // crowding calibration so the test still drives crowding to 1.0.
+        civ_low.producer_biomass = Real::from_ratio(1, 1000);
         let rec_low = check_and_apply(
             &mut civ_low,
             &mut state_low,
@@ -720,6 +726,7 @@ mod tests {
         let mut civ_high = Civ::new(1, 0, baseline_pop);
         let mut state_high = empty_state();
         state_high.substance_mut(Substance::Fuel.idx())[0] = Real::from_ratio(1, 1000);
+        civ_high.producer_biomass = Real::from_ratio(1, 1000);
         let rec_high = check_and_apply(
             &mut civ_high,
             &mut state_high,
@@ -796,6 +803,13 @@ mod tests {
         let mut aqueous = test_species();
         aqueous.tolerance = sim_species::ToleranceEnvelope::aqueous_default();
         let mut civ_aq = Civ::new(1, 0, initial_pop);
+        // P0.5 — set producer biomass high enough that the disease
+        // trigger (crowding ≥ 0.8 of capacity) doesn't preempt the
+        // solar-flare path. Cap = producer_biomass × claimed_frac
+        // (1.0 for empty claim) × per_unit (50_000) so
+        // `producer_biomass = 100` yields cap = 5M, well above the
+        // 1M civ pop ⇒ crowding 0.2 ⇒ no disease.
+        civ_aq.producer_biomass = Real::from_int(100);
         let mut state_aq = well_fed_state();
         // Pin cell 0 to centre-of-aqueous-envelope T/p so the
         // non-radiation axes don't accidentally bottleneck the
@@ -812,6 +826,9 @@ mod tests {
         let mut extremophile = test_species();
         extremophile.tolerance = extremophile_tolerance();
         let mut civ_ex = Civ::new(2, 0, initial_pop);
+        // P0.5 — same producer-biomass override as the aqueous civ
+        // so the disease trigger doesn't preempt the flare path.
+        civ_ex.producer_biomass = Real::from_int(100);
         let mut state_ex = well_fed_state();
         // Same cell-conditions setup as the aqueous run — only the
         // species' tolerance envelope differs between the two civs.

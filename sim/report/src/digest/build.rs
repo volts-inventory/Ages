@@ -594,6 +594,11 @@ impl Digest {
             // ecosystem-side chapters (planet species census) without
             // changing the wire format.
             Event::SpeciationOccurred(_) => {}
+            // P0.5 — resilience ticks are a per-civ continuous
+            // trace that the per-civ chapter can fold in later
+            // when narrators want an ecosystem-civ coupling card.
+            // For now they ride the event log unaggregated.
+            Event::CivResilienceTick(_) => {}
         }
     }
 

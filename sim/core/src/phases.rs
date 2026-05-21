@@ -882,6 +882,7 @@ pub(crate) fn population_phase<E: Emitter>(
     species: &Species,
     civs: &mut [Civ],
     nomad_pops: &mut BTreeMap<u32, Real>,
+    producer_biomass: Real,
 ) -> Result<(), E::Error> {
     emitter.emit(&Event::Tick(TickEvent {
         tick,
@@ -895,10 +896,18 @@ pub(crate) fn population_phase<E: Emitter>(
     // adjacent claimed cells with headroom — pre-emptive
     // migration before food crisis bites. Aggregate
     // cohort.count is rederived as the sum.
+    //
+    // P0.5: `producer_biomass` is the live
+    // `PlanetEcosystem::tier_biomass(0)` reading threaded in from
+    // sim/core's per-tick ecosystem step. Each civ caches the
+    // value via `step_population_per_cell` → `update_producer_biomass`
+    // before any capacity-coupled step runs, so the per-cell
+    // capacity reflects the live producer pool — cascading
+    // extinctions starve civs.
     let grid_w = state.grid().width();
     let grid_h = state.grid().height();
     for civ in civs.iter_mut().filter(|c| c.is_active()) {
-        civ.step_population_per_cell(state, tick, planet, species);
+        civ.step_population_per_cell(state, tick, planet, species, producer_biomass);
         civ.migrate_inter_cell(state, tick, planet, grid_w, grid_h);
     }
 

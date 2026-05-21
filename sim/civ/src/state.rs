@@ -183,6 +183,15 @@ impl Civ {
             selection_bias: crate::environmental_drift::SelectionBias::zero(),
             surplus: Real::ZERO,
             last_emitted_surplus: Real::ZERO,
+            // P0.5: producer biomass defaults to 1.0 so legacy
+            // callers without ecosystem context get a non-zero
+            // capacity baseline. Production sim/core overwrites
+            // these on the first `step_population_per_cell` call
+            // each tick from the live `PlanetEcosystem::tier_biomass(0)`.
+            producer_biomass: Real::ONE,
+            initial_producer_biomass: Real::ONE,
+            ecological_resilience: Real::ONE,
+            last_emitted_resilience: Real::ONE,
         }
     }
 

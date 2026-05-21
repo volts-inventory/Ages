@@ -192,6 +192,11 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // routes likewise live in the per-civ chapter + a global
         // trade-routes section; per-event reel pins would be noise.
         | Event::CivSurplusChanged(_)
+        // P0.5 — resilience drift is a per-civ continuous trace
+        // that surfaces aggregated in the per-civ chapter; an
+        // individual 0.05 step would push higher-signal beats
+        // (founding / collapse / extinction) out of the reel.
+        | Event::CivResilienceTick(_)
         | Event::TradeRouteEstablished(_)
         | Event::TradeRouteClosed(_)
         // Alliances surface in the per-civ chapter + the

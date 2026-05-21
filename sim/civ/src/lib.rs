@@ -425,6 +425,36 @@ pub struct Civ {
     /// Capped per-channel at `SELECTION_BIAS_CHANNEL_CEILING`
     /// to avoid runaway under long catastrophe sequences.
     pub selection_bias: environmental_drift::SelectionBias,
+    /// P0.5 — most recent producer-tier biomass read from the
+    /// live `PlanetEcosystem` (tier 0 = primary producers). Set
+    /// each tick by `step_population_per_cell` before the cohort
+    /// step, then read by `cell_capacity` to scale per-cell
+    /// capacity by the civ's share of the planet's producer pool.
+    /// Default `Real::ONE` for legacy callers that don't thread
+    /// ecosystem state — keeps M3 unit tests behaving as before
+    /// (cap derived from `tech_multiplier * tool_capacity` × the
+    /// pre-P0.5 fuel-density-only stack).
+    pub producer_biomass: Real,
+    /// P0.5 — producer biomass observed at this civ's first
+    /// `step_population_per_cell` call. Anchors
+    /// `ecological_resilience` so the resilience scalar reads
+    /// "1.0 at founding, < 1.0 if the producers crash, > 1.0 if
+    /// the biosphere thrives." Successor civs re-anchor at their
+    /// own founding so each civ judges its own ecosystem against
+    /// its own baseline.
+    pub initial_producer_biomass: Real,
+    /// P0.5 — `producer_biomass / initial_producer_biomass`,
+    /// clamped to `[0, 2]`. Re-derived every tick in
+    /// `step_population_per_cell`. 1.0 = baseline ecosystem,
+    /// < 1.0 = degraded (cascading extinctions starve the civ),
+    /// > 1.0 = thriving. Surfaced via `Event::CivResilienceTick`
+    /// when it crosses a meaningful (≥ 0.05) drift from the last
+    /// emission so consumers can trace ecosystem-civ coupling.
+    pub ecological_resilience: Real,
+    /// P0.5 — last emitted resilience value. Gates
+    /// `Event::CivResilienceTick` so only meaningful shifts hit
+    /// the log.
+    pub last_emitted_resilience: Real,
 }
 
 /// Collapse triggers. Multiple may compound; whichever streak
@@ -517,6 +547,14 @@ pub const CIVIL_WAR_STREAK_TICKS: u64 = 75 * protocol::MONTHS_PER_YEAR;
 /// last emission ≥ this amount, so the log isn't noisy from
 /// per-tick microdrift.
 pub const COHESION_EMIT_THRESHOLD: (i64, i64) = (5, 100);
+
+/// P0.5 — `CivResilienceTick` emission threshold. Sim/core only
+/// emits a `CivResilienceTick` when the absolute change in
+/// `ecological_resilience` since the last emission ≥ this
+/// amount. 0.05 matches the cohesion threshold and gives a
+/// minimum-meaningful 5% ecosystem-drift granularity in the
+/// event log; smaller per-tick microdrift stays out.
+pub const RESILIENCE_EMIT_DELTA_FLOOR: (i64, i64) = (5, 100);
 
 /// Cohesion ceiling for the breakaway-fragmentation zone.
 /// A civ whose cohesion stays in `[CIVIL_WAR_COHESION_FLOOR,
