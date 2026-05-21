@@ -17,6 +17,7 @@ pub mod coriolis;
 pub mod em;
 pub mod fluid;
 pub mod grid;
+pub mod hadley;
 pub mod heat;
 pub mod hemisphere;
 pub mod hydrology;
@@ -45,6 +46,10 @@ pub use coriolis::Coriolis;
 pub use em::Electromagnetism;
 pub use fluid::GravityFlow;
 pub use grid::{Axial, CellId, HexGrid};
+pub use hadley::{
+    apply_hadley_circulation, compute_hadley_layout, CellDirection, HadleyCell, HadleyCellLayout,
+    HadleyCirculation,
+};
 pub use hemisphere::{hemisphere_for_row, Hemisphere};
 pub use hydrology::Hydrology;
 pub use isostasy::{apply_isostasy, continental_factor, oceanic_factor};
