@@ -183,6 +183,38 @@ seed attempts.
 
 **Effort:** M — 12 h.
 
+**Status (resolved):** the panic was not in physics at all — it
+was the discovery / hypothesizer least-squares pipeline in
+`sim_civ::fit::fit_linear_in_basis`. The normal-equations
+accumulator `a[i][j] = a[i][j] + phi[i] * phi[j]` overflows for
+high-order polynomial bases (`Polynomial3`'s `[x³, x², x, 1]`
+puts `x⁶` in the cross-term and a sample with `|x| > 46` already
+saturates Q32.32 on the single product). Fix: saturating
+arithmetic through `fit_linear_in_basis` + `solve_linear_system`;
+guard `fit_exp` / `fit_power_law` against intercepts above
+`exp`'s `ln(Real::MAX) ≈ 21` ceiling; saturate the
+`Pop::to_real_nonneg` round-trip in the surplus utilisation
+divide (`cap.raw().to_num::<i64>` was overflowing `Real::from_int`
+for hyper-r civs whose terrain-aware capacity exceeded
+`i32::MAX`). Defensive saturating chains also added to tidal-
+heating moon products, radiation greenhouse sum, and the
+debug-mode `total_substance_mass` / `total_water_plus_vapour`
+helpers so a future regression on those paths fails the
+conservation assert cleanly rather than panicking the run loop.
+
+Canary tests `figure_born_events_emitted_for_founding_band` /
+`tech_unlocked_events_emit_when_prereqs_met` /
+`earth_like_run_emits_relation_confirmations` re-pinned from
+seeds 42 / 100 to seed 1024 (post-Items-12-24 RNG shift puts
+seeds 42, 100, 7, 11, 4096 in the "no civs at 16k ticks" bucket;
+seed 1024 is the most reliable post-shift producer per the
+`tests/find_seed.rs::find_working_seed` sweep). The three
+`#[ignore]`d slow tests on seed 42 (`knowledge_transmits...`,
+`successor_civs...`, `collapse_fires...`) are left on seed 42 for
+this PR — they don't run in default `cargo test` and re-pinning
+them needs a longer 1000-2000-sim-year sweep to verify the
+emergent collapse / transmission cadence on the chosen seed.
+
 ## P1 — feature is decorative because nothing reads it
 
 ### P1.1 — Tidal heating decoupled from interior / hydrology

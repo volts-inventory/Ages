@@ -255,26 +255,39 @@ pub fn moon_tidal_heat_rate(planet_radius_earth_units: Real, moon: &MoonHeating)
     // route through ln/exp (~30 ULPs of round-off); the direct
     // chain keeps the precision tight and avoids the
     // ln-of-non-positive panic guard.
+    //
+    // P0.6 hardening: every multiply in the chain uses
+    // `saturating_mul` to clamp at `Real::MIN/MAX` rather than
+    // panicking on overflow. For ultra-short-period moons
+    // (`orbital_period_macros = 7` → `n ≈ 0.898`) on a high-radius
+    // sample the intermediate `n⁵ × R⁵` is still <100, but a future
+    // wider planet-radius sample (super-Earth at R ≈ 2.5 → R⁵ ≈ 98)
+    // multiplied by Io-class `n ≈ 3.55 → n⁵ ≈ 565` puts the running
+    // product near 5e4 — well under Q32.32's 2.1e9 ceiling, but the
+    // next `× cal_factor = 1.75e8` step would land at 8.75e12 and
+    // hard-panic the build. Saturating clamps so the test seed
+    // sweep can run to completion; downstream
+    // `distribute_heat_to_cells` re-clamps the temperature delta.
     let r = planet_radius_earth_units;
-    let r2 = r * r;
-    let r4 = r2 * r2;
-    let r5 = r4 * r;
+    let r2 = r.saturating_mul(r);
+    let r4 = r2.saturating_mul(r2);
+    let r5 = r4.saturating_mul(r);
 
-    let n2 = n * n;
-    let n4 = n2 * n2;
-    let n5 = n4 * n;
+    let n2 = n.saturating_mul(n);
+    let n4 = n2.saturating_mul(n2);
+    let n5 = n4.saturating_mul(n);
 
-    let e2 = moon.eccentricity * moon.eccentricity;
+    let e2 = moon.eccentricity.saturating_mul(moon.eccentricity);
 
     // Order: n5 × r5 first (~1.08 for Io — safely O(1)), then
     // × e² (~1.8e-5), then × k₂/Q × (21/2), finally × cal_factor
     // to land in TW. See module-level numerical-order note.
-    let n5r5 = n5 * r5;
-    let n5r5e2 = n5r5 * e2;
+    let n5r5 = n5.saturating_mul(r5);
+    let n5r5e2 = n5r5.saturating_mul(e2);
     let twenty_one_halves = Real::from_ratio(21, 2);
-    let coeff = twenty_one_halves * moon.k2_over_q;
-    let pre_cal = n5r5e2 * coeff;
-    pre_cal * cal_factor()
+    let coeff = twenty_one_halves.saturating_mul(moon.k2_over_q);
+    let pre_cal = n5r5e2.saturating_mul(coeff);
+    pre_cal.saturating_mul(cal_factor())
 }
 
 /// Distribute a total heat dissipation rate (in TW) uniformly across
@@ -310,10 +323,10 @@ pub fn distribute_heat_to_cells(state: &mut PhysicsState, total_heat_tw: Real) {
     // the per-cell delta is ~1e-7 K per macro-step — same order as
     // radiation's per-step nudges.
     let heat_to_kelvin = Real::from_ratio(1, 1_000_000);
-    let per_cell = total_heat_tw * heat_to_kelvin
+    let per_cell = total_heat_tw.saturating_mul(heat_to_kelvin)
         / Real::from_int(i64::try_from(n_cells).unwrap_or(1).max(1));
     for t in state.temperature_mut() {
-        *t = *t + per_cell;
+        *t = t.saturating_add(per_cell);
     }
 }
 
@@ -332,9 +345,12 @@ pub fn apply_tidal_heating(
     planet_radius_earth_units: Real,
     moons: &[MoonHeating],
 ) -> Real {
+    // P0.6: saturating_add so a worldgen that samples many moons
+    // (or one moon at a saturated `moon_tidal_heat_rate`) doesn't
+    // panic on the running total.
     let mut total = Real::ZERO;
     for m in moons {
-        total = total + moon_tidal_heat_rate(planet_radius_earth_units, m);
+        total = total.saturating_add(moon_tidal_heat_rate(planet_radius_earth_units, m));
     }
     distribute_heat_to_cells(state, total);
     total
