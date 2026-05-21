@@ -419,6 +419,30 @@ pub struct CivSurplusChanged {
     pub previous_q32: i64,
 }
 
+/// P0.5 — civ ecological resilience drifted by at least
+/// `RESILIENCE_EMIT_DELTA_FLOOR` (currently 0.05) since the
+/// last emission. Carries the live `resilience_q32` plus the
+/// `producer_biomass_q32` reading that drove it. Resilience is
+/// `producer_biomass / initial_producer_biomass` clamped to
+/// `[0, 2]`: 1.0 = baseline, < 1.0 = degraded ecosystem (cascading
+/// extinctions starve the civ), > 1.0 = thriving. Consumers can
+/// timeline ecosystem-civ coupling without polling the civ state
+/// each tick.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CivResilienceTick {
+    pub tick: u64,
+    pub civ_id: u32,
+    /// Q32.32 in `[0, 2]`. 1.0 = baseline producer biomass.
+    pub resilience_q32: i64,
+    /// Q32.32 raw — current `PlanetEcosystem::tier_biomass(0)`
+    /// reading, in the same units as the per-planet producer pool.
+    pub producer_biomass_q32: i64,
+    /// Previous emitted resilience. Lets consumers narrate the
+    /// magnitude / direction of the shift without retaining their
+    /// own state.
+    pub previous_q32: i64,
+}
+
 /// M8 — trade route established between two peaceful civs.
 /// Fires immediately after `CivContact` when both civs sit
 /// below the peaceful-hierarchy floor (same gate as cross-civ

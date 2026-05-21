@@ -138,6 +138,14 @@ impl Civ {
             selection_bias: crate::environmental_drift::SelectionBias::zero(),
             surplus: Real::ZERO,
             last_emitted_surplus: Real::ZERO,
+            // P0.5 — producer biomass anchor + resilience scalar.
+            // Defaults to baseline; sim/core's
+            // `step_population_per_cell` overwrites each tick from
+            // the live `PlanetEcosystem::tier_biomass(0)` reading.
+            producer_biomass: Real::ONE,
+            initial_producer_biomass: Real::ONE,
+            ecological_resilience: Real::ONE,
+            last_emitted_resilience: Real::ONE,
         }
     }
 

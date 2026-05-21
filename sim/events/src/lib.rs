@@ -192,6 +192,7 @@ impl Emitter for CountingEmitter {
             Event::PrimaryHypothesisDisplaced(_) => "primary_hypothesis_displaced",
             Event::CivLifeExpectancyChanged(_) => "civ_life_expectancy_changed",
             Event::CivSurplusChanged(_) => "civ_surplus_changed",
+            Event::CivResilienceTick(_) => "civ_resilience_tick",
             Event::TradeRouteEstablished(_) => "trade_route_established",
             Event::TradeRouteClosed(_) => "trade_route_closed",
             Event::AllianceFormed(_) => "alliance_formed",

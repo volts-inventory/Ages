@@ -173,6 +173,14 @@ pub enum Event {
     /// modulates food-crisis collapse + war strength + catastrophe
     /// resilience.
     CivSurplusChanged(CivSurplusChanged),
+    /// P0.5 — civ ecological resilience drifted by at least
+    /// `RESILIENCE_EMIT_DELTA_FLOOR` (currently 0.05) since the
+    /// last emission. Tracks `producer_biomass /
+    /// initial_producer_biomass`, clamped to `[0, 2]`. Lets
+    /// consumers timeline ecosystem-civ coupling — a planet whose
+    /// producers crash via cascading extinctions now visibly
+    /// degrades every civ's resilience over the same tick window.
+    CivResilienceTick(CivResilienceTick),
     /// M8 — trade route opened between two peaceful civs. Per-tick
     /// surplus flow runs between the pair until war / collapse /
     /// hierarchy-drift closes it.

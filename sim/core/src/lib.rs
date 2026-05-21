@@ -439,6 +439,17 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // the regrowth reaction; Fossil monotonically depletes.
         phases::resource_consumption_phase(&mut state, &civs);
 
+        // P0.5: read the live `PlanetEcosystem::tier_biomass(0)`
+        // reading and thread it into the per-civ population step.
+        // The ecosystem step itself runs later in the tick (after
+        // catastrophes); the read here picks up the value left by
+        // the *previous* tick's step. That's the right semantics —
+        // population dynamics at tick N respond to the producer
+        // pool the ecosystem produced through tick N-1, the same
+        // way they respond to the *previous* tick's temperature
+        // and substance fields. Tick 0 reads the freshly-sampled
+        // ecosystem's starting biomass, before any step has run.
+        let producer_biomass = ecosystem.tier_biomass(0);
         phases::population_phase(
             emitter,
             tick,
@@ -447,7 +458,36 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             &species,
             &mut civs,
             &mut nomad_pops,
+            producer_biomass,
         )?;
+        // P0.5: emit per-civ ecological-resilience snapshots after
+        // the population step has cached each civ's
+        // `ecological_resilience` from the producer biomass
+        // reading. Gate on the `RESILIENCE_EMIT_DELTA_FLOOR`
+        // threshold (currently 0.05) so per-tick microdrift stays
+        // out of the log.
+        let resilience_threshold = Real::from_ratio(
+            sim_civ::RESILIENCE_EMIT_DELTA_FLOOR.0,
+            sim_civ::RESILIENCE_EMIT_DELTA_FLOOR.1,
+        );
+        let mut resilience_events: Vec<protocol::CivResilienceTick> = Vec::new();
+        for civ in civs.iter_mut().filter(|c| c.is_active()) {
+            if (civ.ecological_resilience - civ.last_emitted_resilience).abs()
+                >= resilience_threshold
+            {
+                resilience_events.push(protocol::CivResilienceTick {
+                    tick,
+                    civ_id: civ.id,
+                    resilience_q32: civ.ecological_resilience.raw().to_bits(),
+                    producer_biomass_q32: civ.producer_biomass.raw().to_bits(),
+                    previous_q32: civ.last_emitted_resilience.raw().to_bits(),
+                });
+                civ.last_emitted_resilience = civ.ecological_resilience;
+            }
+        }
+        for ev in resilience_events {
+            emitter.emit(&Event::CivResilienceTick(ev))?;
+        }
 
         // Collapse + catastrophe per civ; founding
         // checks once after, with concurrent and sequential
