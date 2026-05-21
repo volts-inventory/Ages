@@ -22,14 +22,21 @@ provides.
   carrying the trait scalars (Q32.32 raw bits for bit-exact
   determinism), the modality and manipulation kinds, and the
   perceivable-template id list.
-- **`cognition_topology` field** (`Centralized | Distributed`):
-  cephalopod-vs-vertebrate substrate distinction. Sampled 70/30
-  toward Centralized; Distributed surfaces the cephalopod
-  archetype (the "field-and-resonance" species the project's
-  vision archetype describes). Currently flavour-only — surfaced
-  in `SpeciesDerived` and the post-run report's species card.
-  Behavioural fork (cosmology drift speed, refinement
-  aggressiveness) reserved for a later pass.
+- **`cognition_topology` field** (`Centralized | DistributedRedundant |
+  Collective | Acentric`): four cognition substrates with distinct
+  relationships to time, memory persistence, and isolation.
+  Centralized is the vertebrate baseline (70%). DistributedRedundant
+  (15%) is the cephalopod archetype — faster hypothesis cycling (0.7×
+  period) but a hard abstraction cap (0.6). Collective (10%) is the
+  hive-mind — collapses to ~5% cognition when isolated below quorum.
+  Acentric (5%) is the slime-mold / cumulative-substrate archetype —
+  slow per-attempt cadence (5×) but cross-generation knowledge decay
+  is 5× slower. Drives `attempt_period_multiplier`,
+  `knowledge_decay_multiplier`, `abstraction_cap`,
+  `isolation_penalty`. Companion helper
+  `transmission_speed_for_modality` couples comm-channel modalities
+  into transmission comprehension (acoustic/light = 1.0, chemical = 0.2,
+  tactile = 0.1).
 
 ## Modalities (15 channels)
 

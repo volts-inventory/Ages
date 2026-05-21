@@ -606,10 +606,123 @@ pub enum Habitat {
 }
 
 /// Cognition substrate topology. See `Species::cognition_topology`.
+///
+/// Four substrates, each with a distinct relationship to time,
+/// memory persistence, and population isolation:
+///
+/// - `Centralized` — one brain, vertebrate-equivalent. The
+///   reference baseline; all multipliers are 1.0.
+/// - `DistributedRedundant` — many parallel processing centres
+///   (cephalopod-equivalent). Faster hypothesis cycling (parallel
+///   sensing → 0.7× attempt period) but a hard cap on formal
+///   abstraction at 0.6 (no single integrator to synthesize
+///   tier-3+ symbolic structures).
+/// - `Collective` — cognition is an emergent property of the
+///   group (eusocial / hive-mind archetype). Identical baseline
+///   to Centralized when the colony is intact, but collapses to
+///   ~5% effective cognition under isolation (single individuals
+///   cannot think — the substrate is the group).
+/// - `Acentric` — no localized cognition organ; knowledge lives
+///   in cumulative cultural / chemical / environmental traces
+///   (slime-mold / xenobiological persistence archetype). Slow
+///   per-attempt cadence (5× period) but knowledge decays
+///   dramatically slower across generations (0.2× decay) — the
+///   substrate IS the memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CognitionTopology {
     Centralized,
-    Distributed,
+    DistributedRedundant,
+    Collective,
+    Acentric,
+}
+
+impl CognitionTopology {
+    /// Per-topology multiplier on hypothesis-attempt period.
+    /// Centralized = 1.0 (baseline); DistributedRedundant = 0.7
+    /// (parallel sensors fire hypothesis attempts in parallel);
+    /// Collective = 1.0; Acentric = 5.0 (very slow individual
+    /// attempts but the substrate persists across generations).
+    #[must_use]
+    pub fn attempt_period_multiplier(self) -> Real {
+        match self {
+            CognitionTopology::Centralized => Real::ONE,
+            CognitionTopology::DistributedRedundant => Real::from_ratio(7, 10),
+            CognitionTopology::Collective => Real::ONE,
+            CognitionTopology::Acentric => Real::from_int(5),
+        }
+    }
+
+    /// Per-topology multiplier on cross-generation knowledge
+    /// decay. Lower values mean knowledge survives longer.
+    /// Acentric = 0.2 (cumulative substrate-encoded knowledge
+    /// survives generations far better than oral / cortical
+    /// stores); others = 1.0.
+    #[must_use]
+    pub fn knowledge_decay_multiplier(self) -> Real {
+        match self {
+            CognitionTopology::Acentric => Real::from_ratio(2, 10),
+            _ => Real::ONE,
+        }
+    }
+
+    /// Per-topology hard cap on the abstraction axis. No single
+    /// integrator to synthesize tier-3+ symbolic structures means
+    /// DistributedRedundant peaks at 0.6 even for high-cognition
+    /// seeds. Others remain uncapped (1.0).
+    #[must_use]
+    pub fn abstraction_cap(self) -> Real {
+        match self {
+            CognitionTopology::DistributedRedundant => Real::from_ratio(6, 10),
+            _ => Real::ONE,
+        }
+    }
+
+    /// Per-topology multiplier on effective cognition when a
+    /// population is *isolated* (below the cohesion threshold —
+    /// callers decide what counts as isolated). Collective
+    /// species lose nearly all cognition in isolation (0.05) —
+    /// a single hive member without the swarm cannot think.
+    /// Others = 1.0.
+    #[must_use]
+    pub fn isolation_penalty(self) -> Real {
+        match self {
+            CognitionTopology::Collective => Real::from_ratio(5, 100),
+            _ => Real::ONE,
+        }
+    }
+
+    /// Per-modality transmission-speed multiplier in `[0, 1]`.
+    /// Captures the physical signal-propagation regime each
+    /// communication channel sits in: fast-propagating long-range
+    /// channels (acoustic, light, radio) get 1.0; bioluminescent
+    /// is fast but line-of-sight (0.8); short-range mechanical
+    /// (seismic / vibrational) is fast within range but limited
+    /// (0.7); chemical (pheromone / taste) diffuses slowly (0.2);
+    /// tactile is short-range and slow (0.1).
+    ///
+    /// Wired into transmission comprehension as a multiplicative
+    /// term so a chemical-pheromone species inherits less of its
+    /// predecessor's knowledge per tick than an acoustic species.
+    #[must_use]
+    pub fn transmission_speed_for_modality(kind: ModalityKind) -> Real {
+        match kind {
+            ModalityKind::AcousticAir
+            | ModalityKind::AcousticWater
+            | ModalityKind::VisualLight
+            | ModalityKind::VisualPolarization
+            | ModalityKind::RadioNative
+            | ModalityKind::ElectricField
+            | ModalityKind::MagneticSense
+            | ModalityKind::InfraredThermal => Real::ONE,
+            ModalityKind::Bioluminescent => Real::from_ratio(8, 10),
+            ModalityKind::Seismic => Real::from_ratio(7, 10),
+            ModalityKind::ChemicalPheromone | ModalityKind::ChemicalTaste => {
+                Real::from_ratio(2, 10)
+            }
+            ModalityKind::Tactile => Real::from_ratio(1, 10),
+            ModalityKind::Gestural | ModalityKind::Postural => Real::from_ratio(8, 10),
+        }
+    }
 }
 
 /// Multi-axis cognitive profile. Collapsing cognition to a single

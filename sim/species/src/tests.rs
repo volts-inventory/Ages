@@ -501,3 +501,101 @@ fn seed_bank_resurrection_repopulates_post_extinction_event() {
         "conservation violated: total={total:?} > 1001",
     );
 }
+
+/// Sprint 3 Item 10: communication-channel modality couples into
+/// transmission speed. The pheromone species' aggregate
+/// `communication_speed_multiplier` is strictly less than the
+/// acoustic species'. The downstream comprehension formula
+/// multiplies by this scalar, so the same successor-comprehension
+/// formula yields a lower comprehension score for the pheromone
+/// species under identical other conditions.
+#[test]
+fn comm_channel_modality_affects_transmission_speed() {
+    use crate::{CognitionTopology, Modality, ModalityKind};
+    let acoustic = Modality {
+        kind: ModalityKind::AcousticAir,
+        range_m: Real::from_int(100),
+        fidelity: Real::ONE,
+        bandwidth: Real::ONE,
+    };
+    let acoustic_speed = CognitionTopology::transmission_speed_for_modality(acoustic.kind);
+    assert_eq!(acoustic_speed, Real::ONE);
+
+    let pheromone = Modality {
+        kind: ModalityKind::ChemicalPheromone,
+        range_m: Real::from_int(100),
+        fidelity: Real::ONE,
+        bandwidth: Real::ONE,
+    };
+    let pheromone_speed = CognitionTopology::transmission_speed_for_modality(pheromone.kind);
+    assert_eq!(pheromone_speed, Real::from_ratio(2, 10));
+    assert!(pheromone_speed < acoustic_speed);
+
+    // End-to-end via `Species::communication_speed_multiplier`.
+    let base = fixture(1);
+    let mut acoustic_species = base.clone();
+    acoustic_species.modalities = vec![acoustic];
+    let mut pheromone_species = base;
+    pheromone_species.modalities = vec![pheromone];
+    let acoustic_mult = acoustic_species.communication_speed_multiplier();
+    let pheromone_mult = pheromone_species.communication_speed_multiplier();
+    assert!(
+        pheromone_mult < acoustic_mult,
+        "chemical-pheromone species must have slower transmission than acoustic: \
+         pheromone={pheromone_mult:?} acoustic={acoustic_mult:?}",
+    );
+    assert_eq!(acoustic_mult, Real::ONE);
+    assert_eq!(pheromone_mult, Real::from_ratio(2, 10));
+}
+
+/// Sprint 3 Item 10: a species with both pheromone and acoustic
+/// channels inherits the *fastest* channel — knowledge propagates
+/// on the fastest available substrate.
+#[test]
+fn species_with_mixed_modalities_inherits_fastest_channel() {
+    use crate::{Modality, ModalityKind};
+    let mut s = fixture(7);
+    s.modalities = vec![
+        Modality {
+            kind: ModalityKind::ChemicalPheromone,
+            range_m: Real::from_int(1),
+            fidelity: Real::ONE,
+            bandwidth: Real::ONE,
+        },
+        Modality {
+            kind: ModalityKind::AcousticAir,
+            range_m: Real::from_int(100),
+            fidelity: Real::ONE,
+            bandwidth: Real::ONE,
+        },
+    ];
+    assert_eq!(s.communication_speed_multiplier(), Real::ONE);
+}
+
+/// Sprint 3 Item 10: Acentric species retain knowledge across
+/// generations far better than Centralized ones. Both
+/// `transmission_decay_years` and `transmission_decay_ticks`
+/// stretch by 5× (1 / 0.2) for Acentric. Q32.32 division
+/// introduces sub-ε rounding so we assert "close to 5×" rather
+/// than bit-exact equality.
+#[test]
+fn acentric_topology_extends_transmission_decay_window() {
+    let mut centralized = fixture(11);
+    centralized.cognition_topology = crate::CognitionTopology::Centralized;
+    let mut acentric = centralized.clone();
+    acentric.cognition_topology = crate::CognitionTopology::Acentric;
+    let cent_years = centralized.transmission_decay_years();
+    let acen_years = acentric.transmission_decay_years();
+    let target = cent_years * Real::from_int(5);
+    let diff = if acen_years > target {
+        acen_years - target
+    } else {
+        target - acen_years
+    };
+    // Sub-ε tolerance — Q32.32 round-trip via `/ 0.2`.
+    assert!(
+        diff < Real::from_ratio(1, 100),
+        "Acentric decay must be ~5× Centralized; got acentric={acen_years:?}, expected~{target:?}",
+    );
+    assert!(acentric.transmission_decay_ticks() > centralized.transmission_decay_ticks());
+}

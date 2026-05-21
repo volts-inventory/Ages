@@ -708,7 +708,9 @@ impl<W: Write> ViewportEmitter<W> {
         let cog_tier_word = cog_tier(cog);
         let topo_full = match sp.cognition_topology.as_str() {
             "centralized" => "centralized",
-            "distributed" => "distributed",
+            "distributed-redundant" => "distributed",
+            "collective" => "collective",
+            "acentric" => "acentric",
             _ => "unknown",
         };
         let _ = writeln!(s, "{topo_full} {cog_tier_word} cognition");

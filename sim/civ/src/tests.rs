@@ -823,3 +823,81 @@ fn tool_fertility_aggregates_and_caps() {
         "fertility bonus should sum to ≈0.43 (under 0.50 cap); got {bonus:?}",
     );
 }
+
+/// Sprint 3 Item 10: a `CognitionTopology::Collective` species
+/// loses ~95% of its effective cognition when its population
+/// falls below `COLLECTIVE_QUORUM_POP` (the swarm-quorum). At or
+/// above quorum the cognition is unaffected — a single-civ test
+/// at the quorum boundary surfaces both branches of the gate.
+#[test]
+fn collective_species_cognition_drops_in_isolation() {
+    use sim_recognition::RecognitionLibrary;
+    use sim_world::sample_planet;
+    let planet = sample_planet(1);
+    let lib = RecognitionLibrary::earth_like_default();
+    let mut species = sim_species::derive(&planet, &lib);
+    species.cognition_topology = sim_species::CognitionTopology::Collective;
+    species.cognition = Real::from_ratio(8, 10); // 0.8 base
+
+    // Healthy civ above the quorum: effective_cognition equals the
+    // species baseline (no isolation penalty).
+    let healthy = Civ::new(1, 0, Pop::from_int(500));
+    assert!(healthy.cohort.total() >= crate::COLLECTIVE_QUORUM_POP);
+    let healthy_cog = healthy.effective_cognition(&species);
+    assert_eq!(healthy_cog, Real::from_ratio(8, 10));
+
+    // Isolated civ below the quorum: effective_cognition is the
+    // baseline × isolation_penalty (0.05) → 0.8 × 0.05 = 0.04.
+    let isolated = Civ::new(2, 0, Pop::from_int(10));
+    assert!(isolated.cohort.total() < crate::COLLECTIVE_QUORUM_POP);
+    let isolated_cog = isolated.effective_cognition(&species);
+    let expected = Real::from_ratio(8, 10) * Real::from_ratio(5, 100);
+    assert_eq!(isolated_cog, expected);
+    assert!(isolated_cog < healthy_cog);
+
+    // Sanity: a Centralized species at the same low population is
+    // unaffected — only Collective triggers the penalty.
+    let mut central_species = species.clone();
+    central_species.cognition_topology = sim_species::CognitionTopology::Centralized;
+    let central_isolated = isolated.effective_cognition(&central_species);
+    assert_eq!(central_isolated, Real::from_ratio(8, 10));
+}
+
+/// Sprint 3 Item 10: an `Acentric` species' cross-collapse
+/// knowledge decay constant is 5× longer than a `Centralized`
+/// species'. Over a long age window the same predecessor
+/// relation comprehends with a higher `age_decay` factor for the
+/// Acentric species than the Centralized one — the substrate
+/// preserves cumulative memory across generations.
+#[test]
+fn acentric_species_retains_knowledge_across_generations_better() {
+    use crate::transmission::age_decay;
+    use sim_recognition::RecognitionLibrary;
+    use sim_world::sample_planet;
+    let planet = sample_planet(1);
+    let lib = RecognitionLibrary::earth_like_default();
+    let mut centralized = sim_species::derive(&planet, &lib);
+    centralized.cognition_topology = sim_species::CognitionTopology::Centralized;
+    let mut acentric = centralized.clone();
+    acentric.cognition_topology = sim_species::CognitionTopology::Acentric;
+
+    // 1000 sim-years × 12 months ≈ a deep time window where the
+    // Centralized species' base 500-1500 yr e-fold constant has
+    // delivered substantial decay but the Acentric species' 5×
+    // stretched constant has barely started.
+    let age_ticks = 1000u64 * 12;
+    let centralized_ticks = centralized.transmission_decay_ticks();
+    let acentric_ticks = acentric.transmission_decay_ticks();
+    // Sanity: stretched 5× (give or take 1 tick for rounding).
+    assert!(acentric_ticks >= centralized_ticks * 4);
+
+    let centralized_decay = age_decay(age_ticks, centralized_ticks);
+    let acentric_decay = age_decay(age_ticks, acentric_ticks);
+    // age_decay is exp(-age/decay), so larger decay constant →
+    // larger value (closer to 1.0).
+    assert!(
+        acentric_decay > centralized_decay,
+        "Acentric must lose less knowledge than Centralized over the same age window: \
+         acentric={acentric_decay:?} centralized={centralized_decay:?}",
+    );
+}

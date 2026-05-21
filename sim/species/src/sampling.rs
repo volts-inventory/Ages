@@ -892,7 +892,9 @@ pub fn derive_population_biology(
     // Centralized cognition get the long brain-development window.
     let centralized_bonus = match cognition_topology {
         CognitionTopology::Centralized => Real::percent(5),
-        CognitionTopology::Distributed => Real::ZERO,
+        CognitionTopology::DistributedRedundant
+        | CognitionTopology::Collective
+        | CognitionTopology::Acentric => Real::ZERO,
     };
     let maturity_base = Real::percent(4) + (Real::ONE - r_axis) * Real::percent(31);
     let maturity_fraction = (maturity_base + centralized_bonus).min(Real::percent(40));

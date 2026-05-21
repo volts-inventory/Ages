@@ -4,7 +4,8 @@
 
 use crate::cosmology;
 use crate::demographics::{
-    attempt_period_for_cognition, carrying_capacity_per_unit, migration_pressure_threshold,
+    attempt_period_for_cognition, attempt_period_for_cognition_and_topology,
+    carrying_capacity_per_unit, migration_pressure_threshold,
     scale_attempt_period_for_metabolism,
 };
 use crate::figures::{found_band, NameGrammar};
@@ -155,11 +156,36 @@ impl Civ {
         metabolism: Real,
         cell_count: u32,
     ) {
+        // Back-compat default — Centralized topology, no per-
+        // topology cadence shift. Production callers that have the
+        // species in hand should prefer `configure_substrate_with_topology`.
+        self.configure_substrate_with_topology(
+            habitat,
+            cognition,
+            sociality,
+            metabolism,
+            cell_count,
+            sim_species::CognitionTopology::Centralized,
+        );
+    }
+
+    /// `configure_substrate` with the species' cognition topology
+    /// folded into the per-figure attempt-period scaling. Used by
+    /// `sim-core` once the species is in hand.
+    pub fn configure_substrate_with_topology(
+        &mut self,
+        habitat: sim_species::Habitat,
+        cognition: Real,
+        sociality: Real,
+        metabolism: Real,
+        cell_count: u32,
+        topology: sim_species::CognitionTopology,
+    ) {
         self.species_habitat = habitat;
         self.carrying_capacity_per_unit = carrying_capacity_per_unit(cognition, cell_count);
         self.migration_pressure_threshold = migration_pressure_threshold(sociality);
         let scaled = scale_attempt_period_for_metabolism(
-            attempt_period_for_cognition(cognition),
+            attempt_period_for_cognition_and_topology(cognition, topology),
             metabolism,
         );
         // Falsification window scales the same way: a 120-tick

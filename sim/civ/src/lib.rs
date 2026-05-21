@@ -49,11 +49,13 @@ mod tools;
 
 pub use demographics::dynamics_for_civ;
 pub use demographics::{
-    attempt_period_for_cognition, biosphere_birth_factor, biosphere_birth_factor_for_planet,
-    carrying_capacity_per_unit, dynamics_for, founding_min_population,
-    migration_pressure_threshold, scale_attempt_period_for_metabolism, streak_ticks_for_metabolism,
+    attempt_period_for_cognition, attempt_period_for_cognition_and_topology,
+    biosphere_birth_factor, biosphere_birth_factor_for_planet, carrying_capacity_per_unit,
+    dynamics_for, founding_min_population, migration_pressure_threshold,
+    scale_attempt_period_for_metabolism, streak_ticks_for_metabolism,
     tech_augmented_migration_threshold,
 };
+pub use drift::COLLECTIVE_QUORUM_POP;
 pub use naming::civ_name_from_seed;
 pub use succession::pick_successor_centroid;
 
