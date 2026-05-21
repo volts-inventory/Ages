@@ -81,24 +81,131 @@ pub struct CatastropheRecord {
 /// the constant lives in one place.
 const DORMANCY_SEVERITY_FACTOR: Real = Real::ONE;
 
+/// Per-cell baseline radiation flux, Earth-surface units. Sits
+/// well below the aqueous-default `radiation_max = 0.5` so a
+/// quiet planet doesn't already saturate the radiation gate.
+/// Catastrophe-specific deltas (solar flare, etc) are added on
+/// top of this in the per-call-site cell-conditions builder.
+fn baseline_radiation_flux() -> Real {
+    Real::from_ratio(1, 10)
+}
+
+/// Post-flare radiation magnitude added on top of the baseline
+/// when a solar flare hits. Sits above the aqueous-default
+/// `radiation_max = 0.5` so a narrow-envelope species takes the
+/// full flare damage, while an extremophile with
+/// `radiation_max ≥ 5` still has plenty of envelope headroom.
+fn solar_flare_radiation_boost() -> Real {
+    Real::ONE
+}
+
+/// Drop in cell temperature applied when an ice age fires, in K.
+/// Pushes the cell's read-out temperature below the aqueous
+/// envelope's lower bound (273 K) for cold-baseline planets so
+/// the temperature gate flags the catastrophe to a narrow-
+/// envelope species.
+fn ice_age_temp_drop_k() -> Real {
+    Real::from_int(50)
+}
+
+/// Pa per atm — conversion factor between `planet.surface_pressure`
+/// (Pa) and the tolerance envelope's pressure range (atm).
+fn pa_per_atm() -> Real {
+    Real::from_int(101_325)
+}
+
+/// Build the `(temperature, pH, salinity, radiation, pressure)`
+/// tuple a catastrophe-affected cell exposes to the tolerance
+/// envelope. The hex grid only carries temperature + pressure
+/// per cell; pH and salinity are derived from planet-level
+/// substrate defaults (neutral pH, Earth-ocean-baseline salinity)
+/// so the radiation/temperature axes drive the differential.
+///
+/// `temp_delta_k` adjusts the read-out temperature (negative for
+/// ice age cold snap, zero otherwise). `extra_rad` adds to the
+/// baseline radiation flux (positive for solar flare; pre-
+/// multiplied by `cosmic_ray_ground_flux` at the call site so the
+/// magnetic-reversal window amplifies post-flare ground flux).
+fn catastrophe_cell_conditions(
+    state: &PhysicsState,
+    planet: &Planet,
+    cell: usize,
+    temp_delta_k: Real,
+    extra_rad: Real,
+) -> (Real, Real, Real, Real, Real) {
+    let temp_slice = state.temperature();
+    let pressure_slice = state.pressure();
+    // Per-cell temperature with the catastrophe delta applied.
+    // Fall back to the planet mean if the cell index is out of
+    // range (defensive — callers always pass a valid index).
+    let cell_t = temp_slice
+        .get(cell)
+        .copied()
+        .unwrap_or(planet.mean_temperature);
+    let t = (cell_t + temp_delta_k).max(Real::ZERO);
+    // Neutral pH — no per-cell ocean-chemistry field yet. Pinned
+    // to the centre of the aqueous envelope so the pH axis stays
+    // a non-binding gate; substrate-specific pH biases land when
+    // a richer ocean-chemistry field exists.
+    let ph = Real::from_int(7);
+    // Earth-ocean-baseline salinity (g/L). Sits inside every
+    // substrate default's salinity range so this axis is non-
+    // binding under default planets; a future per-cell salinity
+    // field can plug in here.
+    let sal = Real::from_int(20);
+    // Radiation: baseline ground flux plus the event-specific
+    // boost (already scaled by cosmic-ray amplification at the
+    // call site for SolarFlare).
+    let rad = baseline_radiation_flux() + extra_rad;
+    // Pressure: prefer the per-cell state value if non-zero (Pa);
+    // otherwise fall back to the planet's surface pressure (Pa).
+    // Convert to atm for the tolerance envelope.
+    let p_pa = pressure_slice
+        .get(cell)
+        .copied()
+        .filter(|v| *v > Real::ZERO)
+        .unwrap_or(planet.surface_pressure);
+    let atm = pa_per_atm();
+    let p = if atm > Real::ZERO {
+        p_pa / atm
+    } else {
+        Real::ONE
+    };
+    (t, ph, sal, rad, p)
+}
+
 /// Wrap `apply_catastrophe_with_dormancy` with the per-civ
 /// existing `apply_catastrophe_resistance` (tools soften the
-/// blow) then the per-species dormancy reduction (tardigrade-
-/// grade species shrug off catastrophes). Tools-first preserves
-/// the existing behaviour: the catastrophe-resistance test fixture
-/// is unaffected by dormancy because the fixture's species has
-/// `dormancy = 0`.
+/// blow), then the per-species dormancy reduction (tardigrade-
+/// grade species shrug off catastrophes), then the per-species
+/// `ToleranceEnvelope::match_score` so an extremophile shaped to
+/// the affected cell's conditions rides out the catastrophe and
+/// a narrow-envelope species takes the full hit. Tools first
+/// preserves pre-existing behaviour for fixtures with
+/// `dormancy = 0` and centre-of-envelope species.
+///
+/// Formula:
+///   base_loss = raw_frac × (1 − civ_tool_resistance)
+///   after_dormancy = base_loss × (1 − dormancy × severity)
+///   after_tolerance = after_dormancy × (1 − match_score)
+///
+/// `match_score = 1.0` (perfect envelope fit) ⇒ zero damage;
+/// `match_score = 0.0` (outside envelope) ⇒ full damage.
 fn apply_resistance_and_dormancy(
     civ: &Civ,
     species: &Species,
     raw_frac: Real,
+    cell: (Real, Real, Real, Real, Real),
 ) -> Real {
     let after_tools = civ.apply_catastrophe_resistance(raw_frac);
-    apply_catastrophe_with_dormancy(
+    let after_dormancy = apply_catastrophe_with_dormancy(
         species.dormancy_capability,
         after_tools,
         DORMANCY_SEVERITY_FACTOR,
-    )
+    );
+    let (t, ph, sal, rad, p) = cell;
+    let survival_match = species.tolerance.match_score(t, ph, sal, rad, p);
+    after_dormancy * (Real::ONE - survival_match)
 }
 
 /// Per-tick catastrophe check. Mutates the civ (cohort + last_*
@@ -142,8 +249,14 @@ pub fn check_and_apply(
             // fraction. Aggregate cohort updates in sync.
             // PermanentMasonry / DefensiveFortification
             // soften the blow via apply_catastrophe_resistance.
+            // Tolerance: volcanic spike already mutated cell temp
+            // above (down by 50 K post-eruption); read the cell as-is
+            // with no extra rad/temp delta so the envelope sees the
+            // realised state.
             let raw_frac = Real::from(VOLCANIC_POP_LOSS);
-            let frac = apply_resistance_and_dormancy(civ, species, raw_frac);
+            let cell_conds =
+                catastrophe_cell_conditions(state, planet, cell, Real::ZERO, Real::ZERO);
+            let frac = apply_resistance_and_dormancy(civ, species, raw_frac, cell_conds);
             let cell_u32 = u32::try_from(cell).unwrap_or(u32::MAX);
             let lost_in_region = civ.drop_cell_pop(cell_u32, frac);
             // For civs without claimed_cells (legacy / tests),
@@ -186,7 +299,13 @@ pub fn check_and_apply(
         // resistance effect for healthcare-bearing civs.
         let base_frac = Real::from(DISEASE_POP_LOSS);
         let severity_frac = base_frac * disease_severity_factor(planet.biosphere);
-        let frac = apply_resistance_and_dormancy(civ, species, severity_frac);
+        // Tolerance: disease originates at the densest claimed cell;
+        // fall back to cell 0 if the civ has no per-cell cohorts so
+        // the tolerance gate still reads from real per-cell state.
+        let disease_cell = densest_claimed_cell(civ).map_or(0, |c| c as usize);
+        let cell_conds =
+            catastrophe_cell_conditions(state, planet, disease_cell, Real::ZERO, Real::ZERO);
+        let frac = apply_resistance_and_dormancy(civ, species, severity_frac, cell_conds);
         let center_frac = frac * Real::from_int(2);
         let neighbor_frac = frac;
         let grid_w = state.grid().width();
@@ -240,7 +359,15 @@ pub fn check_and_apply(
         // aftermath. : catastrophe-resistance tools soften
         // the absolute loss (built shelter survives debris).
         let raw_frac = Real::from(ASTEROID_POP_LOSS);
-        let frac = apply_resistance_and_dormancy(civ, species, raw_frac);
+        // Tolerance: read the deterministic impact cell's conditions
+        // for the tolerance gate. No extra rad/temp delta — asteroid
+        // damage is kinetic and dust-driven, not radiation-driven, and
+        // the cell's pre-impact state is the right baseline for the
+        // surviving sub-population.
+        let asteroid_cell = deterministic_cell_pick(civ, tick).map_or(0, |c| c as usize);
+        let cell_conds =
+            catastrophe_cell_conditions(state, planet, asteroid_cell, Real::ZERO, Real::ZERO);
+        let frac = apply_resistance_and_dormancy(civ, species, raw_frac, cell_conds);
         let center_frac = frac * Real::from_int(2);
         let neighbor_frac = frac / Real::from_int(2);
         let grid_w = state.grid().width();
@@ -289,8 +416,22 @@ pub fn check_and_apply(
         // catastrophe resistance softens the flare's hit
         // (advanced shielding / underground habitats / radiation
         // medicine).
+        // Tolerance: solar flare boosts the cell's radiation flux by
+        // the flare magnitude, further amplified by the magnetic-
+        // reversal cosmic-ray ground-flux multiplier (Item 20) — a
+        // flare hitting during a reversal window pushes radiation-
+        // sensitive species well past their `radiation_max` while
+        // an extremophile with `radiation_max ≥ 5` still has plenty
+        // of envelope headroom and survives. `.max(ONE)` so the
+        // amplifier never *softens* a flare (the multiplier is sub-1
+        // outside reversal windows).
         let raw_frac = Real::from(SOLAR_FLARE_POP_LOSS);
-        let frac = apply_resistance_and_dormancy(civ, species, raw_frac);
+        let cosmic_amp = state.cosmic_ray_ground_flux().max(Real::ONE);
+        let rad_boost = solar_flare_radiation_boost() * cosmic_amp;
+        let flare_cell = densest_claimed_cell(civ).map_or(0, |c| c as usize);
+        let cell_conds =
+            catastrophe_cell_conditions(state, planet, flare_cell, Real::ZERO, rad_boost);
+        let frac = apply_resistance_and_dormancy(civ, species, raw_frac, cell_conds);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
@@ -325,7 +466,15 @@ pub fn check_and_apply(
         let base_frac = Real::from(ICE_AGE_POP_LOSS);
         let severity_frac =
             (base_frac * ice_age_severity_factor(planet.mean_temperature)).min(Real::percent(60));
-        let frac = apply_resistance_and_dormancy(civ, species, severity_frac);
+        // Tolerance: ice age drops the cell's read-out temperature by
+        // `ice_age_temp_drop_k` so the temperature gate fires for
+        // narrow-envelope species. Picks the densest-claimed cell as
+        // the representative reading.
+        let ice_cell = densest_claimed_cell(civ).map_or(0, |c| c as usize);
+        let temp_drop = Real::ZERO - ice_age_temp_drop_k();
+        let cell_conds =
+            catastrophe_cell_conditions(state, planet, ice_cell, temp_drop, Real::ZERO);
+        let frac = apply_resistance_and_dormancy(civ, species, severity_frac, cell_conds);
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
@@ -598,6 +747,172 @@ mod tests {
         assert!(
             ratio <= Real::percent(11) && ratio >= Real::percent(9),
             "expected ~0.10× damage with dormancy=0.9, got ratio={ratio:?}",
+        );
+    }
+
+    /// Flare-firing planet: weak magnetosphere + above-Earth
+    /// luminosity satisfy `solar_flare_fires`. Tick used by the
+    /// flare tests below: `1567 * MONTHS_PER_YEAR = 18804`.
+    fn flare_planet() -> Planet {
+        let mut p = earth_like_planet();
+        p.magnetosphere = Magnetosphere::Weak;
+        p.stellar_luminosity = Real::from_int(1_500);
+        p
+    }
+
+    /// Extremophile tolerance: radiation-tolerant envelope.
+    /// `radiation_max = 20` so the post-flare radiation flux (≈ 1.1)
+    /// still scores well inside the envelope. Other axes centred on
+    /// the test cell's conditions (T=300 K, pH=7, salinity=20 g/L,
+    /// p=1 atm) with margins that score above the radiation axis's
+    /// fit so the radiation gate (not an incidental other axis) is
+    /// the binding constraint on `match_score`.
+    fn extremophile_tolerance() -> sim_species::ToleranceEnvelope {
+        sim_species::ToleranceEnvelope {
+            temp_range: (Real::from_int(200), Real::from_int(400)),
+            ph_range: (Real::from_int(5), Real::from_int(9)),
+            salinity_range: (Real::from_int(10), Real::from_int(30)),
+            radiation_max: Real::from_int(20),
+            pressure_range: (Real::from_ratio(5, 10), Real::from_ratio(15, 10)),
+        }
+    }
+
+    /// P0.4 acceptance test: same solar flare, two species
+    /// differing only in their `ToleranceEnvelope`. Extremophile
+    /// (`radiation_max = 20`) survives at >> 3× the rate of an
+    /// aqueous-default (`radiation_max = 0.5`) species — measured
+    /// as the death-rate ratio (the only metric capable of
+    /// resolving the spec target from a 10% flat base loss).
+    #[test]
+    fn extremophile_species_survives_solar_flare_better_than_aqueous() {
+        // Big civ so the 10-pop floor doesn't dominate.
+        let initial_pop = Pop::from_int(1_000_000);
+        let planet = flare_planet();
+        let flare_tick = 1567 * protocol::MONTHS_PER_YEAR;
+
+        // Aqueous species — default narrow envelope, radiation_max
+        // = 0.5. Flare rad = 0.1 + 1.0 = 1.1 ⇒ rad_score = 0 ⇒
+        // match_score = 0 ⇒ full 10% loss.
+        let mut aqueous = test_species();
+        aqueous.tolerance = sim_species::ToleranceEnvelope::aqueous_default();
+        let mut civ_aq = Civ::new(1, 0, initial_pop);
+        let mut state_aq = well_fed_state();
+        // Pin cell 0 to centre-of-aqueous-envelope T/p so the
+        // non-radiation axes don't accidentally bottleneck the
+        // aqueous species's match_score below the radiation gate.
+        state_aq.temperature_mut()[0] = Real::from_int(300);
+        state_aq.pressure_mut()[0] = Real::from_int(101_325);
+        let rec_aq = check_and_apply(&mut civ_aq, &mut state_aq, &planet, &aqueous, flare_tick)
+            .expect("flare must fire on weak-magnetosphere planet at tick=18804");
+        assert_eq!(rec_aq.kind, CatastropheKind::SolarFlare);
+
+        // Extremophile — wide envelope, radiation_max = 20. Flare
+        // rad = 1.1 ⇒ rad_score = 1 - 1.1/20 ≈ 0.945 ⇒ match_score
+        // ≈ 0.945 ⇒ loss = 0.10 × 0.055 ≈ 0.0055.
+        let mut extremophile = test_species();
+        extremophile.tolerance = extremophile_tolerance();
+        let mut civ_ex = Civ::new(2, 0, initial_pop);
+        let mut state_ex = well_fed_state();
+        // Same cell-conditions setup as the aqueous run — only the
+        // species' tolerance envelope differs between the two civs.
+        state_ex.temperature_mut()[0] = Real::from_int(300);
+        state_ex.pressure_mut()[0] = Real::from_int(101_325);
+        let rec_ex = check_and_apply(
+            &mut civ_ex,
+            &mut state_ex,
+            &planet,
+            &extremophile,
+            flare_tick,
+        )
+        .expect("flare must fire for extremophile under same conditions");
+        assert_eq!(rec_ex.kind, CatastropheKind::SolarFlare);
+
+        // The extremophile's loss fraction must be at least 3× smaller
+        // than the aqueous species' — measured as the loss ratio, the
+        // only metric that resolves the spec target from a 10% flat
+        // base loss. In practice it's ~18× smaller (0.10 vs ~0.0055).
+        assert!(
+            rec_aq.fraction_lost >= rec_ex.fraction_lost * Real::from_int(3),
+            "expected aqueous loss >= 3× extremophile loss; aqueous={:?}, extremophile={:?}",
+            rec_aq.fraction_lost,
+            rec_ex.fraction_lost,
+        );
+        // And the extremophile's surviving population is strictly
+        // larger than the aqueous one — the headline observable.
+        assert!(
+            civ_ex.cohort.total() > civ_aq.cohort.total(),
+            "extremophile survivors must exceed aqueous survivors; ex={:?}, aq={:?}",
+            civ_ex.cohort.total(),
+            civ_aq.cohort.total(),
+        );
+    }
+
+    /// Synthetic test: a species whose envelope sits entirely
+    /// outside the catastrophe cell (`match_score = 0`) takes the
+    /// full `raw_frac` loss after the resistance + dormancy stack
+    /// (both no-ops here ⇒ identity). Exercises the
+    /// `apply_resistance_and_dormancy` formula directly to isolate
+    /// the tolerance term from per-catastrophe trigger plumbing.
+    #[test]
+    fn tolerance_match_score_zero_means_full_damage() {
+        let civ = Civ::new(1, 0, Pop::from_int(100));
+        let mut species = test_species();
+        // Envelope nowhere near the cell (temp 100-101 K, etc.).
+        species.tolerance = sim_species::ToleranceEnvelope {
+            temp_range: (Real::from_int(100), Real::from_int(101)),
+            ph_range: (Real::from_int(1), Real::from_int(2)),
+            salinity_range: (Real::from_int(900), Real::from_int(1_000)),
+            radiation_max: Real::from_ratio(1, 1_000),
+            pressure_range: (Real::from_int(50), Real::from_int(51)),
+        };
+        species.dormancy_capability = Real::ZERO;
+        // Cell sits outside on every axis — match_score = 0.
+        let cell = (
+            Real::from_int(300), // T
+            Real::from_int(7),   // pH
+            Real::from_int(20),  // salinity
+            Real::ONE,           // rad (above radiation_max)
+            Real::ONE,           // pressure
+        );
+        let raw = Real::percent(40);
+        let out = apply_resistance_and_dormancy(&civ, &species, raw, cell);
+        // No tools, no dormancy, match_score = 0 ⇒ out == raw exactly.
+        assert_eq!(out, raw, "expected full raw_frac loss when match_score = 0");
+    }
+
+    /// Synthetic test: a species whose envelope perfectly contains
+    /// the cell at its centre (`match_score = 1`) takes ~zero
+    /// catastrophe damage. Mirrors the formula's "perfect fit ⇒
+    /// no damage" guarantee.
+    #[test]
+    fn tolerance_match_score_one_means_no_damage() {
+        let civ = Civ::new(1, 0, Pop::from_int(100));
+        let mut species = test_species();
+        // Cell at the exact centre of every axis.
+        let t_centre = Real::from_int(300);
+        let ph_centre = Real::from_int(7);
+        let sal_centre = Real::from_int(20);
+        let rad_zero = Real::ZERO;
+        let p_centre = Real::ONE;
+        let half = Real::ONE;
+        species.tolerance = sim_species::ToleranceEnvelope {
+            temp_range: (t_centre - half, t_centre + half),
+            ph_range: (ph_centre - half, ph_centre + half),
+            salinity_range: (sal_centre - half, sal_centre + half),
+            // Any positive ceiling works — radiation_score returns
+            // 1.0 when `rad <= 0`.
+            radiation_max: Real::ONE,
+            pressure_range: (p_centre - half, p_centre + half),
+        };
+        species.dormancy_capability = Real::ZERO;
+        let cell = (t_centre, ph_centre, sal_centre, rad_zero, p_centre);
+        let raw = Real::percent(40);
+        let out = apply_resistance_and_dormancy(&civ, &species, raw, cell);
+        // Perfect centre on every axis ⇒ match_score = 1 ⇒ loss = 0.
+        assert_eq!(
+            out,
+            Real::ZERO,
+            "expected zero loss for centre-of-envelope species",
         );
     }
 }
