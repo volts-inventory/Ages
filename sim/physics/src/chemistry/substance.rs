@@ -48,6 +48,16 @@ pub enum Substance {
     /// mass-balance invariant (`2 fuel + 2 oxidiser → 2 ash`) is
     /// preserved bit-for-bit. Biogeochem is the only mover of `CO2`.
     CO2 = 7,
+    /// Atmospheric methane — split out as its own channel (Sprint 3
+    /// Item 14) so the greenhouse law can read CH4 density per-cell
+    /// without aliasing it to the biofuel pool (`Substance::Fuel`).
+    /// CH4 is short-lived in real atmospheres: UV photolysis
+    /// destroys it on a ~10-year timescale. Modelled here as a
+    /// per-tick exponential decay (`ch4 *= 0.999`) applied by the
+    /// radiation law. No producer / consumer wiring yet — worldgen
+    /// is the only source. Future work: methanogen producers, OH-
+    /// radical sink coupled to UV flux.
+    Methane = 8,
 }
 
 impl Substance {
@@ -58,4 +68,4 @@ impl Substance {
 
 /// Sanity check at compile time — `N_SUBSTANCES` must match the count
 /// of `Substance` variants currently authored.
-const _: () = assert!(N_SUBSTANCES == 8);
+const _: () = assert!(N_SUBSTANCES == 9);

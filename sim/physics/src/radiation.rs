@@ -33,12 +33,113 @@
 //! per-(row, season) table indexed by the planet's `macro_step` clock.
 //! Per-cell day/night insolation (diurnal cycling) is still a
 //! deferred follow-up.
+//!
+//! ## Per-substance greenhouse (Sprint 3 Item 14)
+//!
+//! Earlier the greenhouse offset was a single planet-wide constant
+//! (`greenhouse_k`, derived from atmosphere class) baked into the
+//! per-(row, season) equilibrium table at planet build. That was
+//! linear-in-nothing — atmospheric composition never changed the
+//! greenhouse response, so a Venus-style runaway (water vapour
+//! feeding back on temperature, raising the saturation cap, which
+//! raises vapour, which raises greenhouse, …) was structurally
+//! impossible.
+//!
+//! Sprint 3 Item 14 keeps that planet-wide baseline (still folded
+//! into the table) and adds a per-cell dynamic contribution at
+//! integrate time:
+//!
+//! ```text
+//!   greenhouse[cell] = h2o_vapour[cell] * H2O_GREENHOUSE_K
+//!                    + co2[cell]        * CO2_GREENHOUSE_K
+//!                    + ch4[cell]        * CH4_GREENHOUSE_K
+//!   T_eq[cell] = (t_eq_base[row][season] * day_factor) + greenhouse[cell]
+//! ```
+//!
+//! H2O is the Clausius-Clapeyron-coupled channel — its cap (see
+//! [`crate::hydrology::saturation_vapour_cap`]) grows quartically in
+//! T/T_ref, so as a cell warms the vapour ceiling lifts, evaporation
+//! pushes the cell toward that new ceiling, and the H2O greenhouse
+//! term grows superlinearly with T → positive feedback. Above a
+//! threshold (Komabayashi-Ingersoll-like) the loop diverges and the
+//! cell slides into a Venus-style runaway.
+//!
+//! CO2 is linear (long-lived, no T-coupling). CH4 is short-lived
+//! (photolysis); the law decays it by a small per-tick factor
+//! ([`ch4_decay_per_tick`]).
 
 use crate::albedo::{albedo_radiation_factor, effective_albedo_slice};
+use crate::chemistry::Substance;
 use crate::laws::Law;
 use crate::state::PhysicsState;
 use sim_arith::transcendental::{cos, exp, half_pi, ln};
 use sim_arith::Real;
+
+/// Per-unit-density greenhouse coefficient for water vapour.
+/// Calibrated against [`crate::hydrology::saturation_vapour_cap`],
+/// which lets vapour density rise into the tens of thousands as
+/// T approaches the cap reference. The feedback slope
+/// `d(T_eq)/dT = K × d(cap)/dT = K × 4 × cap / T` crosses unity
+/// (the K-I runaway threshold) when `K > T / (4 × cap(T))`. With
+/// `K = 0.002` the threshold sits around T ~ 350-400 K —
+/// temperate Earth-like cells stay below it (loop converges to a
+/// modest equilibrium) and a hot seed pushes past it (loop
+/// diverges into a Venus-style runaway, plateauing only when
+/// [`greenhouse_cap_k`] binds).
+fn h2o_greenhouse_k() -> Real {
+    Real::from_ratio(2, 1_000)
+}
+
+/// Per-unit-density greenhouse coefficient for CO2. Per-molecule
+/// CO2 is a stronger IR absorber than H2O in its bands, but
+/// planetary CO2 densities are much lower; the 15× scale vs. H2O
+/// (in this unit system) keeps an Earth-like ~400 ppm column at a
+/// modest background contribution while a Venus-like dense-CO2
+/// atmosphere bumps T_eq into the runaway zone.
+fn co2_greenhouse_k() -> Real {
+    Real::from_ratio(30, 1_000)
+}
+
+/// Per-unit-density greenhouse coefficient for methane. Similar
+/// order to CO2 (per-molecule strong, density-low). Combined with
+/// the photolysis decay below, this gives a transient warming
+/// pulse from any CH4 injection that fades over hundreds of ticks.
+fn ch4_greenhouse_k() -> Real {
+    Real::from_ratio(25, 1_000)
+}
+
+/// Per-tick exponential-decay factor on CH4 density, mimicking
+/// UV photolysis (real-atmosphere lifetime ~10 years). Set to
+/// `0.999` so a 1.0-density CH4 column halves in ~700 ticks —
+/// short enough that a CH4 burst doesn't perpetually warm the
+/// planet, long enough that CH4 still contributes meaningfully
+/// to short-term warming events. Applied uniformly per cell;
+/// future work can couple decay rate to local UV flux.
+fn ch4_decay_per_tick() -> Real {
+    Real::from_ratio(999, 1_000)
+}
+
+/// Per-cell greenhouse contribution ceiling, in K. Physically
+/// motivated: real-atmosphere IR absorption bands saturate at
+/// high optical depth, so doubling the greenhouse gas column
+/// doesn't double the warming once the bands are already opaque
+/// (Beer-Lambert with τ ≫ 1). Without this cap a Venus-style
+/// runaway in the simulation has no upper bound — the H2O cycle
+/// keeps lifting `saturation_vapour_cap(T)` quartically with T,
+/// which lifts vapour, which lifts greenhouse forcing, with no
+/// physical stop until the fixed-point arithmetic overflows
+/// (`saturation_vapour_cap` hits `Real`'s ~2.1e9 ceiling around
+/// T ≈ 5300 K).
+///
+/// 250 K is chosen so a fully-saturated runaway plateaus at
+/// roughly the surface temperature of Venus (~735 K = base T_eq
+/// of ~300 K + ~400 K of greenhouse forcing from saturated CO2
+/// + saturated H2O at runaway-onset). The exact value is a
+/// modelling choice; the cap exists to bound the feedback loop,
+/// not to recover any specific value.
+fn greenhouse_cap_k() -> Real {
+    Real::from_int(250)
+}
 
 /// `ln(σ)` for σ = 5.67×10⁻⁸ W/(m²·K⁴). Pre-computed so the
 /// per-row equilibrium formula
@@ -325,6 +426,22 @@ impl Law for Radiation {
             Real::from_ratio(1, 10_000)
         };
 
+        // Per-substance greenhouse coefficients. Pulled here so the
+        // hot loop avoids the function-call overhead per cell.
+        let h2o_k = h2o_greenhouse_k();
+        let co2_k = co2_greenhouse_k();
+        let ch4_k = ch4_greenhouse_k();
+        let greenhouse_cap = greenhouse_cap_k();
+
+        // Snapshot the gas densities that feed the per-cell
+        // greenhouse term. Water vapour is the C-C-coupled channel
+        // (its cap rises quartically with T → positive feedback).
+        // CO2 is linear (long-lived, no T-coupling). CH4 is similar
+        // but additionally decays via photolysis (see Step 2).
+        let vapour = state.substance(Substance::Vapour.idx()).to_vec();
+        let co2 = state.substance(Substance::CO2.idx()).to_vec();
+        let ch4 = state.substance(Substance::Methane.idx()).to_vec();
+
         // Per-cell diurnal modulation. Sub-solar longitude
         // advances at rate 1 / day_length_macros per macro-step.
         // For tidally-locked planets it advances ~0; for Earth
@@ -386,9 +503,46 @@ impl Law for Radiation {
             } else {
                 Real::ONE
             };
-            let t_eq = t_eq_base * day_factor;
+            // Per-cell dynamic greenhouse contribution. The
+            // atmosphere-class baseline (`greenhouse_k` passed to
+            // `for_planet`) is already folded into `t_eq_base`;
+            // this adds composition-dependent forcing on top so
+            // a vapour-rich cell warms beyond the planet-wide
+            // baseline. The H2O term is *implicitly* exponential
+            // in T because vapour density itself is bounded by
+            // [`crate::hydrology::saturation_vapour_cap`], which
+            // rises quartically with T/T_ref — that's the
+            // Clausius-Clapeyron-coupled positive feedback that
+            // drives runaway. Bounded by [`greenhouse_cap_k`] so
+            // a saturated runaway plateaus at a Venus-like temperature
+            // rather than overflowing fixed-point arithmetic.
+            let greenhouse_raw = vapour[i] * h2o_k + co2[i] * co2_k + ch4[i] * ch4_k;
+            let greenhouse_cell = greenhouse_raw.min(greenhouse_cap);
+            let t_eq = t_eq_base * day_factor + greenhouse_cell;
             let gap = t_eq - temps_prev[i];
             temps_next[i] = temps_prev[i] + gap * dt_relax;
+        }
+
+        // Step 2: CH4 photolysis decay. CH4 has a real-atmosphere
+        // lifetime of ~10 years (UV-radical destruction). Modelled
+        // as a per-tick exponential decay on each cell — short-
+        // lived gases trend toward zero unless something keeps
+        // sourcing them. dt-aware: the decay factor per dt is
+        // `1 - (1 - base) * dt`. For Earth-like dt=1 macro-step
+        // this collapses to `base` (= 0.999). Larger dt would
+        // accelerate the decay proportionally; the formulation
+        // stays linear-in-dt for small per-step decay rates,
+        // which matches the first-order Taylor expansion of true
+        // exponential decay.
+        let decay_base = ch4_decay_per_tick();
+        let one_minus_decay = Real::ONE - decay_base;
+        let factor = Real::ONE - one_minus_decay * dt;
+        // Clamp the factor at zero so a pathologically large dt
+        // can't drive CH4 negative. Real::ZERO is the physical
+        // floor (no negative methane density).
+        let factor = factor.max(Real::ZERO);
+        for v in state.substance_mut(Substance::Methane.idx()).iter_mut() {
+            *v = *v * factor;
         }
     }
 }
@@ -616,5 +770,289 @@ mod tests {
                 "row {r}: e=0 + tilt=0 must give identical perihelion/aphelion"
             );
         }
+    }
+
+    // Sprint 3 Item 14 — Per-substance greenhouse coupling tests.
+
+    #[test]
+    fn h2o_vapour_contributes_to_per_cell_greenhouse() {
+        // Direct check that per-cell greenhouse increases T_eq by
+        // the vapour-weighted constant. Two states differing only
+        // in vapour density; the vapour-rich one warms faster
+        // toward equilibrium because its T_eq is higher.
+        let rad = Radiation::for_planet(
+            3,
+            Real::from_int(1_361),
+            30,
+            Real::ZERO,
+            0,
+            0, // no seasons
+            0,
+            Real::from_int(24),
+        );
+        let mut dry = PhysicsState::new(HexGrid::new(3, 3));
+        let mut wet = PhysicsState::new(HexGrid::new(3, 3));
+        for t in dry.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        for t in wet.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        // Seed only the wet state with vapour. A vapour density
+        // of 50,000 × H2O_GREENHOUSE_K (0.002) = +100 K of
+        // equilibrium greenhouse forcing — large enough that a
+        // single 2%-relaxation tick produces a measurable T
+        // shift.
+        for v in wet.substance_mut(Substance::Vapour.idx()) {
+            *v = Real::from_int(50_000);
+        }
+        // One integrate. Wet state's per-cell T should advance
+        // further toward (higher) T_eq than dry state's.
+        rad.integrate(&mut dry, Real::ONE);
+        rad.integrate(&mut wet, Real::ONE);
+        let dry_t = dry.temperature()[0];
+        let wet_t = wet.temperature()[0];
+        assert!(
+            wet_t > dry_t,
+            "vapour-rich cell should warm faster: dry={dry_t:?} wet={wet_t:?}"
+        );
+    }
+
+    #[test]
+    fn co2_contributes_linearly_to_greenhouse() {
+        // CO2's contribution is per-density × 30. A modest CO2
+        // load should still produce a measurable T_eq lift.
+        let rad = Radiation::for_planet(
+            3,
+            Real::from_int(1_361),
+            30,
+            Real::ZERO,
+            0,
+            0,
+            0,
+            Real::from_int(24),
+        );
+        let mut without_co2 = PhysicsState::new(HexGrid::new(3, 3));
+        let mut with_co2 = PhysicsState::new(HexGrid::new(3, 3));
+        for t in without_co2.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        for t in with_co2.temperature_mut() {
+            *t = Real::from_int(280);
+        }
+        for v in with_co2.substance_mut(Substance::CO2.idx()) {
+            *v = Real::from_int(5_000); // 5000 × 0.030 = +150 K T_eq forcing
+        }
+        rad.integrate(&mut without_co2, Real::ONE);
+        rad.integrate(&mut with_co2, Real::ONE);
+        assert!(
+            with_co2.temperature()[0] > without_co2.temperature()[0],
+            "CO2-rich cell should warm faster: without={:?} with={:?}",
+            without_co2.temperature()[0],
+            with_co2.temperature()[0]
+        );
+    }
+
+    #[test]
+    fn ch4_decays_via_photolysis() {
+        // CH4 should decay each tick via the photolysis factor
+        // (~0.999/tick). Verify a seeded methane column shrinks
+        // after a single integrate, and shrinks further over many.
+        let rad = Radiation::for_planet(
+            3,
+            Real::from_int(1_361),
+            30,
+            Real::ZERO,
+            0,
+            0,
+            0,
+            Real::from_int(24),
+        );
+        let mut state = PhysicsState::new(HexGrid::new(3, 3));
+        for v in state.substance_mut(Substance::Methane.idx()) {
+            *v = Real::from_int(100);
+        }
+        let initial = state.substance(Substance::Methane.idx())[0];
+        rad.integrate(&mut state, Real::ONE);
+        let after_one = state.substance(Substance::Methane.idx())[0];
+        assert!(
+            after_one < initial,
+            "CH4 should decay after one tick: initial={initial:?} after_one={after_one:?}"
+        );
+        for _ in 0..99 {
+            rad.integrate(&mut state, Real::ONE);
+        }
+        let after_hundred = state.substance(Substance::Methane.idx())[0];
+        assert!(
+            after_hundred < after_one,
+            "CH4 should keep decaying: after_one={after_one:?} after_hundred={after_hundred:?}"
+        );
+    }
+
+    #[test]
+    fn hot_seed_slides_into_venus_state_via_h2o_runaway() {
+        // Per Sprint 3 Item 14 acceptance criteria: a hot seed
+        // (350 K) with vapour-rich atmosphere coupled to the
+        // saturation cap should slide into a Venus-style
+        // runaway. Final mean T must exceed 400 K — the
+        // signature that the C-C-coupled feedback actually took
+        // hold rather than cells relaxing to a hot equilibrium.
+        //
+        // The atmosphere-baseline `greenhouse_k` is zero — *all*
+        // greenhouse forcing comes from the per-substance dynamic
+        // term. That isolates the runaway signal from atmosphere-
+        // class forcing.
+        //
+        // 1-row grid removes latitudinal cooling (the runaway
+        // feedback is global, not latitude-dependent).
+        //
+        // Vapour pegged to `sat_cap(T)` each tick mimics "vapour
+        // equilibrates instantly with the saturation cap" — the
+        // limit a much-larger-than-hydrology-timescale tick
+        // approximates. Without a peg the test would need
+        // geological timescales (millions of ticks) for
+        // hydrology's deliberately-slow sub-boil evap (Sprint 1
+        // Item 4) to fill the cap as T climbs; the peg compresses
+        // that into the test horizon.
+        let rad = Radiation::for_planet(
+            1,
+            Real::from_int(2_500),    // strong stellar input
+            10,                       // low albedo (heat-absorbing)
+            Real::ZERO,               // baseline greenhouse=0
+            0,
+            0,                        // no seasons
+            0,
+            Real::from_int(24),
+        );
+        let mut state = PhysicsState::new(HexGrid::new(3, 1));
+        for t in state.temperature_mut() {
+            *t = Real::from_int(350);
+        }
+        // Initial vapour seeded at sat_cap(350); will be re-
+        // pegged each tick.
+        for v in state.substance_mut(Substance::Vapour.idx()) {
+            *v = crate::hydrology::saturation_vapour_cap(Real::from_int(350));
+        }
+        for _ in 0..2_000 {
+            rad.integrate(&mut state, Real::ONE);
+            // Peg vapour to current sat_cap(T) per cell.
+            let temps = state.temperature().to_vec();
+            for (i, v) in state
+                .substance_mut(Substance::Vapour.idx())
+                .iter_mut()
+                .enumerate()
+            {
+                *v = crate::hydrology::saturation_vapour_cap(temps[i]);
+            }
+        }
+        let final_mean_t = {
+            let temps = state.temperature();
+            let mut sum = Real::ZERO;
+            for t in temps {
+                sum = sum + *t;
+            }
+            sum / Real::from_int(i64::try_from(temps.len()).unwrap_or(1))
+        };
+        assert!(
+            final_mean_t > Real::from_int(400),
+            "H2O runaway should drive mean T above 400 K; got {final_mean_t:?}"
+        );
+    }
+
+    #[test]
+    fn runaway_threshold_at_published_t_temp() {
+        // Komabayashi-Ingersoll-style threshold: under Earth-like
+        // stellar input + a near-saturation initial atmosphere
+        // the climate stays sub-runaway (mean T plateau well
+        // below 400 K). Boost stellar irradiance significantly
+        // and the H2O runaway feedback tips the planet into a
+        // Venus-style hot state.
+        //
+        // Run both planets from the same temperate seed (290 K)
+        // with identical vapour loads pegged to `sat_cap(T)`
+        // each tick (the C-C feedback path); only stellar
+        // irradiance differs. The earth-like one settles into a
+        // temperate equilibrium; the boosted one diverges past
+        // 400 K.
+        //
+        // The boost magnitude in this test (~85 %) is larger
+        // than the real-Earth K-I threshold (~10 % above modern
+        // solar) because the per-cell greenhouse coefficients
+        // and the [`greenhouse_cap_k`] ceiling are tuned for
+        // the simulation's Q32.32 range rather than calibrated
+        // against the real K-I value. The qualitative bistable
+        // threshold — temperate equilibrium vs. runaway — is
+        // what matters; the exact tipping irradiance is a tuning
+        // choice tied to the rest of the constants.
+        let earth_like_irradiance = Real::from_int(1_361);
+        let boosted_irradiance = Real::from_int(2_500);
+        // 1-row grid so no latitude variation contaminates the
+        // mean-T signal (the runaway feedback is global, not
+        // latitude-dependent).
+        let build = |stellar: Real| {
+            Radiation::for_planet(
+                1,
+                stellar,
+                10,
+                Real::ZERO,
+                0,
+                0,
+                0,
+                Real::from_int(24),
+            )
+        };
+        let seed_state = || {
+            let mut s = PhysicsState::new(HexGrid::new(3, 1));
+            for t in s.temperature_mut() {
+                *t = Real::from_int(290);
+            }
+            // Initial vapour at sat_cap(290); the peg loop below
+            // re-evaluates each tick (the C-C feedback path).
+            for v in s.substance_mut(Substance::Vapour.idx()) {
+                *v = crate::hydrology::saturation_vapour_cap(Real::from_int(290));
+            }
+            s
+        };
+        // Run radiation only with a per-tick vapour peg to
+        // `sat_cap(T)` — same approach as the runaway test, for
+        // the same reason: hydrology's deliberately-slow sub-
+        // boil evap (Sprint 1 Item 4) would need geological
+        // timescales to fill the rising sat_cap as T climbs.
+        // The peg compresses the C-C feedback into the test
+        // horizon. Both states see the same dynamics; only
+        // stellar irradiance differs.
+        let run = |rad: &Radiation, state: &mut PhysicsState| -> Real {
+            for _ in 0..2_000 {
+                rad.integrate(state, Real::ONE);
+                let temps = state.temperature().to_vec();
+                for (i, v) in state
+                    .substance_mut(Substance::Vapour.idx())
+                    .iter_mut()
+                    .enumerate()
+                {
+                    *v = crate::hydrology::saturation_vapour_cap(temps[i]);
+                }
+            }
+            let temps = state.temperature();
+            let mut sum = Real::ZERO;
+            for t in temps {
+                sum = sum + *t;
+            }
+            sum / Real::from_int(i64::try_from(temps.len()).unwrap_or(1))
+        };
+        let mut earth_state = seed_state();
+        let mut boosted_state = seed_state();
+        let rad_earth = build(earth_like_irradiance);
+        let rad_boost = build(boosted_irradiance);
+        let earth_mean = run(&rad_earth, &mut earth_state);
+        let boost_mean = run(&rad_boost, &mut boosted_state);
+        assert!(
+            earth_mean < Real::from_int(360),
+            "earth-like stellar input should not run away; got {earth_mean:?}"
+        );
+        assert!(
+            boost_mean > Real::from_int(400),
+            "boosted stellar input should trigger runaway; got {boost_mean:?}"
+        );
     }
 }
