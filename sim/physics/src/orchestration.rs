@@ -233,6 +233,10 @@ pub struct OrchestratorState {
     /// mass invariant so weathering's intentional removal doesn't
     /// register as a "leak." Mutated only in debug builds.
     weathering_co2_removed: Real,
+    /// Cumulative CO2 mass added by Volcanism::integrate (Sprint 4 Item 12d).
+    volcanism_co2_added: Real,
+    /// Cumulative H2O mass added by Volcanism::integrate (Sprint 4 Item 12d).
+    volcanism_h2o_added: Real,
 }
 
 impl Default for OrchestratorState {
@@ -253,6 +257,8 @@ impl OrchestratorState {
             hydrology_drift: Real::ZERO,
             chemistry_substance_drift: Real::ZERO,
             weathering_co2_removed: Real::ZERO,
+            volcanism_co2_added: Real::ZERO,
+            volcanism_h2o_added: Real::ZERO,
         }
     }
 
@@ -297,6 +303,18 @@ impl OrchestratorState {
     #[must_use]
     pub fn weathering_co2_removed(&self) -> Real {
         self.weathering_co2_removed
+    }
+
+    /// Cumulative CO2 mass added by Volcanism (Sprint 4 Item 12d).
+    #[must_use]
+    pub fn volcanism_co2_added(&self) -> Real {
+        self.volcanism_co2_added
+    }
+
+    /// Cumulative H2O mass added by Volcanism (Sprint 4 Item 12d).
+    #[must_use]
+    pub fn volcanism_h2o_added(&self) -> Real {
+        self.volcanism_h2o_added
     }
 }
 
@@ -392,6 +410,7 @@ pub fn integrate_civ_step(
     weathering: Option<&crate::weathering::Weathering>,
     ice_albedo: Option<&crate::albedo::IceAlbedo>,
     tectonics: Option<&crate::tectonics::Tectonics>,
+    volcanism: Option<&crate::volcanism::Volcanism>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -558,6 +577,20 @@ pub fn integrate_civ_step(
         if let Some(t) = tectonics {
             t.integrate(state, cfg.heat_dt);
         }
+        // Volcanic CO2 + H2O outgassing (Sprint 4 Item 12d). Runs
+        // after tectonics so it reads the post-tectonic plate-
+        // boundary geometry, and before chemistry so chemistry
+        // sees the volcanically enriched CO2 + vapour state.
+        if let Some(v) = volcanism {
+            let emission = v.integrate(state, cfg.heat_dt);
+            #[cfg(debug_assertions)]
+            {
+                orch_state.volcanism_co2_added = orch_state.volcanism_co2_added + emission.co2_added;
+                orch_state.volcanism_h2o_added = orch_state.volcanism_h2o_added + emission.h2o_added;
+            }
+            #[cfg(not(debug_assertions))]
+            let _ = emission;
+        }
         for _heat_step in 0..cfg.heat_substeps_per_macro {
             heat.integrate(state, cfg.heat_dt);
         }
@@ -668,11 +701,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None,
+            None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None,
+            None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -725,7 +758,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);

@@ -30,6 +30,7 @@ pub mod state;
 pub mod tectonics;
 pub mod tides;
 pub mod vertical;
+pub mod volcanism;
 pub mod weathering;
 pub mod wind;
 
@@ -55,5 +56,6 @@ pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tectonics::{CrustType, Plate, Tectonics};
 pub use tides::{MoonTide, Tides};
 pub use vertical::VerticalConvection;
+pub use volcanism::{Volcanism, VolcanismEmission};
 pub use weathering::Weathering;
 pub use wind::Wind;
