@@ -74,6 +74,9 @@ pub fn solvent_solubility(substrate: &MetabolicSubstrate) -> SolubilityProfile {
     const fn pct_arr(arr: [i64; N_SUBSTANCES]) -> [i64; N_SUBSTANCES] {
         arr
     }
+    // Indices, in order: Water, Ice, Vapour, Fuel, Oxidiser, Ash,
+    // Fossil, CO2, Methane. The trailing Methane column was added
+    // with `Substance::Methane` in Sprint 3 Item 14.
     let pcts: [i64; N_SUBSTANCES] = match substrate {
         // Water dissolves a wide spectrum: itself trivially (1.0),
         // ice not at all (already solid), vapour partially (0.5
@@ -81,23 +84,26 @@ pub fn solvent_solubility(substrate: &MetabolicSubstrate) -> SolubilityProfile {
         // poorly (organics are mostly hydrophobic), oxidiser
         // appreciably (O2 dissolves), ash modestly, fossils very
         // little (asphaltenes / kerogens are nearly insoluble),
-        // CO2 appreciably (carbonic acid forms).
-        MetabolicSubstrate::Aqueous => pct_arr([100, 0, 50, 5, 30, 40, 1, 30]),
+        // CO2 appreciably (carbonic acid forms), methane very
+        // poorly (CH4 is hydrophobic — ~5).
+        MetabolicSubstrate::Aqueous => pct_arr([100, 0, 50, 5, 30, 40, 1, 30, 5]),
         // Liquid ammonia is moderately polar — dissolves water
         // (0.6, miscible with water in real chemistry) and a
-        // moderate fraction of everything else (~0.3 baseline).
-        MetabolicSubstrate::Ammoniacal => pct_arr([60, 30, 30, 30, 30, 30, 30, 30]),
+        // moderate fraction of everything else (~0.3 baseline);
+        // methane modestly soluble in NH3 (~30).
+        MetabolicSubstrate::Ammoniacal => pct_arr([60, 30, 30, 30, 30, 30, 30, 30, 30]),
         // Methane / ethane: nonpolar — dissolves fuel (organics)
         // very well (0.95), fossils well (0.8). Inorganic
         // substances barely dissolve (~0.05 baseline). Cryogenic
         // liquid hydrocarbon is a near-universal solvent for
         // organics and a near-universal non-solvent for
-        // everything else — including CO2.
-        MetabolicSubstrate::Hydrocarbon => pct_arr([5, 5, 5, 95, 5, 5, 80, 5]),
+        // everything else — including CO2. Methane is miscible
+        // with the hydrocarbon solvent itself (0.95).
+        MetabolicSubstrate::Hydrocarbon => pct_arr([5, 5, 5, 95, 5, 5, 80, 5, 95]),
         // Molten silicate (magma): dissolves silicate minerals
         // (ash, ~0.4 — silicate analog) well; carries everything
         // else at ~0.1.
-        MetabolicSubstrate::Silicate => pct_arr([10, 10, 10, 10, 10, 40, 10, 10]),
+        MetabolicSubstrate::Silicate => pct_arr([10, 10, 10, 10, 10, 40, 10, 10, 10]),
     };
     let mut per_substance = [Real::ZERO; N_SUBSTANCES];
     let mut i = 0;
