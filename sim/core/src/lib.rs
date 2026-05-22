@@ -134,19 +134,33 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         }
     };
     // F2 (xeno N2) — initialise the per-cell biomass distribution
-    // alongside the aggregate. Uniform split at worldgen
-    // (`aggregate / n_cells` per cell); the per-tick step + the
-    // catastrophe poke path keep `sum(cell_biomass) == biomass` in
-    // sync. Without per-cell biomass, heterogeneous catastrophes
-    // (e.g. a volcanic eruption on cell `c`) can only act on the
-    // planet-wide aggregate, which crashes producer biomass
-    // everywhere or nowhere — never the *local* famine that an
-    // actual eruption produces.
+    // alongside the aggregate. The per-tick step + the catastrophe
+    // poke path keep `sum(cell_biomass) == biomass` in sync. Without
+    // per-cell biomass, heterogeneous catastrophes (e.g. a volcanic
+    // eruption on cell `c`) can only act on the planet-wide
+    // aggregate, which crashes producer biomass everywhere or
+    // nowhere — never the *local* famine that an actual eruption
+    // produces.
+    //
+    // T9 (biome-class-weighted): derive a per-cell weight vector
+    // from `sim_world::cell_habitability` — the same composed terrain
+    // multiplier × HZ factor the civ-side capacity / claim gates
+    // use — and pass it through so lush coast / inland cells start
+    // with measurably more producer biomass than peaks, gas bands,
+    // or deep ocean. Uniform fallback inside
+    // `initialise_cell_biomass` kicks in if the sum is zero (e.g.
+    // every cell uninhabitable on an HZ-evicted planet), preserving
+    // the aggregate either way.
+    let n_cells = state.grid().n_cells();
+    let habitability_weights: Vec<Real> = (0..n_cells as u32)
+        .map(|c| sim_world::cell_habitability(&state, &planet, c))
+        .collect();
     let mut ecosystem: PlanetEcosystem = sim_ecosystem::sample_ecosystem_with_substrate_for_grid(
         planet.seed,
         substrate_tag,
         planet_capacity,
-        state.grid().n_cells(),
+        n_cells,
+        Some(&habitability_weights),
     );
     // Speciation + HGT trackers/registries live alongside the
     // ecosystem. The species registry feeds `step_speciation` (which

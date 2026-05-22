@@ -414,22 +414,36 @@ impl PlanetEcosystem {
     }
 
     /// F2 (xeno N2) — install the per-cell biomass distribution. For
-    /// each species, split its aggregate `biomass` evenly across the
-    /// `n_cells` cells (uniform initialisation; a future polish pass
-    /// can do biome-class-weighted distribution). Sets
-    /// `self.n_cells = n_cells` so the per-tick step + catastrophe
-    /// path know the planet has a grid attached. Idempotent: calling
-    /// twice with the same `n_cells` rebuilds the uniform
-    /// distribution from the *current* aggregate. Pass `0` to
-    /// disable (clears every species' `cell_biomass`).
+    /// each species, split its aggregate `biomass` across the
+    /// `n_cells` cells. Sets `self.n_cells = n_cells` so the per-tick
+    /// step + catastrophe path know the planet has a grid attached.
+    /// Idempotent: calling twice with the same `n_cells` rebuilds the
+    /// distribution from the *current* aggregate. Pass `0` to disable
+    /// (clears every species' `cell_biomass`).
+    ///
+    /// **Distribution mode**:
+    /// - `per_cell_weights = None` — uniform split (`aggregate /
+    ///   n_cells` per cell). Legacy fallback; preserves the bit-exact
+    ///   behaviour aggregate-only fixtures depend on.
+    /// - `per_cell_weights = Some(weights)` — biome-class-weighted
+    ///   split (T9). Each cell gets `aggregate × weights[i] /
+    ///   sum(weights)`, so a planet's lush rainforest cells start
+    ///   with more producer biomass than its deserts. `weights.len()`
+    ///   must equal `n_cells`; negative weights are clamped to zero.
+    ///   If `sum(weights) <= 0` (every cell uninhabitable), falls
+    ///   back to the uniform split so the aggregate survives.
     ///
     /// The aggregate `biomass` stays the truth-source for the
-    /// initial uniform split; once per-cell evolution kicks in the
-    /// step loop maintains the invariant `sum(cell_biomass) ==
-    /// biomass` by proportional redistribution. Catastrophes drain
-    /// a single cell via [`PlanetEcosystem::reduce_at_cell`], which
-    /// also keeps the aggregate in sync.
-    pub fn initialise_cell_biomass(&mut self, n_cells: usize) {
+    /// initial split; once per-cell evolution kicks in the step loop
+    /// maintains the invariant `sum(cell_biomass) == biomass` by
+    /// proportional redistribution. Catastrophes drain a single cell
+    /// via [`PlanetEcosystem::reduce_at_cell`], which also keeps the
+    /// aggregate in sync.
+    pub fn initialise_cell_biomass(
+        &mut self,
+        n_cells: usize,
+        per_cell_weights: Option<&[Real]>,
+    ) {
         self.n_cells = n_cells;
         if n_cells == 0 {
             for s in self.species.values_mut() {
@@ -437,14 +451,41 @@ impl PlanetEcosystem {
             }
             return;
         }
+        // T9 — decide between weighted and uniform split. The
+        // weighted path needs `weights.len() == n_cells` and a
+        // strictly positive sum; otherwise we fall back to uniform so
+        // the aggregate is preserved even on degenerate inputs (e.g.
+        // every cell uninhabitable, or caller passed the wrong slice).
+        let normalised: Option<Vec<Real>> = per_cell_weights.and_then(|w| {
+            if w.len() != n_cells {
+                return None;
+            }
+            // Clamp negative weights to zero so a buggy caller can't
+            // turn an unhabitable cell into a biomass sink.
+            let clamped: Vec<Real> = w
+                .iter()
+                .map(|x| if *x < Real::ZERO { Real::ZERO } else { *x })
+                .collect();
+            let sum: Real = clamped.iter().copied().fold(Real::ZERO, |a, b| a + b);
+            if sum <= Real::ZERO {
+                None
+            } else {
+                Some(clamped.into_iter().map(|x| x / sum).collect())
+            }
+        });
         let n_real = Real::from_int(n_cells as i64);
         for s in self.species.values_mut() {
-            let per_cell = if n_real > Real::ZERO {
-                s.biomass / n_real
+            if let Some(ref shares) = normalised {
+                // Weighted: each cell gets aggregate × share[i].
+                s.cell_biomass = shares.iter().map(|share| s.biomass * *share).collect();
             } else {
-                Real::ZERO
-            };
-            s.cell_biomass = vec![per_cell; n_cells];
+                let per_cell = if n_real > Real::ZERO {
+                    s.biomass / n_real
+                } else {
+                    Real::ZERO
+                };
+                s.cell_biomass = vec![per_cell; n_cells];
+            }
             // Pin the aggregate to the actual cell sum so the
             // invariant `sum(cell_biomass) == biomass` is exact from
             // tick 0. Q32.32 division-then-multiplication loses up
@@ -2043,25 +2084,29 @@ pub fn sample_ecosystem_with_substrate(
 
 /// F2 — same as [`sample_ecosystem_with_substrate`] but pins the
 /// per-cell biomass distribution against the planet's grid cell
-/// count. Initialises every species' `cell_biomass` as a uniform
-/// split (`aggregate / n_cells` per cell). The aggregate stays
-/// identical to the non-grid path — only the per-cell decomposition
-/// is added, so existing aggregate-only tests stay bit-for-bit
-/// stable.
+/// count. Initialises every species' `cell_biomass` via
+/// [`PlanetEcosystem::initialise_cell_biomass`] — uniform split
+/// when `per_cell_weights` is `None`, biome-class-weighted (T9) when
+/// it is `Some`. The aggregate stays identical to the non-grid path
+/// — only the per-cell decomposition changes — so existing
+/// aggregate-only tests stay bit-for-bit stable.
 ///
-/// A more sophisticated initialiser (biome-class-weighted: deserts
-/// get less producer biomass than rainforests, etc.) is a follow-up
-/// polish pass; the uniform start unblocks the heterogeneous
-/// catastrophe path the N2 spec requires.
+/// T9: callers that have a per-cell habitability vector (e.g.
+/// `sim/core` derives one from `sim_world::cell_habitability`) can
+/// pass it through `per_cell_weights` so high-habitability cells
+/// (lush coast / inland) start with more biomass than peaks or
+/// deserts. The weighted path preserves the `sum(cell_biomass) ==
+/// aggregate` invariant.
 #[must_use]
 pub fn sample_ecosystem_with_substrate_for_grid(
     planet_seed: u64,
     substrate_tag: &'static str,
     producer_capacity: Real,
     n_cells: usize,
+    per_cell_weights: Option<&[Real]>,
 ) -> PlanetEcosystem {
     let mut eco = sample_ecosystem_with_substrate(planet_seed, substrate_tag, producer_capacity);
-    eco.initialise_cell_biomass(n_cells);
+    eco.initialise_cell_biomass(n_cells, per_cell_weights);
     eco
 }
 

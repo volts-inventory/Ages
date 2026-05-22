@@ -2151,6 +2151,7 @@ fn eco_species_has_per_cell_biomass_after_init() {
         "aqueous",
         capacity(),
         n_cells,
+        None,
     );
     assert_eq!(eco.n_cells, n_cells, "ecosystem n_cells unset");
     assert!(!eco.species.is_empty(), "no species sampled");
@@ -2178,6 +2179,7 @@ fn aggregate_biomass_equals_sum_of_cell_biomass() {
         "aqueous",
         capacity(),
         n_cells,
+        None,
     );
 
     let assert_invariant = |eco: &PlanetEcosystem, label: &str| {
@@ -2221,6 +2223,7 @@ fn volcanic_event_reduces_local_eco_biomass_only() {
         "aqueous",
         capacity(),
         n_cells,
+        None,
     );
 
     // Pick a producer to poke.
@@ -2318,7 +2321,7 @@ fn initialise_cell_biomass_preserves_aggregate() {
         .collect();
 
     let n_cells: usize = 16;
-    eco.initialise_cell_biomass(n_cells);
+    eco.initialise_cell_biomass(n_cells, None);
     assert_eq!(eco.n_cells, n_cells);
 
     for (id, s) in &eco.species {
@@ -2361,6 +2364,118 @@ fn initialise_cell_biomass_preserves_aggregate() {
             drift <= max_drift,
             "init drift {drift:?} for species {id:?} exceeds bound {max_drift:?}",
         );
+    }
+}
+
+#[test]
+fn biomass_concentrates_in_habitable_cells() {
+    // T9 — when `initialise_cell_biomass` receives a per-cell weight
+    // vector, cells with higher weight (lush rainforest analog) get
+    // measurably more biomass than low-weight cells (desert analog).
+    // The aggregate invariant `sum(cell_biomass) == biomass` must
+    // hold bit-exactly after the weighted split (the same re-pin to
+    // the cell sum the uniform path uses).
+    let mut eco = sample_ecosystem(456, capacity());
+    let aggregates_before: BTreeMap<_, _> = eco
+        .species
+        .iter()
+        .map(|(id, s)| (*id, s.biomass))
+        .collect();
+
+    // 8 cells: first 4 lush (weight 1.0), last 4 sparse (weight 0.1).
+    // 10× ratio is well past Q32.32 rounding noise so the assertion
+    // bites even on the smallest-biomass apex species.
+    let n_cells: usize = 8;
+    let lush = Real::ONE;
+    let sparse = Real::from_ratio(1, 10);
+    let weights: Vec<Real> = (0..n_cells)
+        .map(|i| if i < n_cells / 2 { lush } else { sparse })
+        .collect();
+    eco.initialise_cell_biomass(n_cells, Some(&weights));
+    assert_eq!(eco.n_cells, n_cells);
+
+    for (id, s) in &eco.species {
+        assert_eq!(s.cell_biomass.len(), n_cells);
+        // Lush cells > sparse cells for every species with non-zero
+        // biomass. Skip extinct species (biomass == 0 → every cell
+        // is 0, comparison degenerates).
+        if s.biomass <= Real::ZERO {
+            continue;
+        }
+        let lush_total: Real = s.cell_biomass[..n_cells / 2]
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let sparse_total: Real = s.cell_biomass[n_cells / 2..]
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert!(
+            lush_total > sparse_total,
+            "species {id:?}: lush_total {lush_total:?} not > sparse_total {sparse_total:?}",
+        );
+        // Each lush cell should be strictly larger than each sparse
+        // cell — the 10× weight ratio is uniform per species so the
+        // per-cell ordering holds independently of biomass scale.
+        for i in 0..n_cells / 2 {
+            for j in n_cells / 2..n_cells {
+                assert!(
+                    s.cell_biomass[i] > s.cell_biomass[j],
+                    "species {id:?}: lush cell {i} ({:?}) not > sparse cell {j} ({:?})",
+                    s.cell_biomass[i],
+                    s.cell_biomass[j],
+                );
+            }
+        }
+
+        // Invariant: aggregate equals sum-of-cells bit-exactly.
+        let sum = s
+            .cell_biomass
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert_eq!(
+            s.biomass, sum,
+            "weighted-init aggregate {:?} != sum(cells) {sum:?}",
+            s.biomass
+        );
+        // Drift from the pre-init aggregate stays bounded by the
+        // same `n_cells × Q32.32 ulp` envelope as the uniform path.
+        let before = aggregates_before[id];
+        let drift = if s.biomass > before {
+            s.biomass - before
+        } else {
+            before - s.biomass
+        };
+        let max_drift = Real::from_ratio(n_cells as i64, 1_000_000);
+        assert!(
+            drift <= max_drift,
+            "weighted init drift {drift:?} for species {id:?} exceeds bound {max_drift:?}",
+        );
+    }
+}
+
+#[test]
+fn weighted_biomass_falls_back_to_uniform_on_zero_sum() {
+    // T9 — degenerate input: every cell weight is zero (e.g. an
+    // HZ-evicted planet whose terrain × hz_factor is uniformly 0).
+    // `initialise_cell_biomass` must fall back to the uniform split
+    // so the aggregate is preserved rather than zeroed out.
+    let mut eco = sample_ecosystem(789, capacity());
+    let n_cells: usize = 8;
+    let weights = vec![Real::ZERO; n_cells];
+    eco.initialise_cell_biomass(n_cells, Some(&weights));
+
+    for s in eco.species.values() {
+        assert_eq!(s.cell_biomass.len(), n_cells);
+        if s.biomass <= Real::ZERO {
+            continue;
+        }
+        // Uniform split — every cell equal.
+        let first = s.cell_biomass[0];
+        for (i, c) in s.cell_biomass.iter().enumerate() {
+            assert_eq!(*c, first, "cell {i}: expected uniform {first:?}, got {c:?}");
+        }
     }
 }
 
