@@ -289,6 +289,151 @@ fn tidal_dimensional_calibration() -> Real {
     Real::from_int(175_000_000)
 }
 
+/// Orbital-energy scale per unit `e²` for a synchronously-locked moon
+/// (P3.8), in TW × macro-step units. This is the constant that links
+/// the instantaneous tidal heat dissipation `H = C_H × e²` to the
+/// orbital-energy decay rate `dE_orbit/dt = -2k × E_scale × e²` —
+/// energy conservation requires `H = -dE_orbit/dt`, hence
+/// `k = C_H / (2 × E_scale)`. The factor of 2 comes from
+/// `d(e²)/dt = 2e × de/dt = -2k × e²` under linear damping
+/// `de/dt = -k × e`.
+///
+/// ## Calibration
+///
+/// Picked so an Earth-Moon-like configuration (R = 1 Earth-radii,
+/// orbital period = 28 macro-steps, rocky substrate) produces a
+/// synchronous damping rate of `k ≈ 0.10` per macro-step — preserving
+/// the pre-P3.8 fixed-coefficient behaviour of the canonical test
+/// fixture in `sim_world::tidal_locking::tests`. Working through:
+///
+/// - R=1, period=28, k₂/Q=0.003:
+///   - n = 2π/28 ≈ 0.2244 rad/macro → n⁵ ≈ 5.7e-4
+///   - C_H = (21/2)(0.003)(1)(5.7e-4)(1.75e8) ≈ 3140 (TW per e²)
+/// - Target k = 0.10/macro → E_scale = C_H / (2k) ≈ 15 700
+///
+/// Short-period moons (Io-class: period ≤ 2 macros) produce much
+/// larger `C_H` (~3.2e6 for Io), yielding `k ≫ 1` per macro — damping
+/// saturates to "circularise in one tick", which is physically right
+/// (Io's circularisation timescale is short relative to a macro-step).
+/// The `LockingState::Resonance` branch in `sim_world::tidal_locking`
+/// then prevents that damping for moons in gravitationally-pumped
+/// orbits, so the steady-state e is preserved.
+#[inline]
+fn orbital_energy_scale_per_e_squared() -> Real {
+    Real::from_int(15_700)
+}
+
+/// Heating coefficient `C_H` such that `H = C_H × e²` for the given
+/// moon (P3.8). Factor of the tidal-heating formula that's
+/// eccentricity-independent:
+/// `C_H = (21/2) × (k₂/Q) × R⁵ × n⁵ × tidal_dimensional_calibration`.
+///
+/// Used by both `moon_tidal_heat_rate` (× `e²` → H) and
+/// `synchronous_eccentricity_damping_rate` (`/ (2 × E_scale)` → k), so
+/// the two constants are *mathematically linked* through the same
+/// `tidal_dimensional_calibration`. Energy conservation
+/// `H = -dE_orbit/dt` is then a tautology rather than a coincidence —
+/// the spec for P3.8.
+///
+/// Returns `Real::ZERO` for degenerate `orbital_period_macros = 0`.
+#[must_use]
+pub fn heating_coefficient_per_e_squared(
+    planet_radius_earth_units: Real,
+    moon: &MoonHeating,
+) -> Real {
+    if moon.orbital_period_macros == 0 {
+        return Real::ZERO;
+    }
+    let period = Real::from_int(i64::from(moon.orbital_period_macros));
+    let n = two_pi() / period;
+
+    let r = planet_radius_earth_units;
+    let r2 = r.saturating_mul(r);
+    let r4 = r2.saturating_mul(r2);
+    let r5 = r4.saturating_mul(r);
+
+    let n2 = n.saturating_mul(n);
+    let n4 = n2.saturating_mul(n2);
+    let n5 = n4.saturating_mul(n);
+
+    let twenty_one_halves = Real::from_ratio(21, 2);
+    let coeff = twenty_one_halves.saturating_mul(moon.k2_over_q);
+    let scaled_coeff = coeff.saturating_mul(tidal_dimensional_calibration());
+    let r5_scaled = r5.saturating_mul(scaled_coeff);
+    r5_scaled.saturating_mul(n5)
+}
+
+/// Synchronously-locked eccentricity damping coefficient `k` derived
+/// from the heating coefficient (P3.8). Returns a `Real` such that
+/// `de/dt = -k × e` (linear damping) gives an orbital-energy decay
+/// rate that exactly matches the instantaneous tidal heat `H`:
+///
+/// ```text
+///   H = C_H × e²                      (heat dissipated, TW)
+///   dE_orbit/dt = -2k × E_scale × e²  (orbital energy lost, TW)
+///   H = -dE_orbit/dt   ⟹   k = C_H / (2 × E_scale)
+/// ```
+///
+/// This is the *synchronous* rate — `sim_world::tidal_locking` scales
+/// it down by ~10× for `FreeRotator` planets (slower
+/// tidal-friction-only damping) and zeroes it out for `Resonance`
+/// planets (gravitational pumping sustains e).
+///
+/// Returns `Real::ZERO` for degenerate moons (period = 0).
+#[must_use]
+pub fn synchronous_eccentricity_damping_rate(
+    planet_radius_earth_units: Real,
+    moon: &MoonHeating,
+) -> Real {
+    let c_h = heating_coefficient_per_e_squared(planet_radius_earth_units, moon);
+    if c_h == Real::ZERO {
+        return Real::ZERO;
+    }
+    let two_e_scale = orbital_energy_scale_per_e_squared()
+        .saturating_mul(Real::from_int(2));
+    c_h / two_e_scale
+}
+
+/// Free-rotator eccentricity damping coefficient `k` derived from the
+/// synchronous rate (P3.8). Free-rotator planets damp ~10× slower than
+/// synchronously-locked ones — ordinary tidal friction only, without
+/// the spin-orbit-coupling boost the locked state gets from the bulge
+/// dragging against the host's rotation.
+///
+/// Defined as `synchronous_eccentricity_damping_rate / 10` so both
+/// rates trace back to the same `tidal_dimensional_calibration` and
+/// the energy-conservation invariant scales consistently (free
+/// rotators dump 1/10 of the heat per unit time at the same e, so the
+/// orbital-energy loss is also 1/10 — matching `H ∝ k`).
+#[must_use]
+pub fn free_rotator_eccentricity_damping_rate(
+    planet_radius_earth_units: Real,
+    moon: &MoonHeating,
+) -> Real {
+    synchronous_eccentricity_damping_rate(planet_radius_earth_units, moon)
+        / Real::from_int(10)
+}
+
+/// Orbital energy loss rate for one moon under linear eccentricity
+/// damping `de/dt = -k × e` (P3.8). Returns
+/// `dE_orbit/dt = -2 × k × E_scale × e²` in TW — the rate of orbital
+/// energy decay per unit time.
+///
+/// By construction, when `k` is the synchronously-derived rate from
+/// `synchronous_eccentricity_damping_rate`, this returns
+/// `-moon_tidal_heat_rate(R, moon)` exactly — the energy-conservation
+/// contract `H = -dE_orbit/dt` that the spec for P3.8 requires.
+///
+/// Result is *negative* (orbital energy decreases as e damps).
+#[must_use]
+pub fn orbital_energy_loss_rate(moon: &MoonHeating, damping_rate_k: Real) -> Real {
+    let e2 = moon.eccentricity.saturating_mul(moon.eccentricity);
+    let two_e_scale = orbital_energy_scale_per_e_squared()
+        .saturating_mul(Real::from_int(2));
+    // dE/dt = -2 × k × E_scale × e²
+    Real::ZERO - damping_rate_k.saturating_mul(two_e_scale).saturating_mul(e2)
+}
+
 /// Per-moon heating descriptor — the physics-layer projection of
 /// `sim_world::composition::Moon` for the tidal-heating law.
 ///
@@ -382,65 +527,63 @@ pub fn moon_tidal_heat_rate(planet_radius_earth_units: Real, moon: &MoonHeating)
         return Real::ZERO;
     }
 
-    // n = 2π / period (radians per macro-step). Period clamped to
-    // >= 1 above; the divide is safe.
-    let period = Real::from_int(i64::from(moon.orbital_period_macros));
-    let n = two_pi() / period;
-
-    // R⁵ and n⁵ by repeated multiplication. `pow(R, 5)` would
-    // route through ln/exp (~30 ULPs of round-off); the direct
-    // chain keeps the precision tight and avoids the
-    // ln-of-non-positive panic guard.
+    // P3.8: compute via the shared `heating_coefficient_per_e_squared`
+    // helper so the eccentricity-damping rate (`sim_world::tidal_locking`
+    // calls `synchronous_eccentricity_damping_rate`) derives from the
+    // *same* coefficient. `H = C_H × e²` where `C_H` folds
+    // `(21/2)(k₂/Q) × tidal_dimensional_calibration × R⁵ × n⁵`.
     //
-    // P0.6 hardening: every multiply in the chain uses
-    // `saturating_mul` to clamp at `Real::MIN/MAX` rather than
-    // panicking on overflow. For ultra-short-period moons
-    // (`orbital_period_macros = 7` → `n ≈ 0.898`) on a high-radius
-    // sample the intermediate `n⁵ × R⁵` is still <100, but a future
-    // wider planet-radius sample (super-Earth at R ≈ 2.5 → R⁵ ≈ 98)
-    // multiplied by Io-class `n ≈ 3.55 → n⁵ ≈ 565` puts the running
-    // product near 5e4 — well under Q32.32's 2.1e9 ceiling, but the
-    // next `× tidal_dimensional_calibration = 1.75e8` step would land at 8.75e12 and
-    // hard-panic the build. Saturating clamps so the test seed
-    // sweep can run to completion; downstream
-    // `distribute_heat_to_cells` re-clamps the temperature delta.
-    let r = planet_radius_earth_units;
-    let r2 = r.saturating_mul(r);
-    let r4 = r2.saturating_mul(r2);
-    let r5 = r4.saturating_mul(r);
-
-    let n2 = n.saturating_mul(n);
-    let n4 = n2.saturating_mul(n2);
-    let n5 = n4.saturating_mul(n);
-
+    // The helper preserves the P2.1 multiplication order — fold
+    // `(21/2) × k₂/Q × tidal_dimensional_calibration` first, then × R⁵
+    // and × n⁵ — so every partial product stays inside Q32.32's
+    // representable range (`~2.3e-10` LSB, `~2.1e9` ceiling). Critical
+    // for small-R moons like Enceladus where the bare
+    // `R⁵ × (21/2) × k₂/Q ≈ 3e-11` would underflow below the LSB.
+    //
+    // For Io (rocky): C_H ≈ 5.5e6 × 1.914e-3 × 306 ≈ 3.23e6 (TW per e²);
+    //                 × e² (1.681e-5) ≈ 54 TW. ✓
+    // For Enceladus (icy): C_H ≈ 5.5e5 × 9e-8 × 9779 ≈ 487 (TW per e²);
+    //                      × e² (2.21e-5) ≈ 0.0107 TW = 10.7 GW.
+    let c_h = heating_coefficient_per_e_squared(planet_radius_earth_units, moon);
     let e2 = moon.eccentricity.saturating_mul(moon.eccentricity);
+    let h = c_h.saturating_mul(e2);
 
-    // Order (P2.1): fold `(21/2) × k₂/Q × tidal_dimensional_calibration`
-    // into one "scaled coefficient" before multiplying it against the
-    // R⁵ × n⁵ × e² product chain. This avoids the small-radius
-    // underflow that previously zeroed out Enceladus (R⁵ ≈ 9e-8;
-    // multiplying by the bare `(21/2) × k₂/Q ≈ 3e-4` first dropped
-    // the intermediate below the Q32.32 LSB ~2.3e-10). Folding the
-    // ~1.75e8 cal_factor in keeps every partial product comfortably
-    // above LSB and well below the ~2.1e9 ceiling.
-    //
-    // For Io (rocky):
-    //   scaled_coeff = 10.5 × 0.003 × 1.75e8 ≈ 5_512_500
-    //   r5 × scaled_coeff ≈ 1.914e-3 × 5.5e6 ≈ 1.06e4
-    //   × n5 (306) ≈ 3.23e6
-    //   × e² (1.681e-5) ≈ 54 TW. ✓
-    //
-    // For Enceladus (icy):
-    //   scaled_coeff = 10.5 × 0.0003 × 1.75e8 ≈ 551_250
-    //   r5 × scaled_coeff ≈ 9.02e-8 × 5.5e5 ≈ 0.0497
-    //   × n5 (9779) ≈ 487
-    //   × e² (2.21e-5) ≈ 0.0107 TW = 10.7 GW. (Real ~16 GW.)
-    let twenty_one_halves = Real::from_ratio(21, 2);
-    let coeff = twenty_one_halves.saturating_mul(moon.k2_over_q);
-    let scaled_coeff = coeff.saturating_mul(tidal_dimensional_calibration());
-    let r5_scaled = r5.saturating_mul(scaled_coeff);
-    let r5_scaled_n5 = r5_scaled.saturating_mul(n5);
-    r5_scaled_n5.saturating_mul(e2)
+    // P3.8 energy-conservation invariant (`H ≈ -dE_orbit/dt`). In
+    // debug builds, cross-check that the synchronous-damping rate
+    // derived from `C_H` reproduces `H` when fed through the
+    // orbital-energy-loss formula. Skipped in release builds — both
+    // sides route through the same `C_H` and `E_scale`, so the
+    // algebra is a tautology except for Q32.32 round-off in the
+    // intermediate divide.
+    #[cfg(debug_assertions)]
+    {
+        let k = synchronous_eccentricity_damping_rate(
+            planet_radius_earth_units,
+            moon,
+        );
+        let de_dt = orbital_energy_loss_rate(moon, k);
+        // de_dt is negative (energy decreasing); compare
+        // `|h - (-de_dt)|` against a relative tolerance. The shared
+        // `C_H` makes this exactly equal modulo the
+        // `/ (2 × E_scale) × 2 × E_scale` round-trip, which loses a
+        // few ULPs in Q32.32. 1 % relative tolerance catches algebraic
+        // regressions (sign flips, missing factors of 2) without
+        // false-positing on fixed-point noise.
+        let expected_heat = Real::ZERO - de_dt;
+        let diff = (h - expected_heat).abs();
+        let tol = h.abs() / Real::from_int(100);
+        // Slack additive floor (~1 LSB scaled): tiny values of H can
+        // produce diff < 1 LSB but tol = 0; the floor keeps the
+        // tolerance non-zero so the comparison is meaningful.
+        let abs_floor = Real::from_ratio(1, 1_000_000);
+        debug_assert!(
+            diff <= tol || diff <= abs_floor,
+            "P3.8 energy conservation broken: H = {h:?} vs -dE_orbit/dt = {expected_heat:?}, \
+             diff = {diff:?}, tol = {tol:?} (1% of H)"
+        );
+    }
+
+    h
 }
 
 /// Distribute a total heat dissipation rate (in TW) uniformly across
@@ -1082,5 +1225,79 @@ mod tests {
                 "cell {i} subsurface should be surface - 10"
             );
         }
+    }
+
+    /// P3.8 spec test — across a Synchronous moon's eccentricity-damping
+    /// window, the cumulative tidal heat dissipated `Σ H(t) × dt` must
+    /// match the cumulative orbital-energy loss `Σ 2k × E_scale × e²(t) × dt`.
+    /// The two sides are linked through the same
+    /// `tidal_dimensional_calibration`: `H = C_H × e²` (heat) and
+    /// `dE/dt = -2k × E_scale × e² = -C_H × e²` (orbital), so the
+    /// instantaneous match is algebraic; the test integrates over many
+    /// ticks to demonstrate the relation holds under repeated damping.
+    ///
+    /// Tolerance: 1 % relative drift across the run. Q32.32 loses ~1
+    /// LSB per multiply in the chain, so the per-tick error
+    /// accumulates linearly; the bound catches an algebra regression
+    /// (sign flip, missing factor of 2) without false-positing on
+    /// fixed-point round-off.
+    #[test]
+    fn tidal_heat_matches_orbital_energy_loss_for_circular_decay() {
+        // Earth-Moon-like fixture: R = 1 Earth-radii, period = 28
+        // macros, rocky. The P3.8 `E_scale = 15_700` calibration puts
+        // `k ≈ 0.10/macro`, so 100 ticks of damping is ~10 e-folds and
+        // e drops from 0.10 to ~5e-6 — a full damping window.
+        let r = Real::ONE;
+        let period = 28u32;
+        let initial_e = Real::from_ratio(10, 100); // 0.10
+        let mut moon = MoonHeating::rocky(initial_e, period);
+
+        let dt = Real::ONE;
+        let mut cumulative_heat = Real::ZERO;
+        let mut cumulative_orbital_loss = Real::ZERO;
+
+        for _ in 0..100 {
+            // Instantaneous heat dissipated this tick.
+            let h = moon_tidal_heat_rate(r, &moon);
+            cumulative_heat = cumulative_heat.saturating_add(h.saturating_mul(dt));
+
+            // Instantaneous orbital-energy loss this tick (positive
+            // magnitude — `orbital_energy_loss_rate` returns the signed
+            // dE/dt which is negative; we accumulate `-dE/dt`).
+            let k = synchronous_eccentricity_damping_rate(r, &moon);
+            let de_dt = orbital_energy_loss_rate(&moon, k);
+            let loss = Real::ZERO - de_dt;
+            cumulative_orbital_loss =
+                cumulative_orbital_loss.saturating_add(loss.saturating_mul(dt));
+
+            // Step e forward using the same `k` so the next tick's
+            // `H` and `dE/dt` reflect the damped state.
+            let decay_factor =
+                (Real::ONE - k.saturating_mul(dt)).max(Real::ZERO);
+            moon.eccentricity =
+                moon.eccentricity.saturating_mul(decay_factor).max(Real::ZERO);
+        }
+
+        // Both cumulative quantities must be positive and non-zero
+        // (the run had `e > 0` for most ticks).
+        assert!(
+            cumulative_heat > Real::ZERO,
+            "cumulative tidal heat should be positive: {cumulative_heat:?}"
+        );
+        assert!(
+            cumulative_orbital_loss > Real::ZERO,
+            "cumulative orbital-energy loss should be positive: \
+             {cumulative_orbital_loss:?}"
+        );
+
+        // The two must match to within 1 % relative drift.
+        let diff = (cumulative_heat - cumulative_orbital_loss).abs();
+        let tol = cumulative_heat / Real::from_int(100);
+        assert!(
+            diff <= tol,
+            "P3.8 energy conservation: cumulative H = {cumulative_heat:?} \
+             vs orbital loss = {cumulative_orbital_loss:?}, drift = {diff:?}, \
+             tol = {tol:?} (1% of H)"
+        );
     }
 }

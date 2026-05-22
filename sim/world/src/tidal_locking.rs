@@ -2,10 +2,10 @@
 //!
 //! Two pieces:
 //!
-//! - `step_eccentricity_damping(moon, locking_state, dt)` damps a
-//!   moon's orbital eccentricity toward zero each tick. Rate depends
-//!   on the host planet's tidal-locking regime: `Synchronous` damps
-//!   fast (locked orbits become circular within tidal-friction
+//! - `step_eccentricity_damping(planet_radius, moon, locking_state, dt)`
+//!   damps a moon's orbital eccentricity toward zero each tick. Rate
+//!   depends on the host planet's tidal-locking regime: `Synchronous`
+//!   damps fast (locked orbits become circular within tidal-friction
 //!   timescales), `FreeRotator` damps slowly (ordinary tidal
 //!   dissipation), `Resonance { .. }` does *not* damp — Laplace-type
 //!   gravitational forcing from other bodies (Io-Europa-Ganymede)
@@ -22,61 +22,79 @@
 //!
 //! All arithmetic is `Real` (Q32.32) so the per-tick step is bit-
 //! deterministic. The damping uses a simple exponential decay
-//! `e' = e × (1 - k × dt)` with `k` chosen per locking state; for
-//! the integration step sizes the orchestrator uses (`heat_dt` ~ 1
-//! macro-step), the per-tick decay factor stays well under 1 and
-//! the Real range holds without saturation.
+//! `e' = e × (1 - k × dt)` with `k` derived from
+//! `sim_physics::tidal_heating::synchronous_eccentricity_damping_rate`
+//! (P3.8). That function shares the `tidal_dimensional_calibration`
+//! constant with the heating rate `H`, so the orbital-energy loss
+//! `dE_orbit/dt = -2k × E_scale × e²` exactly matches the tidal heat
+//! `H = C_H × e²` (energy conservation `H = -dE_orbit/dt`). For
+//! typical orchestrator step sizes (`heat_dt ~ 1` macro-step), the
+//! per-tick decay factor stays well under 1 and the Real range holds
+//! without saturation.
 
 use crate::composition::Moon;
 use crate::planet::Planet;
 use crate::types::LockingState;
 use sim_arith::Real;
+use sim_physics::tidal_heating::{
+    free_rotator_eccentricity_damping_rate, synchronous_eccentricity_damping_rate,
+    MoonHeating,
+};
 
-/// Per-tick eccentricity damping coefficient `k` for a
-/// `Synchronous` locked moon. Synchronous worlds circularise on
-/// tidal-friction timescales an order of magnitude faster than free
-/// rotators (the same friction that locked the rotation also drains
-/// orbital eccentricity). `k = 0.10` per macro-step gives an
-/// e-folding time of ~10 ticks — fast enough that a Synchronous
-/// fixture run for a few dozen ticks lands at e ≈ 0, slow enough
-/// that the per-tick decay factor `(1 - k × dt)` stays safely
-/// positive for any sensible `dt`.
+/// Adapter: build the `sim_physics::tidal_heating::MoonHeating` view
+/// of a `Moon` for the damping-rate helpers (P3.8). Same shape as the
+/// adapters in `sim_core::laws::build_*` but local to the damping site
+/// since it's the only consumer.
 ///
-/// Wrapped in a function rather than a `const` because
-/// `Real::from_ratio` is not `const fn` in the underlying
-/// `fixed::I32F32` library.
-#[inline]
-fn synchronous_damping_per_dt() -> Real {
-    Real::from_ratio(10, 100)
+/// `k₂/Q` is left at the rocky default (`0.003`); we don't currently
+/// carry the per-moon substrate label on `Moon`. A future refinement
+/// can plumb the moon's composition through and pick rocky vs icy.
+fn moon_heating_view(moon: &Moon) -> MoonHeating {
+    MoonHeating::rocky(moon.eccentricity, moon.orbital_period_macros)
 }
 
-/// Per-tick eccentricity damping coefficient for `FreeRotator`
-/// planets. Slow tidal-friction-only damping; about an order of
-/// magnitude weaker than Synchronous. `k = 0.01` per macro-step.
-#[inline]
-fn free_rotator_damping_per_dt() -> Real {
-    Real::from_ratio(1, 100)
-}
-
-/// Step one moon's eccentricity by `dt`. `locking_state` is the host
-/// planet's regime — drives the per-tick damping coefficient.
-/// `Synchronous` damps fast, `FreeRotator` slowly, `Resonance`
-/// doesn't damp (gravitational forcing from other bodies sustains
-/// the steady-state e; the forcing itself isn't modelled in this PR
-/// — we just don't damp).
+/// Step one moon's eccentricity by `dt`. `planet_radius_earth_units`
+/// and `locking_state` together drive the per-tick damping coefficient
+/// `k`:
+///
+/// - `Synchronous` damps fast: `k =
+///   sim_physics::tidal_heating::synchronous_eccentricity_damping_rate(R, moon)`.
+/// - `FreeRotator` damps slowly: `k =
+///   sim_physics::tidal_heating::free_rotator_eccentricity_damping_rate(R, moon)`
+///   (1/10 of the synchronous rate).
+/// - `Resonance` does not damp — gravitational forcing from other
+///   bodies (Io-Europa-Ganymede Laplace resonance) sustains e at its
+///   steady-state value. The forcing itself is out of scope for this
+///   PR; we model the maintenance as "don't damp".
 ///
 /// The damping is linear-decay: `e' = max(0, e - k × dt × e)` =
-/// `e × max(0, 1 - k × dt)`. Eccentricity is clamped to `[0, 1)` —
-/// it can never go negative, and damping can never push it past
-/// zero into the unphysical regime.
+/// `e × max(0, 1 - k × dt)`. Eccentricity is clamped to `[0, 1)` — it
+/// can never go negative, and damping can never push it past zero
+/// into the unphysical regime.
+///
+/// ## P3.8 energy conservation
+///
+/// The damping coefficient `k` is derived from the *same*
+/// `tidal_dimensional_calibration` constant as the heating rate `H`
+/// in `sim_physics::tidal_heating::moon_tidal_heat_rate`, so the
+/// orbital energy loss `dE_orbit/dt = -2k × E_scale × e²` exactly
+/// matches the tidal heat dissipation `H = C_H × e²` — see the
+/// `tidal_heat_matches_orbital_energy_loss_for_circular_decay` test
+/// in `sim_physics::tidal_heating`.
 pub fn step_eccentricity_damping(
+    planet_radius_earth_units: Real,
     moon: &mut Moon,
     locking_state: LockingState,
     dt: Real,
 ) {
+    let view = moon_heating_view(moon);
     let k = match locking_state {
-        LockingState::Synchronous => synchronous_damping_per_dt(),
-        LockingState::FreeRotator => free_rotator_damping_per_dt(),
+        LockingState::Synchronous => {
+            synchronous_eccentricity_damping_rate(planet_radius_earth_units, &view)
+        }
+        LockingState::FreeRotator => {
+            free_rotator_eccentricity_damping_rate(planet_radius_earth_units, &view)
+        }
         // Resonance-pumped orbits don't damp — gravitational forcing
         // from other bodies (Io-Europa-Ganymede Laplace resonance)
         // sustains e at its steady-state value. The forcing itself
@@ -236,12 +254,15 @@ mod tests {
     fn tidally_locked_moon_eccentricity_damps_to_zero() {
         let mut moon = moon_with_e(Real::from_ratio(10, 100));
         let dt = Real::ONE;
-        // 200 ticks is many e-folds at k = 0.10/dt: each tick
-        // multiplies e by 0.90, so after 200 ticks e is below
-        // 0.10 × 0.9^200 ≈ 7e-11 — comfortably under the Q32.32
-        // LSB precision of ~2.3e-10.
+        // P3.8: planet radius = 1 Earth-radii, moon period = 28 macros.
+        // The `orbital_energy_scale_per_e_squared = 15_700` calibration
+        // is picked so this configuration produces `k ≈ 0.10` per
+        // macro, preserving the pre-P3.8 fixed-coefficient behaviour.
+        // 200 ticks is many e-folds: e × 0.9^200 ≈ 7e-11, below the
+        // Q32.32 LSB ~2.3e-10.
+        let r = Real::ONE;
         for _ in 0..200 {
-            step_eccentricity_damping(&mut moon, LockingState::Synchronous, dt);
+            step_eccentricity_damping(r, &mut moon, LockingState::Synchronous, dt);
         }
         // After 200 damped steps e should be at or below the
         // sub-LSB floor — i.e. effectively zero.
@@ -270,8 +291,9 @@ mod tests {
         // Io-Europa-Ganymede is a 4:2:1 Laplace resonance; we use
         // the 2:1 pair here as the canonical case.
         let locking = LockingState::Resonance { p: 2, q: 1 };
+        let r = Real::ONE;
         for _ in 0..500 {
-            step_eccentricity_damping(&mut moon, locking, dt);
+            step_eccentricity_damping(r, &mut moon, locking, dt);
         }
         // Steady-state: no damping, so e remains exactly the
         // initial value. The "pumping" half of the dynamics isn't
@@ -338,9 +360,20 @@ mod tests {
         let mut sync_moon = moon_with_e(initial_e);
         let mut free_moon = moon_with_e(initial_e);
         let dt = Real::ONE;
+        let r = Real::ONE;
         for _ in 0..50 {
-            step_eccentricity_damping(&mut sync_moon, LockingState::Synchronous, dt);
-            step_eccentricity_damping(&mut free_moon, LockingState::FreeRotator, dt);
+            step_eccentricity_damping(
+                r,
+                &mut sync_moon,
+                LockingState::Synchronous,
+                dt,
+            );
+            step_eccentricity_damping(
+                r,
+                &mut free_moon,
+                LockingState::FreeRotator,
+                dt,
+            );
         }
         assert!(
             free_moon.eccentricity > sync_moon.eccentricity,

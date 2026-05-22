@@ -365,11 +365,17 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // slowly, Resonance not at all (gravitational forcing from
         // other bodies sustains a steady-state e). One macro-step's
         // worth of damping per civ-tick.
+        //
+        // P3.8: pass `planet.radius` so the damping rate `k` is
+        // derived from the same `tidal_dimensional_calibration` as
+        // the heating rate H, locking in `H = -dE_orbit/dt` energy
+        // conservation.
         {
             let dt = Real::ONE;
             let locking = planet.locking_state;
+            let r = planet.radius;
             for moon in &mut planet.moons {
-                sim_world::step_eccentricity_damping(moon, locking, dt);
+                sim_world::step_eccentricity_damping(r, moon, locking, dt);
             }
         }
         let prev_state_for_measurements = phases::physics_phase(
