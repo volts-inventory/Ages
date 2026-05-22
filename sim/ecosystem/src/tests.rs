@@ -24,7 +24,7 @@ use sim_physics::chemistry::{
 };
 use sim_physics::{HexGrid, PhysicsState, Substance};
 use sim_species::{
-    EcosystemRole, FunctionalResponse, Interaction, InteractionKind, InteractionMatrix,
+    EcosystemRole, FunctionalResponse, Habitat, Interaction, InteractionKind, InteractionMatrix,
     MutualismKind, ProducerMetabolism, SpeciesId,
 };
 
@@ -34,8 +34,13 @@ fn capacity() -> Real {
 
 #[test]
 fn planet_has_trophic_pyramid_with_lindeman_ratio() {
-    // After sampling, primary tier biomass should sit at ~10% of
-    // producer tier (within 20% slack per spec).
+    // P2.5: this test used to bound the ratio tightly (±20%) because
+    // a corrective post-step `enforce_lindeman_pyramid` pinned the
+    // tiers to exactly 0.1×. With that cap removed the pyramid
+    // emerges from the per-habitat assimilation efficiency — the
+    // steady state is still 10:1 for the legacy terrestrial-default
+    // sampling, but transient overshoots are allowed, so we widen the
+    // slack to ±50% (ratio in [0.05, 0.15]).
     let eco = sample_ecosystem(42, capacity());
 
     let producer_total = eco.tier_biomass(0);
@@ -46,22 +51,22 @@ fn planet_has_trophic_pyramid_with_lindeman_ratio() {
     assert!(producer_total > Real::ZERO, "no producers");
     assert!(primary_total > Real::ZERO, "no primary consumers");
 
-    // Primary / producer ≈ 0.10. Allow ±20% slack: i.e. ratio in
-    // [0.08, 0.12].
+    // Primary / producer ≈ 0.10. Allow ±50% slack: ratio in
+    // [0.05, 0.15].
     let ratio = primary_total / producer_total;
-    let lo = Real::from((8, 100));
-    let hi = Real::from((12, 100));
+    let lo = Real::from((5, 100));
+    let hi = Real::from((15, 100));
     assert!(
         ratio >= lo && ratio <= hi,
-        "primary/producer ratio {ratio:?} out of [0.08, 0.12]",
+        "primary/producer ratio {ratio:?} out of [0.05, 0.15]",
     );
 
-    // Secondary / primary ≈ 0.10 (also within ±20% slack).
+    // Secondary / primary ≈ 0.10 (also within ±50% slack).
     if secondary_total > Real::ZERO {
         let sec_ratio = secondary_total / primary_total;
         assert!(
             sec_ratio >= lo && sec_ratio <= hi,
-            "secondary/primary ratio {sec_ratio:?} out of [0.08, 0.12]",
+            "secondary/primary ratio {sec_ratio:?} out of [0.05, 0.15]",
         );
     }
 
@@ -70,7 +75,7 @@ fn planet_has_trophic_pyramid_with_lindeman_ratio() {
         let apex_ratio = apex_total / secondary_total;
         assert!(
             apex_ratio >= lo && apex_ratio <= hi,
-            "apex/secondary ratio {apex_ratio:?} out of [0.08, 0.12]",
+            "apex/secondary ratio {apex_ratio:?} out of [0.05, 0.15]",
         );
     }
 }
@@ -150,6 +155,7 @@ fn predator_prey_pair_exhibits_lotka_volterra_cycles() {
             biomass: Real::from_int(800),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: pred_id,
@@ -157,6 +163,7 @@ fn predator_prey_pair_exhibits_lotka_volterra_cycles() {
             biomass: Real::from_int(50),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -224,16 +231,28 @@ fn keystone_species_removal_causes_cascade_disproportionate_to_biomass() {
 
     let make_eco = |with_central: bool, peripheral_removed: usize| -> PlanetEcosystem {
         let mut species = Vec::new();
-        // Central producer — low biomass.
+        // Central producer — sits near carrying capacity so the
+        // peripheral predators all have a steady prey base.
+        // P2.5: the prior test used `biomass = 10` paired with
+        // capacity = 100, betting on the corrective `enforce_lindeman`
+        // cap to keep the peripheral consumers (biomass 20 each) in
+        // check by scaling them *down*. With the cap removed,
+        // un-scaled consumers eat a 10-unit producer to zero on the
+        // first tick — so we instead make the producer the dominant
+        // pool (biomass = 80 in a 100-capacity ecosystem). The
+        // keystone test still works: removing the central producer
+        // starves all 6 peripherals (huge collapse); removing one
+        // peripheral leaves 5 well-fed (small collapse).
         if with_central {
             species.push(EcoSpecies {
                 species_id: central,
                 role: EcosystemRole::Producer {
                     metabolism: ProducerMetabolism::Photoautotroph,
                 },
-                biomass: Real::from_int(10),
+                biomass: Real::from_int(80),
                 is_extant: true,
                 low_biomass_streak: 0,
+                habitat: Habitat::Terrestrial,
             });
         }
         for (i, id) in peripherals.iter().enumerate() {
@@ -243,9 +262,10 @@ fn keystone_species_removal_causes_cascade_disproportionate_to_biomass() {
             species.push(EcoSpecies {
                 species_id: *id,
                 role: EcosystemRole::PrimaryConsumer,
-                biomass: Real::from_int(20),
+                biomass: Real::from_int(2),
                 is_extant: true,
                 low_biomass_streak: 0,
+                habitat: Habitat::Terrestrial,
             });
         }
         let mut matrix = InteractionMatrix::new();
@@ -331,6 +351,7 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             biomass: Real::ZERO,
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: primary,
@@ -338,6 +359,7 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             biomass: Real::from_int(100),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: secondary,
@@ -345,6 +367,7 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             biomass: Real::from_int(10),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -408,6 +431,7 @@ fn competition_pair_excludes_at_equilibrium() {
             biomass: Real::from_int(500),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: strong,
@@ -415,6 +439,7 @@ fn competition_pair_excludes_at_equilibrium() {
             biomass: Real::from_int(40),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: weak,
@@ -422,6 +447,7 @@ fn competition_pair_excludes_at_equilibrium() {
             biomass: Real::from_int(5),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -559,6 +585,7 @@ fn chemolithotroph_species_partition_by_reduction_potential() {
             biomass: Real::from_int(100),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: chemo_b,
@@ -568,6 +595,7 @@ fn chemolithotroph_species_partition_by_reduction_potential() {
             biomass: Real::from_int(100),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut eco = PlanetEcosystem::new_with_substrate(
@@ -638,6 +666,7 @@ fn syntrophy_pair_extinction_when_separated() {
             biomass: Real::from_int(50),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: mutualist_b,
@@ -647,6 +676,7 @@ fn syntrophy_pair_extinction_when_separated() {
             biomass: Real::from_int(50),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -766,54 +796,154 @@ fn co2_atmosphere_combustion_works_via_alt_oxidiser() {
     assert_eq!(energy_yield_factor(Real::from_int(-10)), Real::ZERO);
 }
 
-#[test]
-fn lindeman_pyramid_enforcement_caps_overgrown_consumers() {
-    // Hand-construct a state that violates the pyramid: producer
-    // biomass 100, primary 50 (should be capped at 10), secondary
-    // 30 (should be capped at 0.1× primary after primary is
-    // capped).
-    let prod = SpeciesId(0);
-    let primary = SpeciesId(1);
-    let secondary = SpeciesId(2);
+/// Build a two-species (Producer + PrimaryConsumer) ecosystem with a
+/// chosen habitat and a saturating-Type-II predation edge. Used by
+/// the per-habitat Lindeman steady-state tests below.
+///
+/// The predation strength is tuned per habitat so the
+/// population-dynamics steady state lands close to the per-habitat
+/// Lindeman ratio. The Lindeman ratio is a *thermodynamic*
+/// (assimilation-efficiency) coefficient; the *population-ratio*
+/// steady state in a closed predator-prey system is the joint
+/// solution of:
+///
+/// ```text
+///   predator dB/dt = 0  ⇒  s × per_pred × assim = decay
+///   prey     dB/dt = 0  ⇒  r × prey × (1 - prey/K) = pred × s × per_pred
+/// ```
+///
+/// With `per_pred = prey / (k + prey)` and `k = K_HALF_SAT × K`,
+/// these resolve to:
+///
+/// - Terrestrial (assim = 1/10): `s = 0.2` settles the system at
+///   `prey = K/2`, `pred/prey = 0.10` — the canonical Lindeman ratio.
+/// - Aquatic (assim = 1/30): `s = 0.6` settles the system at
+///   `prey = K/2`, `pred/prey = 1/30` — the aquatic target.
+///
+/// Both pinpoint the same `prey = K/2` operating point (so the
+/// producer logistic isn't dominating the dynamics), and the
+/// emergent population ratio matches the per-habitat assimilation
+/// efficiency.
+fn predator_prey_for_habitat(habitat: Habitat) -> PlanetEcosystem {
+    let strength = match habitat {
+        Habitat::Terrestrial | Habitat::Subterranean | Habitat::Endolithic => {
+            Real::from_ratio(2, 10)
+        }
+        Habitat::Aquatic => Real::from_ratio(6, 10),
+        // Amphibious / Airborne use assim = 0.15, decay 0.01, so
+        // s × per_pred = 0.01 / 0.15 = 0.0667 at predator equilibrium.
+        // Pinning prey at K/2 → per_pred = 0.5 → s = 0.133.
+        Habitat::Amphibious | Habitat::Airborne => Real::from_ratio(133, 1000),
+    };
+
+    let prey_id = SpeciesId(0);
+    let pred_id = SpeciesId(1);
     let species = vec![
         EcoSpecies {
-            species_id: prod,
+            species_id: prey_id,
             role: EcosystemRole::Producer {
                 metabolism: ProducerMetabolism::Photoautotroph,
             },
-            biomass: Real::from_int(100),
+            biomass: Real::from_int(5_000),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat,
         },
         EcoSpecies {
-            species_id: primary,
+            species_id: pred_id,
             role: EcosystemRole::PrimaryConsumer,
+            // Above the extinction threshold (10) but well below the
+            // expected steady-state biomass (~500 terrestrial,
+            // ~167 aquatic), so the test verifies the predator
+            // *climbs toward* its per-habitat ratio.
             biomass: Real::from_int(50),
             is_extant: true,
             low_biomass_streak: 0,
-        },
-        EcoSpecies {
-            species_id: secondary,
-            role: EcosystemRole::SecondaryConsumer,
-            biomass: Real::from_int(30),
-            is_extant: true,
-            low_biomass_streak: 0,
+            habitat,
         },
     ];
-    let mut eco = PlanetEcosystem::new(
-        species,
-        InteractionMatrix::new(),
-        Real::from_int(100),
+    let mut matrix = InteractionMatrix::new();
+    matrix.insert(
+        pred_id,
+        prey_id,
+        Interaction {
+            kind: InteractionKind::Predation,
+            strength,
+            functional_response: FunctionalResponse::Saturating,
+        },
     );
-    eco.enforce_lindeman_pyramid();
-    let p = eco.species.get(&primary).unwrap().biomass;
-    let s = eco.species.get(&secondary).unwrap().biomass;
-    // Primary now ≤ 10.
-    assert!(p <= Real::from_int(10), "primary not capped: {p:?}");
-    // Secondary now ≤ 0.1 × primary = ≤ 1.
+    PlanetEcosystem::new(species, matrix, Real::from_int(10_000))
+}
+
+/// Average consumer / producer ratio over the tail of a long run —
+/// used so the per-habitat Lindeman steady-state tests aren't fooled
+/// by a transient peak in the predator-prey oscillation. Averages
+/// `tail` ticks at the end of `total` steps.
+fn tail_average_consumer_ratio(
+    eco: &mut PlanetEcosystem,
+    total: usize,
+    tail: usize,
+) -> Real {
+    let warmup = total - tail;
+    for _ in 0..warmup {
+        eco.step();
+    }
+    let mut sum = Real::ZERO;
+    let mut count = 0i64;
+    for _ in 0..tail {
+        eco.step();
+        let p = eco.tier_biomass(0);
+        let c = eco.tier_biomass(1);
+        if p > Real::ZERO {
+            sum = sum + (c / p);
+            count += 1;
+        }
+    }
+    assert!(count > 0, "no ticks with non-zero producer biomass");
+    sum / Real::from_int(count)
+}
+
+#[test]
+fn aquatic_habitat_uses_30_to_1_lindeman_ratio() {
+    // P2.5: an Aquatic-habitat predator/prey pair should settle at a
+    // consumer/producer ratio close to the aquatic Lindeman
+    // assimilation (1/30 ≈ 0.0333) — much sparser than the canonical
+    // terrestrial 1/10. The per-habitat ratio is the *only*
+    // mechanism producing the pyramid now (no post-step cap), so a
+    // miscalibrated efficiency would show up as the ratio drifting
+    // toward 1/10 or to zero.
+    let mut eco = predator_prey_for_habitat(Habitat::Aquatic);
+    let ratio = tail_average_consumer_ratio(&mut eco, 5000, 200);
+    let target = Real::from_ratio(1, 30);
+    // ±50% slack: aquatic ratio should sit in [target/2, target × 1.5]
+    // ≈ [0.0167, 0.05].
+    let lo = target / Real::from_int(2);
+    let hi = target * Real::from_ratio(15, 10);
     assert!(
-        s <= Real::from_int(1),
-        "secondary not capped: {s:?} (primary={p:?})"
+        ratio >= lo && ratio <= hi,
+        "aquatic consumer/producer ratio {ratio:?} out of [{lo:?}, {hi:?}] \
+         (target 1/30 ≈ 0.0333)",
+    );
+}
+
+#[test]
+fn terrestrial_habitat_uses_10_to_1_lindeman_ratio() {
+    // P2.5: a Terrestrial-habitat predator/prey pair should settle
+    // at a consumer/producer ratio close to the terrestrial Lindeman
+    // assimilation (1/10 = 0.10) — the canonical Lindeman pyramid.
+    // Sister test to `aquatic_habitat_uses_30_to_1_lindeman_ratio`;
+    // together they prove the per-habitat ratio is what's controlling
+    // the steady state rather than a single global constant.
+    let mut eco = predator_prey_for_habitat(Habitat::Terrestrial);
+    let ratio = tail_average_consumer_ratio(&mut eco, 5000, 200);
+    let target = Real::from_ratio(1, 10);
+    // ±50% slack: ratio in [target/2, target × 1.5] = [0.05, 0.15].
+    let lo = target / Real::from_int(2);
+    let hi = target * Real::from_ratio(15, 10);
+    assert!(
+        ratio >= lo && ratio <= hi,
+        "terrestrial consumer/producer ratio {ratio:?} out of [{lo:?}, {hi:?}] \
+         (target 1/10 = 0.10)",
     );
 }
 
@@ -837,6 +967,7 @@ fn three_species_web() -> PlanetEcosystem {
             biomass: Real::from_int(500),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: a,
@@ -844,6 +975,7 @@ fn three_species_web() -> PlanetEcosystem {
             biomass: Real::from_int(30),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: b,
@@ -851,6 +983,7 @@ fn three_species_web() -> PlanetEcosystem {
             biomass: Real::from_int(30),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -920,6 +1053,7 @@ fn extinct_species_stops_contributing_to_ecosystem() {
             biomass: eco_three.species.get(&prod).unwrap().biomass,
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: survivor,
@@ -927,6 +1061,7 @@ fn extinct_species_stops_contributing_to_ecosystem() {
             biomass: eco_three.species.get(&survivor).unwrap().biomass,
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix_two = InteractionMatrix::new();
@@ -990,6 +1125,7 @@ fn extinction_cascade_from_keystone_removal() {
             biomass: Real::from_int(100),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: dep_a,
@@ -997,6 +1133,7 @@ fn extinction_cascade_from_keystone_removal() {
             biomass: Real::from_int(5),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: dep_b,
@@ -1004,6 +1141,7 @@ fn extinction_cascade_from_keystone_removal() {
             biomass: Real::from_int(5),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: dep_c,
@@ -1011,6 +1149,7 @@ fn extinction_cascade_from_keystone_removal() {
             biomass: Real::from_int(5),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -1080,6 +1219,7 @@ fn extinction_event_emits_on_pool_collapse() {
             biomass: Real::from_int(500),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: target,
@@ -1087,6 +1227,7 @@ fn extinction_event_emits_on_pool_collapse() {
             biomass: Real::from_int(30),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     let matrix = InteractionMatrix::new();
@@ -1174,6 +1315,7 @@ fn producer_growth_consumes_atmospheric_co2() {
         biomass: Real::from_int(500),
         is_extant: true,
         low_biomass_streak: 0,
+        habitat: Habitat::Terrestrial,
     }];
     let mut eco = PlanetEcosystem::new(
         species,
@@ -1210,6 +1352,7 @@ fn consumer_respiration_returns_co2_to_atmosphere() {
         biomass: Real::from_int(100),
         is_extant: true,
         low_biomass_streak: 0,
+        habitat: Habitat::Terrestrial,
     }];
     let mut eco = PlanetEcosystem::new(
         species,
@@ -1254,6 +1397,7 @@ fn decomposer_chain_balances_carbon_budget() {
             biomass: Real::from_int(400),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: primary,
@@ -1261,6 +1405,7 @@ fn decomposer_chain_balances_carbon_budget() {
             biomass: Real::from_int(40),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: detritivore,
@@ -1268,6 +1413,7 @@ fn decomposer_chain_balances_carbon_budget() {
             biomass: Real::from_int(10),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
         EcoSpecies {
             species_id: saprotroph,
@@ -1275,6 +1421,7 @@ fn decomposer_chain_balances_carbon_budget() {
             biomass: Real::from_int(10),
             is_extant: true,
             low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
         },
     ];
     // Modest predation so consumers can sustain themselves on the
@@ -1312,12 +1459,13 @@ fn decomposer_chain_balances_carbon_budget() {
     }
     let final_total = total_carbon(&state, &eco);
 
-    // 25% drift tolerance — predation + Lindeman caps drop a small
-    // amount of biomass each tick that isn't recovered by the
-    // decomposer pathway (the dead-matter pool here is the only
-    // way back to CO2; biomass scaled down by enforce_lindeman is
-    // not run back through respiration). The bound is loose enough
-    // to accommodate that bookkeeping but tight enough to catch a
+    // 25% drift tolerance — predation drops a small amount of
+    // biomass each tick that isn't recovered by the decomposer
+    // pathway (the dead-matter pool here is the only way back to
+    // CO2; flux respired by predators *is* run back through
+    // respiration but the per-habitat Lindeman assimilation discards
+    // the unassimilated fraction). The bound is loose enough to
+    // accommodate that bookkeeping but tight enough to catch a
     // missing flux entirely.
     let drift = (final_total - initial).abs();
     let bound = initial / Real::from_int(4);
