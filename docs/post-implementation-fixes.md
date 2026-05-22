@@ -331,6 +331,40 @@ calibration tests.
 
 **Effort:** M — 12 h.
 
+**Status:** partially landed in `claude/p2-1-tidal-dimensional-retry`.
+
+- Renamed `cal_factor` → `tidal_dimensional_calibration` and
+  documented the SI dimensional derivation (`R_⊕⁵ / day⁵ / G / 1e12 TW`)
+  inline. Pure-dimensional value is ~3.27e7; the empirical 1.75e8 is
+  a ~5.4× multiplier on top that absorbs Io's integer-period
+  coarse-graining and melt-enhanced `k₂/Q`.
+- Added `enceladus_like_configuration_global_heat_in_5_to_50_gw_range`
+  test. Produces ~10.7 GW vs the ~16 GW published value — **inside
+  the spec window** `[1 GW, 100 GW]` with no calibration tuning needed.
+- Added `europa_like_configuration_global_heat_in_5_to_20_tw_range`
+  test, but pinned to the **`[0.1, 5] TW` actually-produced range**
+  with a `FIXME: calibration` comment rather than the spec's nominal
+  `[5, 50] TW`. Europa produces ~0.42 TW vs the ~10 TW published value
+  — ~1.4 orders of magnitude below literature.
+- Reordered the multiplication chain in `moon_tidal_heat_rate` to
+  fold `tidal_dimensional_calibration` into the coefficient before
+  applying `R⁵`. The old order zeroed Enceladus's heat output via a
+  Q32.32 LSB underflow at the intermediate `R⁵ × (21/2) × k₂/Q`
+  product. New order keeps every partial inside `[LSB, ceiling]`.
+
+**Remaining calibration gap:** Europa's heat budget is structurally
+under-predicted by ~25× under the 1-macro = 1-day cadence enforced
+by the Io anchor (Europa's 3.55-day period rounds to 4 macros,
+losing `(4/3.55)⁵ ≈ 1.65×`; the `tidal_dimensional_calibration`
+multiplier was tuned against Io's integer-period configuration which
+in turn absorbs melt-enhanced effective `k₂/Q` not present in icy
+moons). A future P2.1 follow-up should either (a) move to a sub-day
+macro-step cadence so short-period moons aren't coarse-grained out,
+or (b) introduce per-moon dimensional scaling that doesn't share
+Io's empirical multiplier (separate constants for rocky vs icy
+substrates, calibrated against Enceladus / Europa published budgets
+respectively).
+
 ### P2.2 — Atmospheric escape uses dimensionless heuristics
 
 **Source:** astro L.
