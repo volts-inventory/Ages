@@ -805,12 +805,24 @@ fn cosmic_ray_multiplier_clamps_at_ten() {
         COSMIC_RAY_MULTIPLIER_CEILING,
         COSMIC_RAY_MULTIPLIER_CEILING
     );
-    // Floor check: a sub-1.0 flux (e.g. healthy dipole ≈ 0.91)
-    // should floor to 1, not zero out speciation.
+    // T8 — bidirectional floor check: a sub-1.0 flux (e.g. healthy
+    // dipole ≈ 0.91, or a strong-dipole world at flux ≈ 0.2) should
+    // truncate all the way down to `COSMIC_RAY_MULTIPLIER_FLOOR` (0),
+    // suppressing the per-tick speciation pulse rather than
+    // preserving a baseline 1-daughter rate. This is the suppression
+    // side of T8's bidirectional clamp.
     assert_eq!(
         clamp_cosmic_ray_multiplier(Real::from_ratio(91, 100)),
         COSMIC_RAY_MULTIPLIER_FLOOR as u64,
-        "0.91 should floor to {}",
+        "0.91 should floor to {} (T8 bidirectional suppression)",
+        COSMIC_RAY_MULTIPLIER_FLOOR
+    );
+    // And a negative-ish raw value (shouldn't happen physically but
+    // guards the clamp's lower edge) also pins at the floor.
+    assert_eq!(
+        clamp_cosmic_ray_multiplier(Real::ZERO),
+        COSMIC_RAY_MULTIPLIER_FLOOR as u64,
+        "0.0 should floor to {}",
         COSMIC_RAY_MULTIPLIER_FLOOR
     );
 

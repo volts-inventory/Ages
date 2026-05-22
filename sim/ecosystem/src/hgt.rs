@@ -135,7 +135,9 @@ impl LocalConditions {
 ///   trials while staying deterministic.
 /// - `cosmic_ray_multiplier`: scales the per-pair acquisition
 ///   probability (P1.2 magnetic-reversal coupling). Clamped to
-///   `[1, 10]` by [`clamp_cosmic_ray_multiplier`].
+///   `[0, 10]` by [`clamp_cosmic_ray_multiplier`] (T8 bidirectional —
+///   a strong dipole truncates the multiplier to zero, suppressing
+///   HGT trials).
 /// - `local`: the planet-wide-aggregate environmental conditions
 ///   used to evaluate plasmid sweep/loss. Production callers feed
 ///   the per-cell or cell-aggregate conditions from the biota

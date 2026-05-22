@@ -136,8 +136,10 @@ fn pa_per_atm() -> Real {
 /// `temp_delta_k` adjusts the read-out temperature (negative for
 /// ice age cold snap, zero otherwise). `extra_rad` adds to the
 /// baseline radiation flux (positive for solar flare; pre-
-/// multiplied by `cosmic_ray_ground_flux` at the call site so the
-/// magnetic-reversal window amplifies post-flare ground flux).
+/// multiplied by `cosmic_ray_ground_flux` at the call site,
+/// clamped to `[0.2, 5.0]` in T8 so a magnetic-reversal window
+/// amplifies post-flare ground flux while a strong stable dipole
+/// attenuates it).
 fn catastrophe_cell_conditions(
     state: &PhysicsState,
     planet: &Planet,
@@ -528,16 +530,24 @@ pub fn check_and_apply(
         // (advanced shielding / underground habitats / radiation
         // medicine).
         // Tolerance: solar flare boosts the cell's radiation flux by
-        // the flare magnitude, further amplified by the magnetic-
-        // reversal cosmic-ray ground-flux multiplier (Item 20) — a
-        // flare hitting during a reversal window pushes radiation-
-        // sensitive species well past their `radiation_max` while
-        // an extremophile with `radiation_max ≥ 5` still has plenty
-        // of envelope headroom and survives. `.max(ONE)` so the
-        // amplifier never *softens* a flare (the multiplier is sub-1
-        // outside reversal windows).
+        // the flare magnitude, modulated by the magnetic-reversal
+        // cosmic-ray ground-flux multiplier (Item 20) — a flare
+        // hitting during a reversal window pushes radiation-sensitive
+        // species well past their `radiation_max`, while a flare
+        // hitting under a strong stable dipole gets *attenuated* (the
+        // shielded surface sees less of the radiation pulse). T8: the
+        // raw flux is `1 / (dipole_strength + 0.1)`, so it spans
+        // ~[0.0, 10.0] across the dipole envelope. Clamp to
+        // `[0.2, 5.0]` — strong magnetospheres dampen by up to 5×
+        // (down to 0.2 of nominal), weak/reversing fields amplify by
+        // up to 5×. The 0.2 floor preserves a minimum flare effect
+        // even on heavily shielded worlds (the flare's particle
+        // spectrum isn't entirely magnetic-deflectable).
         let raw_frac = Real::from(SOLAR_FLARE_POP_LOSS);
-        let cosmic_amp = state.cosmic_ray_ground_flux().max(Real::ONE);
+        let cosmic_amp = state
+            .cosmic_ray_ground_flux()
+            .max(Real::from_ratio(2, 10))
+            .min(Real::from_int(5));
         let rad_boost = solar_flare_radiation_boost() * cosmic_amp;
         let flare_cell = densest_claimed_cell(civ).map_or(0, |c| c as usize);
         let cell_conds =
@@ -1393,6 +1403,94 @@ mod tests {
             ex_after > aq_after,
             "extremophile survivors must exceed aqueous survivors; \
              ex_after={ex_after:?}, aq_after={aq_after:?}",
+        );
+    }
+
+    /// T8 — strong magnetosphere dampens solar-flare damage. Two runs
+    /// of the same flare-firing planet (Weak magnetosphere class +
+    /// above-Earth luminosity, so `solar_flare_fires` triggers) at
+    /// the same tick, differing only in the physics-state
+    /// `dipole_strength`:
+    ///
+    /// * `dipole_strength = 10.0` → `cosmic_ray_ground_flux ≈ 0.099`
+    ///   → clamps to `0.2` → flare radiation is *attenuated*.
+    /// * `dipole_strength = 0.1` → `cosmic_ray_ground_flux ≈ 5.0`
+    ///   → clamps to `5.0` → flare radiation is *amplified* 5×.
+    ///
+    /// Same aqueous species (narrow radiation envelope) so the
+    /// tolerance gate registers the radiation differential as a
+    /// `fraction_lost` differential. Strong-dipole loss must be
+    /// strictly less than weak/reversing-dipole loss.
+    #[test]
+    fn strong_magnetosphere_suppresses_flare_damage() {
+        // Big civ so the 10-pop floor on `target` doesn't dominate.
+        let initial_pop = Pop::from_int(1_000_000);
+        let planet = flare_planet();
+        let flare_tick = 1567 * protocol::MONTHS_PER_YEAR;
+
+        // Aqueous species — narrow radiation envelope so the cosmic-
+        // amp differential bites on `match_score`.
+        let mut species = test_species();
+        species.tolerance = sim_species::ToleranceEnvelope::aqueous_default();
+
+        // ------------- Strong-dipole run (T8 suppression) -------------
+        let mut civ_strong = Civ::new(1, 0, initial_pop);
+        // Producer biomass override so the disease trigger doesn't
+        // preempt the flare path (matches the extremophile test).
+        civ_strong.producer_biomass = Real::from_int(100);
+        let mut state_strong = well_fed_state();
+        // Centre cell 0 on aqueous-envelope T/p so non-radiation
+        // axes don't accidentally bottleneck match_score.
+        state_strong.temperature_mut()[0] = Real::from_int(300);
+        state_strong.pressure_mut()[0] = Real::from_int(101_325);
+        // Strong dipole → flux ≈ 0.099 → clamps to 0.2 (5× suppression).
+        *state_strong.dipole_strength_mut() = Real::from_int(10);
+        let rec_strong = check_and_apply(
+            &mut civ_strong,
+            &mut state_strong,
+            &planet,
+            &species,
+            flare_tick,
+            None,
+        )
+        .expect("flare must fire on weak-magnetosphere-class planet at tick=18804");
+        assert_eq!(rec_strong.kind, CatastropheKind::SolarFlare);
+
+        // ------------- Reversal-window run (max amplification) --------
+        let mut civ_reversal = Civ::new(2, 0, initial_pop);
+        civ_reversal.producer_biomass = Real::from_int(100);
+        let mut state_reversal = well_fed_state();
+        state_reversal.temperature_mut()[0] = Real::from_int(300);
+        state_reversal.pressure_mut()[0] = Real::from_int(101_325);
+        // Deep-reversal dipole → flux ≈ 5.0 → clamps to 5.0 (5× amp).
+        *state_reversal.dipole_strength_mut() = Real::from_ratio(1, 10);
+        let rec_reversal = check_and_apply(
+            &mut civ_reversal,
+            &mut state_reversal,
+            &planet,
+            &species,
+            flare_tick,
+            None,
+        )
+        .expect("flare must fire under reversal-window dipole too");
+        assert_eq!(rec_reversal.kind, CatastropheKind::SolarFlare);
+
+        // The strong-magnetosphere run must take strictly less damage
+        // than the reversal-window run — the headline T8 observable.
+        assert!(
+            rec_strong.fraction_lost < rec_reversal.fraction_lost,
+            "T8: strong-dipole flare damage ({:?}) must be < reversal-window damage ({:?})",
+            rec_strong.fraction_lost,
+            rec_reversal.fraction_lost,
+        );
+        // And the surviving population must be strictly larger under
+        // the strong dipole.
+        assert!(
+            civ_strong.cohort.total() > civ_reversal.cohort.total(),
+            "T8: strong-dipole survivors must exceed reversal survivors; \
+             strong={:?}, reversal={:?}",
+            civ_strong.cohort.total(),
+            civ_reversal.cohort.total(),
         );
     }
 }
