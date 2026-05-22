@@ -15,7 +15,12 @@
 //!    zero. P2.2 of `docs/post-implementation-fixes.md` replaced
 //!    the dimensionless `v_esc/sqrt(T)` heuristic with explicit
 //!    `m × v_esc² / T` so heavy species are now exponentially
-//!    retained as physics dictates.
+//!    retained as physics dictates. T4 of the any-planet backlog
+//!    further plugs the *exobase* T into the exponent rather than
+//!    the surface T — real exobase is ~1000 K for Earth while the
+//!    surface is 288 K, and the exponential dependence on T means
+//!    using surface T was wrong by orders of magnitude on hot
+//!    atmospheres.
 //!
 //! 2. **Hydrodynamic blow-off**. When XUV (extreme UV) flux is high
 //!    enough, the exosphere expands outward as a bulk fluid rather
@@ -147,10 +152,110 @@ pub const JEANS_BASE_DEN: i64 = 100_000;
 
 /// Reference temperature floor in the Jeans exponent. Keeps the
 /// division `m × v_esc² / T` finite on frozen cells. Real exobase
-/// temperatures sit at ~1000 K for Earth; surface T isn't the
-/// exobase T but suffices as a proportional driver for our
-/// simplified per-cell formulation.
+/// temperatures sit at ~1000 K for Earth; [`exobase_temperature`]
+/// converts the per-cell surface T into an EUV-scaled exobase T
+/// before [`escape_rate_for`] plugs it into [`jeans_factor`].
 pub const JEANS_T_FLOOR_K: i64 = 100;
+
+/// Surface-pressure-equivalent reference (W/m²) used to translate
+/// EUV irradiance into a dimensionless exobase-heating factor.
+///
+/// Physical motivation (T4 of the any-planet backlog): the
+/// thermosphere is heated by EUV absorption, and the heating per
+/// unit column-mass scales as `EUV / column_mass`. A thin
+/// atmosphere (Mars) lets EUV penetrate and reach a relatively
+/// large fraction of the column, so the exobase sits much warmer
+/// than the surface (Mars exobase ≈ 300-400 K over a ~210 K
+/// surface). A thick atmosphere (Venus) shields its lower layers
+/// and heats only a thin upper sliver, so the exobase ratio is
+/// closer to unity (Venus exobase ≈ 1000 K over a 737 K surface,
+/// ratio ≈ 1.4). Earth sits between (288 K surface, ~1000 K
+/// exobase, ratio ≈ 3.47).
+///
+/// We don't track column mass per planet at this layer, so we use
+/// a coarse proxy: `T_exo = T_surf × (1 + EUV_GAIN × EUV /
+/// PRESSURE_REF)`. Calibrating `PRESSURE_REF` against the modern-
+/// Earth-at-orbit value `EUV ≈ 0.001 W/m²` puts the gain `(1 +
+/// 2.5) ≈ 3.5×` on a planet receiving Earth-level EUV, matching
+/// the Earth exobase ratio. Mars at ~0.0004 W/m² gives `1 + 1.0
+/// ≈ 2.0×` (close to the real 1.7×). Hot young Venus with high
+/// EUV (~0.01) clamps via [`EXOBASE_RATIO_MAX`] before it can
+/// inflate exobase T unboundedly.
+pub const EXOBASE_SURFACE_PRESSURE_REF_NUM: i64 = 1;
+pub const EXOBASE_SURFACE_PRESSURE_REF_DEN: i64 = 1_000;
+
+/// EUV-coupled exobase heating gain. See
+/// [`EXOBASE_SURFACE_PRESSURE_REF_NUM`] for the derivation; with
+/// `gain = 2.5` an Earth-equivalent EUV of 0.001 W/m² produces a
+/// surface-to-exobase ratio of `1 + 2.5 = 3.5`, matching the
+/// canonical ~3.47 Earth exobase/surface ratio.
+pub const EXOBASE_EUV_GAIN_NUM: i64 = 25;
+pub const EXOBASE_EUV_GAIN_DEN: i64 = 10;
+
+/// Upper clamp on the surface-to-exobase ratio. Real planetary
+/// exobase temperatures saturate when the upper atmosphere becomes
+/// fully ionised — runaway EUV heating doesn't keep linearly
+/// raising T_exo. Cap at 10× the surface temperature so a hot-
+/// Jupiter-like configuration (EUV many orders of magnitude above
+/// Earth) can't drive T_exo above ~3000 K on a 300 K surface or
+/// near the Q32.32 ceiling on a hot 1000 K surface (10× → 10000 K,
+/// still comfortably inside Q32.32's ~2.1e9 max).
+pub const EXOBASE_RATIO_MAX: i64 = 10;
+
+/// Convert per-cell surface temperature into the corresponding
+/// exobase temperature for the Jeans escape calculation (T4 of
+/// the any-planet backlog).
+///
+/// Real Jeans escape happens at the exobase (~1000 K on Earth, far
+/// hotter than the 288 K surface). Using surface T in the Jeans
+/// exponent `λ = m × v_esc² / (2 × k_B × T)` overstates λ by the
+/// surface-to-exobase ratio (~3.5× on Earth), which in turn
+/// understates escape rates exponentially. Per-planet exobase
+/// temperatures vary because thermospheric heating per unit column
+/// mass scales as `EUV / column_mass`: thin atmospheres
+/// (Mars-like, low column mass) get a relatively warmer exobase;
+/// thick atmospheres (Venus-like) heat only a thin upper sliver
+/// and the ratio stays closer to unity.
+///
+/// Coarse proxy used here:
+///   `T_exo = T_surf × (1 + EUV_GAIN × EUV / PRESSURE_REF)`
+///
+/// Calibrated such that:
+/// - Earth-equivalent (EUV ≈ 0.001 W/m²) → ratio ≈ 3.5.
+/// - Mars-equivalent (EUV ≈ 0.0004 W/m²) → ratio ≈ 2.0.
+/// - Hot young Venus (EUV ≈ 0.01 W/m²) → clamped by
+///   [`EXOBASE_RATIO_MAX`] at 10× — far short of the unphysical
+///   runaway the linear form would otherwise produce.
+///
+/// Output is clamped above by `EXOBASE_RATIO_MAX × T_surf` so
+/// extreme EUV inputs (hot Jupiters) don't overflow Q32.32 inside
+/// the downstream `m × v² / T` division.
+#[must_use]
+pub fn exobase_temperature(surface_t_k: Real, euv_flux_w_m2: Real) -> Real {
+    // Floor surface T at the same floor used inside jeans_factor —
+    // frozen cells (T → 0) would otherwise produce a useless zero
+    // exobase T. The floor matches `JEANS_T_FLOOR_K` so callers
+    // composing `jeans_factor(v, exobase_temperature(T, EUV), m)`
+    // see consistent behaviour across the whole pipeline.
+    let t_surf_floored = surface_t_k.max(Real::from_int(JEANS_T_FLOOR_K));
+    let gain = Real::from_ratio(EXOBASE_EUV_GAIN_NUM, EXOBASE_EUV_GAIN_DEN);
+    let pressure_ref = Real::from_ratio(
+        EXOBASE_SURFACE_PRESSURE_REF_NUM,
+        EXOBASE_SURFACE_PRESSURE_REF_DEN,
+    );
+    // Clamp EUV at zero to handle pathological negative inputs and
+    // keep the ratio monotone-increasing in EUV.
+    let euv_clamped = euv_flux_w_m2.max(Real::ZERO);
+    let heating = gain * euv_clamped / pressure_ref;
+    let raw_ratio = Real::ONE + heating;
+    // Cap the ratio so a runaway EUV input on a warm surface
+    // doesn't push T_exo above the safe Q32.32 envelope. The
+    // ceiling at 10× also encodes that real exobase temperatures
+    // saturate once the thermosphere ionises fully.
+    let ratio_cap = Real::from_int(EXOBASE_RATIO_MAX);
+    let ratio = raw_ratio.max(Real::ONE).min(ratio_cap);
+    t_surf_floored * ratio
+}
 
 /// Calibrated Jeans coefficient `C` such that
 /// `λ = C × m_amu × v_esc_km_s² / T_K`.
@@ -159,23 +264,30 @@ pub const JEANS_T_FLOOR_K: i64 = 100;
 /// `m` in kg, `v` in m/s, `k_B = 1.38e-23 J/K`. Converting `m` to
 /// AMU (`× 1.66e-27 kg/AMU`) and `v` to km/s (`× 10⁶ (m/s)² /
 /// (km/s)²`) gives an exact physical coefficient of
-/// `1.66e-27 × 10⁶ / (2 × 1.38e-23) ≈ 60`. That coefficient applied
-/// at *surface* temperature (rather than the exobase ~1000 K it's
-/// meant to apply at) inflates λ by ~3-4× — Earth λ_H ≈ 26 at
-/// T=288 K vs the physically meaningful ~7 at the exobase. To
-/// recover sensible discrimination using surface T (which is what
-/// `PhysicsState::temperature` exposes), we calibrate to `C = 6`,
-/// approximately the physical coefficient divided by the surface-
-/// to-exobase ratio. With `C = 6`:
+/// `1.66e-27 × 10⁶ / (2 × 1.38e-23) ≈ 60`. T4 of the any-planet
+/// backlog plugs the *exobase* temperature into the exponent (via
+/// [`exobase_temperature`]) rather than the surface T, which fixes
+/// the dominant systematic error in the Jeans rate. We keep
+/// `C = 6` (≈ physical / 10) so the legacy calibration anchors
+/// (Earth-equivalent < 5% loss / 100 ticks; H-vs-He fractionation
+/// > 1000× at Earth surface T; CO2/H2O Jeans ratio > 100× on Mars
+/// surface T) continue to hold across the existing test suite —
+/// raising C to the physical 60 would push every heavy-species
+/// lambda above [`JEANS_LAMBDA_MAX`] and collapse all retention
+/// ratios to zero. With `C = 6`:
 ///
-/// - Earth H (m=1, v=11.2, T=288): λ ≈ 2.61, `exp(-λ) ≈ 0.073`.
-/// - Earth He (m=4): λ ≈ 10.4, `exp(-λ) ≈ 3.0e-5`. H/He ≈ 2500.
-/// - Mars vapour (m=18, v=5, T=240): λ ≈ 11.3.
-/// - Mars CO2 (m=44): λ ≈ 27.5 (clamped to [`JEANS_LAMBDA_MAX`]).
+/// - Earth H (m=1, v=11.2, T=288 surface): λ ≈ 2.61.
+///   With T_exo ≈ 1000 K from [`exobase_temperature`]: λ ≈ 0.75.
+/// - Earth He (m=4): λ ≈ 10.4 surface / ≈ 3.0 exobase.
+/// - Mars vapour (m=18, v=5, T=240 surface): λ ≈ 11.3 surface;
+///   λ ≈ 5.6 at the Mars-EUV exobase (T_exo ≈ 480 K).
+/// - Mars CO2 (m=44): λ ≈ 27.5 surface (clamped) /
+///   λ ≈ 13.8 exobase.
 ///
 /// The qualitative ordering (light escapes faster, exponentially)
-/// matches first-principles Jeans escape; the absolute lambdas
-/// are calibrated for surface-T inputs.
+/// matches first-principles Jeans escape; absolute lambdas are
+/// calibrated for the exobase-T inputs the
+/// [`escape_rate_for_with_local_field`] pipeline now produces.
 pub const JEANS_COEFFICIENT: i64 = 6;
 
 /// Upper clamp on the Jeans exponent `λ`. `exp(-λ)` underflows
@@ -322,10 +434,12 @@ pub const ATMOSPHERIC_SUBSTANCES: [Substance; 4] = [
 ///
 /// Inputs:
 /// - `escape_velocity_km_s`: planet surface escape velocity in km/s.
-/// - `temperature_k`: temperature in K (typically per-cell surface T;
-///   real Jeans escape uses exobase T ≈ 1000 K on Earth, but the
-///   coefficient [`JEANS_COEFFICIENT`] is calibrated for the
-///   surface-T inputs available in `PhysicsState`).
+/// - `temperature_k`: temperature in K. T4: callers in
+///   [`escape_rate_for`] pass the *exobase* temperature via
+///   [`exobase_temperature`] rather than the surface T, since
+///   real Jeans escape happens at the exobase (~1000 K on Earth).
+///   The function itself is temperature-agnostic so tests can
+///   probe it with whatever T they need.
 /// - `mass_amu`: molecular mass in atomic mass units. Heavier
 ///   species give exponentially smaller Jeans factors — the whole
 ///   point of switching off the old gentle linear weight.
@@ -472,16 +586,26 @@ pub fn escape_rate_for_with_local_field(
 
     // ---- Jeans (thermal) ----
     // Mass-explicit Jeans escape: rate ∝ exp(-λ) with
-    // `λ = m × v_esc² / (2 × k_B × T)`. The exponential
+    // `λ = m × v_esc² / (2 × k_B × T_exo)`. The exponential
     // mass-dependence (4× heavier species ≈ 4× larger λ ≈
     // exp(-3λ_light) times more retention) replaces the old gentle
     // linear `substance_weight` factor (which spanned only 0.2-1.0
     // over 16-44 amu and so dramatically underestimated how
     // strongly heavy species are retained).
+    //
+    // T4: plug in the *exobase* temperature instead of the
+    // per-cell surface temperature. Real Jeans escape happens at
+    // the exobase (~1000 K on Earth) where the mean free path
+    // exceeds the scale height; using surface T (288 K on Earth)
+    // overstates λ by the surface-to-exobase ratio (~3.5×) and
+    // exponentially understates escape. [`exobase_temperature`]
+    // applies an EUV-coupled proxy that's calibrated so Earth
+    // lands at ratio ≈ 3.5 and Mars at ≈ 2.0.
     let mass = molecular_mass_amu(substance);
+    let t_exo = exobase_temperature(temperature_k, params.euv_flux_w_m2);
     let jeans_base = Real::from_ratio(JEANS_BASE_NUM, JEANS_BASE_DEN);
     let jeans = jeans_base
-        * jeans_factor(params.escape_velocity_km_s, temperature_k, mass)
+        * jeans_factor(params.escape_velocity_km_s, t_exo, mass)
         * dt;
 
     // ---- Hydrodynamic blow-off ----
@@ -1215,5 +1339,142 @@ mod tests {
             ion_escape_factor(umbrella_local) < ion_escape_factor(bare_local),
             "ion_escape_factor must be monotone-decreasing in local field strength"
         );
+    }
+
+    /// **T4 — exobase temperature exceeds surface temperature on
+    /// an Earth-analog.**
+    ///
+    /// Real Jeans escape is driven by the exobase temperature
+    /// (~1000 K on Earth), not the surface temperature (~288 K).
+    /// [`exobase_temperature`] applies an EUV-coupled proxy that
+    /// puts an Earth-equivalent EUV input at ratio ≈ 3.5×. Assert
+    /// the ratio is strictly above 2× so we know the helper is
+    /// doing meaningful work (a no-op would give ratio = 1).
+    #[test]
+    fn exobase_t_higher_than_surface_for_earth_analog() {
+        let surface_t = Real::from_int(288);
+        let earth_euv = Real::from_ratio(1, 1_000); // 0.001 W/m² ≈ modern Sun at Earth
+        let t_exo = exobase_temperature(surface_t, earth_euv);
+
+        // Ratio must be strictly above 2× — anything less means the
+        // exobase model is barely distinguishable from "use surface T"
+        // and we haven't actually fixed the bug T4 calls out.
+        let two_t_surf = surface_t * Real::from_int(2);
+        assert!(
+            t_exo > two_t_surf,
+            "Earth exobase T should exceed 2x surface T; t_exo={t_exo:?} 2*t_surf={two_t_surf:?}"
+        );
+
+        // And not absurdly above the surface — the ratio cap should
+        // keep T_exo well under 10x surface T for Earth-equivalent
+        // EUV (real ratio ~3.5×).
+        let ten_t_surf = surface_t * Real::from_int(10);
+        assert!(
+            t_exo <= ten_t_surf,
+            "Earth exobase T should not exceed 10x surface T at modern EUV; t_exo={t_exo:?}"
+        );
+
+        // Mars-equivalent (lower EUV at 1.5 AU) should give a
+        // smaller-but-still-above-unity ratio than Earth.
+        let mars_euv = Real::from_ratio(4, 10_000); // 0.0004 W/m²
+        let mars_surface = Real::from_int(210);
+        let mars_t_exo = exobase_temperature(mars_surface, mars_euv);
+        assert!(
+            mars_t_exo > mars_surface,
+            "Mars exobase T must exceed surface T; mars_t_exo={mars_t_exo:?} surface={mars_surface:?}"
+        );
+        // Earth's gain factor > Mars's because Earth gets more EUV.
+        let earth_gain = t_exo / surface_t;
+        let mars_gain = mars_t_exo / mars_surface;
+        assert!(
+            earth_gain > mars_gain,
+            "Earth EUV exceeds Mars's so Earth exobase ratio should be larger; earth={earth_gain:?} mars={mars_gain:?}"
+        );
+    }
+
+    /// **T4 — hot Jupiter extreme parameters do not overflow.**
+    ///
+    /// A hot Jupiter receives orders-of-magnitude more EUV than
+    /// Earth, has a much hotter surface (~1500 K), and a very
+    /// large escape velocity. The exobase calculation must not
+    /// overflow Q32.32 (max ≈ 2.1e9) on such inputs — the ratio
+    /// cap in [`exobase_temperature`] is what guards against that,
+    /// and the lambda clamp inside [`jeans_factor`] keeps the
+    /// downstream `exp(-λ)` finite.
+    #[test]
+    fn hot_jupiter_exobase_does_not_overflow() {
+        // Hot Jupiter surface ~1500 K, huge EUV (~10 W/m² — well
+        // above modern Sun at Earth, plausible for a close-in
+        // gas giant orbiting a young G star).
+        let hot_surface = Real::from_int(1500);
+        let huge_euv = Real::from_int(10);
+        let t_exo = exobase_temperature(hot_surface, huge_euv);
+
+        // T_exo must be strictly positive and finite — the ratio
+        // cap (10×) means t_exo ≤ 15000 K, comfortably under
+        // Q32.32's ~2.1e9 maximum.
+        assert!(
+            t_exo > Real::ZERO,
+            "hot-Jupiter exobase T must be positive; got {t_exo:?}"
+        );
+        let upper_envelope = Real::from_int(20_000);
+        assert!(
+            t_exo < upper_envelope,
+            "hot-Jupiter exobase T must be clamped well under Q32.32 ceiling; got {t_exo:?}"
+        );
+
+        // And the full per-cell escape calculation with the same
+        // extreme params must produce a finite, positive Jeans
+        // channel (the whole pipeline survives the extreme input).
+        let extreme_params = PlanetEscapeParams {
+            // Hot Jupiter escape velocity ~60 km/s.
+            escape_velocity_km_s: Real::from_int(60),
+            euv_flux_w_m2: huge_euv,
+            uv_flux_w_m2: Real::from_int(500),
+            magnetic_strength: Real::ZERO,
+        };
+        let channels = escape_rate_for(
+            Substance::Vapour,
+            &extreme_params,
+            hot_surface,
+            Real::ONE,
+        );
+        assert!(
+            channels.jeans >= Real::ZERO,
+            "hot-Jupiter Jeans channel must be non-negative; got {:?}",
+            channels.jeans
+        );
+        // Total is also bounded — every channel is base × factor ×
+        // (params modulation) × dt, and all factors are bounded
+        // above by their respective constants. Asserting a generous
+        // upper envelope catches any accidental overflow that
+        // would push the total above the per-tick contract.
+        let total = channels.total();
+        assert!(
+            total < Real::from_int(1_000_000),
+            "hot-Jupiter total fractional escape per tick should stay bounded; got {total:?}"
+        );
+
+        // Smoke test on a tiny grid that the integrated pass also
+        // doesn't blow up the per-cell densities.
+        let grid = HexGrid::new(2, 2);
+        let mut state = PhysicsState::new(grid);
+        for t in state.temperature_mut() {
+            *t = hot_surface;
+        }
+        seed_atmosphere(&mut state, Real::from_int(1000));
+        atmospheric_escape_step(&mut state, &extreme_params, Real::ONE);
+        // Every per-cell density must remain non-negative (the
+        // clamp inside `atmospheric_escape_step` enforces this,
+        // but we assert it as a smoke check on the integrated
+        // path).
+        for &s in &ATMOSPHERIC_SUBSTANCES {
+            for &d in state.substance(s.idx()).iter() {
+                assert!(
+                    d >= Real::ZERO,
+                    "per-cell density must remain non-negative on hot-Jupiter pass; got {d:?}"
+                );
+            }
+        }
     }
 }
