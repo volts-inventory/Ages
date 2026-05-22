@@ -10,13 +10,30 @@ use sim_core::{run, RunConfig};
 use sim_events::{
     is_highlight_event, FilterEmitter, JsonLinesEmitter, TeeEmitter, ThrottledEmitter,
 };
-use sim_report::{TempUnit, ViewportConfig, ViewportEmitter};
+use sim_report::{
+    replay_narration, NarratingEmitter, TempUnit, ViewportConfig, ViewportEmitter,
+};
 use std::fs::File;
 use std::io::BufWriter;
+use std::path::PathBuf;
 use std::time::Duration;
 
 fn main() -> Result<()> {
     let args = parse_args()?;
+
+    // `--replay-narration` short-circuits the whole sim path: we
+    // don't open a fresh event log, we don't spin up RunConfig, we
+    // just read the supplied NDJSON log and narrate it line-by-line
+    // to stdout. The post-run report continues to live behind
+    // `ages-report`; this binary only owns the runtime narration
+    // surface.
+    if let Some(path) = args.replay_narration.as_deref() {
+        let stdout = std::io::stdout();
+        let written = replay_narration(path, stdout.lock())
+            .with_context(|| format!("replay narration failed for {}", path.display()))?;
+        eprintln!("ages: narrated {written} events from {}", path.display());
+        return Ok(());
+    }
 
     let file = File::create(&args.out)
         .with_context(|| format!("could not create event log at {}", args.out))?;
@@ -32,6 +49,22 @@ fn main() -> Result<()> {
         cfg.grid_height = h;
     }
     let throttle = Duration::from_millis(args.tick_rate_ms);
+
+    // `--narration` short-circuits the verbosity matrix: it owns
+    // stdout for prose lines and cohabiting with `--cli=all` /
+    // highlights / viewport would interleave NDJSON or ANSI frames
+    // mid-sentence. The file emitter still receives the full event
+    // stream. Throttling the narration sink would slow the inner
+    // file write too (the inner emitter sits *inside* the narrator),
+    // so the sink is unthrottled here — narration paces itself
+    // naturally on long runs because most events fire once per
+    // structural transition rather than per tick.
+    if args.narration {
+        let stdout = std::io::stdout();
+        let mut emitter = NarratingEmitter::new(file_emitter, stdout.lock());
+        run(&cfg, &mut emitter)?;
+        return Ok(());
+    }
 
     match args.cli {
         CliVerbosity::Quiet => {
@@ -124,6 +157,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+// Adding `narration` pushed `Args` past the pedantic 3-bool ceiling
+// for option-bag structs. The bag is internal to `main.rs` so the
+// clippy guidance ("consider a state machine / enum") doesn't apply
+// — every flag is independently toggled by the user from the CLI.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 struct Args {
     seed: u64,
@@ -168,6 +206,17 @@ struct Args {
     /// Viewport temperature unit. Default `Fahrenheit`.
     /// CLI flag `--temperature-unit f|c|k`.
     temperature_unit: TempUnit,
+    /// `--narration`: stream human-readable narration to stdout
+    /// as the sim runs. Wraps the file emitter so the NDJSON log
+    /// still receives the canonical stream. Mutually exclusive with
+    /// `--cli=all|highlights|viewport*` (we silently force them
+    /// into a side-channel since narration owns stdout).
+    narration: bool,
+    /// `--replay-narration <path>`: skip the sim run entirely and
+    /// narrate a previously-recorded NDJSON event log to stdout.
+    /// Mutually exclusive with `--narration` (a freshly running sim
+    /// has nothing to replay).
+    replay_narration: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -222,6 +271,8 @@ fn parse_args() -> Result<Args> {
     let mut grid_width: Option<u32> = Some(36);
     let mut grid_height: Option<u32> = Some(30);
     let mut temperature_unit: TempUnit = TempUnit::Fahrenheit;
+    let mut narration: bool = false;
+    let mut replay_narration_path: Option<PathBuf> = None;
 
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -318,12 +369,47 @@ fn parse_args() -> Result<Args> {
                     other => anyhow::bail!("--temperature-unit must be f|c|k, got {other:?}"),
                 };
             }
+            "--narration" => {
+                narration = true;
+            }
+            "--replay-narration" => {
+                let v = iter.next().context("--replay-narration needs a path")?;
+                replay_narration_path = Some(PathBuf::from(v));
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
             }
             other => anyhow::bail!("unknown argument: {other}"),
         }
+    }
+
+    if narration && replay_narration_path.is_some() {
+        anyhow::bail!("--narration and --replay-narration are mutually exclusive");
+    }
+
+    // `--replay-narration` skips the sim entirely; seed / ticks
+    // aren't required for that path. Return early with placeholder
+    // values for the never-read seed/ticks slots so the rest of
+    // `main` only branches on `replay_narration.is_some()`.
+    if replay_narration_path.is_some() {
+        return Ok(Args {
+            seed: 0,
+            ticks: 0,
+            out,
+            cli,
+            tick_rate_ms,
+            frame_every_ticks,
+            no_color,
+            viewport_planet_card,
+            viewport_log_lines,
+            viewport_compact,
+            grid_width,
+            grid_height,
+            temperature_unit,
+            narration,
+            replay_narration: replay_narration_path,
+        });
     }
 
     let resolved_seed = seed.context("--seed required")?;
@@ -349,6 +435,8 @@ fn parse_args() -> Result<Args> {
         grid_width,
         grid_height,
         temperature_unit,
+        narration,
+        replay_narration: replay_narration_path,
     })
 }
 
@@ -403,7 +491,17 @@ fn print_help() {
              --grid-height <u32>    override sim grid height (default 30).\n  \
              --temperature-unit f|c|k  viewport mode: temperature unit shown in the\n  \
                                     planet card. Default `f` (Fahrenheit). Internal\n  \
-                                    physics is always Kelvin regardless.\n\
+                                    physics is always Kelvin regardless.\n  \
+             --narration            stream human-readable narration lines to stdout\n  \
+                                    as the sim runs (one sentence per event). The\n  \
+                                    NDJSON --out file still receives the full event\n  \
+                                    stream; this flag is purely additive on the\n  \
+                                    terminal side. Overrides --cli (narration owns\n  \
+                                    stdout for the duration of the run).\n  \
+             --replay-narration <path>  skip the sim entirely; read a previously-\n  \
+                                    recorded NDJSON event log at <path> and emit\n  \
+                                    narration lines to stdout retroactively. Mutually\n  \
+                                    exclusive with --narration.\n\
          \n\
          Each seed yields a different planet. Try a few seeds — most\n\
          produce coherent worlds, some are inhospitable. Recognition\n\
