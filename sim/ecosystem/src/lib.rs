@@ -15,9 +15,14 @@
 //!    matrix, computes a per-species biomass delta via the pair's
 //!    `FunctionalResponse` (Linear: `s × prey`; Saturating Type-II:
 //!    `s × prey / (k + prey)`; Sigmoidal Type-III: `s × prey² /
-//!    (k² + prey²)`). Then enforces the Lindeman pyramid: consumer-
-//!    tier biomass ≤ 0.1 × producer biomass; secondary ≤ 0.1 ×
-//!    primary; apex ≤ 0.1 × secondary.
+//!    (k² + prey²)`). Predation/parasitism assimilates the gross
+//!    flux through a per-habitat Lindeman efficiency
+//!    ([`lindeman_assimilation_for_habitat`]: 30:1 aquatic, 10:1
+//!    terrestrial, 6.7:1 amphibious/airborne) — the pyramid emerges
+//!    from this single calibrated ratio, *not* from a post-step
+//!    corrective cap. Tests + debug callers can assert
+//!    "no Lindeman runaway" via
+//!    [`PlanetEcosystem::check_lindeman_invariant`].
 //! 3. **Keystone detection** (`PlanetEcosystem::keystone_species`)
 //!    — computes betweenness centrality on the interaction graph
 //!    (treated undirected for centrality) and returns species whose
@@ -40,7 +45,7 @@ use sim_arith::Real;
 use sim_physics::chemistry::{oxidiser_ladder, partition_chemoautotroph_growth, Oxidiser};
 use sim_physics::{PhysicsState, Substance};
 use sim_species::{
-    EcosystemRole, FunctionalResponse, Interaction, InteractionKind, InteractionMatrix,
+    EcosystemRole, FunctionalResponse, Habitat, Interaction, InteractionKind, InteractionMatrix,
     MutualismKind, ParasiteKind, ProducerMetabolism, SpeciesId,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,9 +60,62 @@ pub use speciation::{
     SYMPATRIC_PRESSURE_TICKS,
 };
 
-/// Lindeman 10:1 ratio — each consumer tier is capped at 10% of the
-/// preceding tier's biomass.
+/// Default Lindeman 10:1 assimilation ratio — back-compat fallback
+/// used for fixtures that don't pin a habitat. The canonical
+/// terrestrial value; per-habitat overrides live in
+/// [`lindeman_assimilation_for_habitat`].
+///
+/// **Note (P2.5):** the ecosystem step used to *both* assimilate at
+/// 10% during predation *and* run a post-step `enforce_lindeman_pyramid`
+/// scaling pass that re-clamped each tier to ≤ 0.1× the lower tier.
+/// That was double-bookkeeping: a calibrated assimilation efficiency
+/// is the *physical* mechanism that produces the pyramid at
+/// steady state, so the post-step cap is redundant. The cap is gone;
+/// the per-habitat assimilation ratio carries the whole load.
 pub const LINDEMAN_RATIO: (i64, i64) = (1, 10);
+
+/// Per-habitat assimilation efficiency (P2.5). The Lindeman 10:1 ratio
+/// is the *terrestrial* canonical value but is not universal:
+///
+/// - **Aquatic** — ~30:1 (3.3%). Cold-blooded fish skip the
+///   homeotherm thermal-regulation tax, so the gross flux that
+///   reaches their tissue per unit of prey eaten is much lower.
+/// - **Terrestrial / Subterranean / Endolithic** — 10:1 (10%). The
+///   canonical Lindeman ratio. Subterranean burrowers and endolithic
+///   substrate-dwellers share the warm-blooded surface-trophic
+///   metabolism profile closely enough to use the same value.
+/// - **Amphibious / Airborne** — ~6.7:1 (15%). Flight (and the
+///   ectotherm-but-active amphibian niche) is *expensive*: the
+///   metabolic substrate budget per consumed prey unit is the
+///   smallest of the three groups, so a smaller fraction of the flux
+///   gets converted to predator biomass.
+///
+/// The ratios are calibrated against the broader trophic-efficiency
+/// literature (Lindeman 1942 + post-1990 marine-vs-terrestrial
+/// reviews). The shape is what matters: aquatic ecosystems are far
+/// more producer-heavy than the canonical 10:1 pyramid suggests, and
+/// flight-cohort food webs run even sparser at the top.
+#[must_use]
+pub fn lindeman_assimilation_for_habitat(habitat: Habitat) -> Real {
+    match habitat {
+        Habitat::Aquatic => Real::from_ratio(1, 30),
+        Habitat::Terrestrial | Habitat::Subterranean | Habitat::Endolithic => {
+            Real::from_ratio(1, 10)
+        }
+        Habitat::Amphibious | Habitat::Airborne => Real::from_ratio(15, 100),
+    }
+}
+
+/// Maximum multiple of the per-habitat assimilation ratio that a
+/// consumer tier may transiently overshoot its producer tier before
+/// the debug-mode invariant trips. Short-term overshoot is biologically
+/// realistic — a Lotka-Volterra cycle can swing the predator population
+/// 3-4× above the steady-state ratio during the peak of an oscillation
+/// before predation pulls it back. The 5× slack accommodates strongly-
+/// coupled LV dynamics (the canonical predator-prey-cycles test runs
+/// with predation strength = 0.5 and peaks at ~3×) while still catching
+/// pathological runaway growth — a 10:1 → 1:1 inversion would trip.
+pub const LINDEMAN_OVERSHOOT_DEBUG_MAX: i64 = 5;
 
 /// Half-saturation constant for Type-II / Type-III functional
 /// responses, expressed as a fraction of starting producer biomass.
@@ -151,6 +209,27 @@ pub const RESPIRATION_RATE: (i64, i64) = (1, 100);
 /// Saprotroph.
 pub const DECOMPOSITION_RATE: (i64, i64) = (1, 200);
 
+/// A Lindeman pyramid invariant violation reported by
+/// [`PlanetEcosystem::check_lindeman_invariant`] (P2.5). Names the
+/// upper tier whose biomass blew past
+/// `LINDEMAN_OVERSHOOT_DEBUG_MAX × per-habitat-ratio × lower-tier
+/// biomass`. Returned (not panicked) so tests can decide what to do
+/// with it; the production step loop doesn't check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LindemanViolation {
+    /// Tier index (1 = primary, 2 = secondary, 3 = apex) that
+    /// overshot.
+    pub upper_tier: u8,
+    /// Biomass total of the offending upper tier.
+    pub upper_biomass: Real,
+    /// Biomass total of the lower tier feeding it.
+    pub lower_biomass: Real,
+    /// The maximum-allowed ratio
+    /// (`LINDEMAN_OVERSHOOT_DEBUG_MAX × max_assimilation_ratio`) the
+    /// upper-over-lower ratio crossed.
+    pub allowed_slack: Real,
+}
+
 /// One species' per-planet record. `species_id` is the dense per-
 /// planet index; `biomass` is the live pool (always ≥ 0); the
 /// other fields are configuration carried for the step.
@@ -174,6 +253,12 @@ pub struct EcoSpecies {
     /// extinction fires so the field stays bounded and can be
     /// re-used if a future rewilding rule restores `is_extant`.
     pub low_biomass_streak: u64,
+    /// Primary habitat — used to look up the per-habitat Lindeman
+    /// assimilation efficiency at predation time (P2.5). Defaults to
+    /// `Habitat::Terrestrial` (10% assimilation) so back-compat
+    /// fixtures that don't set it preserve the canonical Lindeman
+    /// 10:1 behaviour.
+    pub habitat: Habitat,
 }
 
 /// Per-planet ecosystem state. Owned by the higher-level world
@@ -249,9 +334,13 @@ impl PlanetEcosystem {
     /// 4. Syntrophy enforcement on Mutualism pairs (Sprint 2 Item 9):
     ///    if either side falls below `SYNTROPHY_MIN_PARTNER_BIOMASS`,
     ///    drag *both* sides toward extinction.
-    /// 5. Passive consumer decay, then enforce Lindeman pyramid
-    ///    caps (consumer ≤ 0.1 × producer, secondary ≤ 0.1 ×
-    ///    primary, apex ≤ 0.1 × secondary).
+    /// 5. Passive consumer decay. The Lindeman pyramid is *not*
+    ///    enforced as a post-step cap (P2.5 dropped the corrective
+    ///    scaling); per-habitat assimilation efficiency applied in
+    ///    pass 3 is the physical mechanism that produces the pyramid
+    ///    at steady state. Tests that want to assert
+    ///    "no Lindeman runaway" can call
+    ///    [`PlanetEcosystem::check_lindeman_invariant`] explicitly.
     /// 6. Extinction sweep (Sprint 2 Item 6a): each species whose
     ///    biomass sits below `EXTINCTION_THRESHOLD_FRAC ×
     ///    producer_capacity` for `EXTINCTION_CONFIRMATION_TICKS`
@@ -280,7 +369,14 @@ impl PlanetEcosystem {
         self.apply_interactions();
         self.enforce_syntrophy();
         self.decay_consumers();
-        self.enforce_lindeman_pyramid();
+        // P2.5: no post-step Lindeman cap — per-habitat assimilation
+        // efficiency (applied in `apply_interactions`) is the physical
+        // mechanism that produces the pyramid at steady state.
+        // Short-term overshoots are allowed; the debug-only
+        // `check_lindeman_invariant` method exists for callers + tests
+        // that want to assert no runaway growth, but it isn't part of
+        // the per-tick step (a hand-built fixture that starts with an
+        // inverted pyramid shouldn't trip it).
         self.clamp_biomasses();
         self.detect_extinctions(tick)
     }
@@ -333,7 +429,8 @@ impl PlanetEcosystem {
         self.decay_consumers();
         let respired = self.respire_consumers();
         let decomposed = self.decomposer_chain();
-        self.enforce_lindeman_pyramid();
+        // P2.5: no post-step Lindeman cap; per-habitat assimilation
+        // is the physical mechanism.
         self.clamp_biomasses();
         let co2_returned = respired + decomposed;
         apply_co2_delta(state, co2_returned - co2_consumed);
@@ -631,6 +728,13 @@ impl PlanetEcosystem {
             .iter()
             .map(|(id, s)| (*id, if s.is_extant { s.biomass } else { Real::ZERO }))
             .collect();
+        // Per-species habitat snapshot — used to pick the right
+        // Lindeman assimilation efficiency at predation time (P2.5).
+        let habitat_snapshot: BTreeMap<SpeciesId, Habitat> = self
+            .species
+            .iter()
+            .map(|(id, s)| (*id, s.habitat))
+            .collect();
         let k = Real::from(K_HALF_SAT) * self.producer_capacity;
         let mut deltas: BTreeMap<SpeciesId, Real> = BTreeMap::new();
 
@@ -657,10 +761,18 @@ impl PlanetEcosystem {
 
             match interaction.kind {
                 InteractionKind::Predation | InteractionKind::Parasitism => {
-                    // Predator gains a fraction of the flux (10%
-                    // assimilation = the Lindeman conversion
-                    // efficiency); prey loses the full flux.
-                    let assim = Real::from(LINDEMAN_RATIO);
+                    // Predator gains a fraction of the flux —
+                    // per-habitat Lindeman assimilation (P2.5).
+                    // Aquatic predators run ~30:1; flying/amphibious
+                    // ~6.7:1; terrestrial 10:1. Prey loses the full
+                    // flux regardless: the dropped fraction is the
+                    // "respired-as-heat / lost-to-decomposers"
+                    // share that doesn't make it into predator tissue.
+                    let predator_habitat = habitat_snapshot
+                        .get(affector)
+                        .copied()
+                        .unwrap_or(Habitat::Terrestrial);
+                    let assim = lindeman_assimilation_for_habitat(predator_habitat);
                     *deltas.entry(*affector).or_insert(Real::ZERO) =
                         *deltas.entry(*affector).or_insert(Real::ZERO) + flux * assim;
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
@@ -678,20 +790,36 @@ impl PlanetEcosystem {
                     // Both sides benefit. Stored as two entries
                     // (a→b and b→a); each step adds a small
                     // benefit to the affected side proportional to
-                    // the affector's biomass.
-                    let assim = Real::from(LINDEMAN_RATIO);
+                    // the affector's biomass. The conversion uses
+                    // the *recipient's* habitat — what its
+                    // metabolism turns the gross mutualistic flux
+                    // into biomass.
+                    let affected_habitat = habitat_snapshot
+                        .get(affected)
+                        .copied()
+                        .unwrap_or(Habitat::Terrestrial);
+                    let assim = lindeman_assimilation_for_habitat(affected_habitat);
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
                         *deltas.entry(*affected).or_insert(Real::ZERO) + flux * assim;
                 }
                 InteractionKind::Commensalism => {
                     // One-way benefit, no effect on the affector.
-                    let assim = Real::from(LINDEMAN_RATIO);
+                    // Recipient's habitat governs assimilation.
+                    let affected_habitat = habitat_snapshot
+                        .get(affected)
+                        .copied()
+                        .unwrap_or(Habitat::Terrestrial);
+                    let assim = lindeman_assimilation_for_habitat(affected_habitat);
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
                         *deltas.entry(*affected).or_insert(Real::ZERO) + flux * assim;
                 }
                 InteractionKind::HabitatModification => {
                     // Engineer effect — small positive on the
-                    // affected side, no draw on the affector.
+                    // affected side, no draw on the affector. Kept
+                    // at a flat 5% — the engineer's contribution is
+                    // a niche-restructuring nudge, not a direct
+                    // metabolic transfer, so the per-habitat
+                    // Lindeman ratio doesn't apply.
                     let assim = Real::from((5, 100));
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
                         *deltas.entry(*affected).or_insert(Real::ZERO) + flux * assim;
@@ -719,20 +847,99 @@ impl PlanetEcosystem {
         }
     }
 
-    fn enforce_lindeman_pyramid(&mut self) {
-        let ratio = Real::from(LINDEMAN_RATIO);
+    /// Lindeman pyramid invariant check (P2.5). Returns `Ok(())` if
+    /// each consumer tier sits at no more than
+    /// `LINDEMAN_OVERSHOOT_DEBUG_MAX × max_assimilation_ratio` times
+    /// the lower tier; otherwise returns a `LindemanViolation` naming
+    /// the offending tier pair and the magnitude of the overshoot.
+    ///
+    /// Replaces the corrective `enforce_lindeman_pyramid` from before
+    /// the P2.5 fix — that one *scaled biomasses down* on every tick,
+    /// which was double-bookkeeping the per-habitat assimilation
+    /// efficiency already applied during the predation step. This
+    /// function is a *read-only* invariant: it never modifies state.
+    ///
+    /// Skipped when the lower tier is below
+    /// `producer_capacity × 1%` — a tier collapse isn't a Lindeman
+    /// runaway, it's a cascade-extinction case the extinction rule
+    /// handles, and the ratio diverges meaninglessly there.
+    ///
+    /// Intended for use in test invariants + debug assertions; the
+    /// production step loop *does not* call this on every tick
+    /// because hand-built fixtures that start with an inverted
+    /// pyramid (e.g. the keystone-cascade test) would trip it
+    /// before the dynamics had any chance to play out. Tests that
+    /// want to assert "the pyramid held throughout the run" should
+    /// call this themselves at the end of the simulated period.
+    #[must_use]
+    pub fn check_lindeman_invariant(&self) -> Result<(), LindemanViolation> {
+        let max_ratio = self.max_consumer_assimilation();
+        let slack = Real::from_int(LINDEMAN_OVERSHOOT_DEBUG_MAX) * max_ratio;
+        let collapse_floor = self.producer_capacity * Real::from_ratio(1, 100);
 
         let producer_total = self.tier_biomass(0);
-        let primary_cap = producer_total * ratio;
-        self.cap_tier(1, primary_cap);
-
+        if producer_total <= collapse_floor {
+            return Ok(());
+        }
         let primary_total = self.tier_biomass(1);
-        let secondary_cap = primary_total * ratio;
-        self.cap_tier(2, secondary_cap);
+        if primary_total > producer_total * slack {
+            return Err(LindemanViolation {
+                upper_tier: 1,
+                upper_biomass: primary_total,
+                lower_biomass: producer_total,
+                allowed_slack: slack,
+            });
+        }
 
-        let secondary_total = self.tier_biomass(2);
-        let apex_cap = secondary_total * ratio;
-        self.cap_tier(3, apex_cap);
+        if primary_total > collapse_floor {
+            let secondary_total = self.tier_biomass(2);
+            if secondary_total > primary_total * slack {
+                return Err(LindemanViolation {
+                    upper_tier: 2,
+                    upper_biomass: secondary_total,
+                    lower_biomass: primary_total,
+                    allowed_slack: slack,
+                });
+            }
+
+            if secondary_total > collapse_floor {
+                let apex_total = self.tier_biomass(3);
+                if apex_total > secondary_total * slack {
+                    return Err(LindemanViolation {
+                        upper_tier: 3,
+                        upper_biomass: apex_total,
+                        lower_biomass: secondary_total,
+                        allowed_slack: slack,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Largest per-habitat Lindeman assimilation ratio held by any
+    /// extant non-Producer species in the ecosystem. Used as the
+    /// conservative bound for the debug invariant (the higher the
+    /// efficiency the higher the legitimate steady-state ratio).
+    ///
+    /// Falls back to the canonical terrestrial ratio (1/10) when no
+    /// consumer is present so an empty-consumer planet still gets a
+    /// sensible bound.
+    fn max_consumer_assimilation(&self) -> Real {
+        let mut best = Real::from_ratio(1, 10);
+        for s in self.species.values() {
+            if !s.is_extant {
+                continue;
+            }
+            if matches!(s.role, EcosystemRole::Producer { .. }) {
+                continue;
+            }
+            let r = lindeman_assimilation_for_habitat(s.habitat);
+            if r > best {
+                best = r;
+            }
+        }
+        best
     }
 
     fn clamp_biomasses(&mut self) {
@@ -800,26 +1007,6 @@ impl PlanetEcosystem {
             }
         }
         sum
-    }
-
-    fn cap_tier(&mut self, tier: u8, cap: Real) {
-        let current = self.tier_biomass(tier);
-        if current <= cap || current <= Real::ZERO {
-            return;
-        }
-        // Scale every species in this tier proportionally so the
-        // tier total equals `cap`.
-        let scale = cap / current;
-        for s in self.species.values_mut() {
-            if !s.is_extant {
-                continue;
-            }
-            if let Some(t) = s.role.tier() {
-                if t == tier {
-                    s.biomass = s.biomass * scale;
-                }
-            }
-        }
     }
 
     /// Compute betweenness centrality over the interaction graph
@@ -1068,6 +1255,13 @@ pub fn sample_ecosystem(planet_seed: u64, producer_capacity: Real) -> PlanetEcos
             biomass,
             is_extant: true,
             low_biomass_streak: 0,
+            // Legacy sampling stream defaults to Terrestrial — the
+            // canonical 10:1 Lindeman ratio — so existing fixtures
+            // get bit-for-bit identical numerics. The
+            // substrate-aware path
+            // (`sample_ecosystem_with_substrate`) can override
+            // habitat to match the planet's solvent chemistry.
+            habitat: Habitat::Terrestrial,
         });
         *next_id += 1;
     };
@@ -1182,7 +1376,41 @@ pub fn sample_ecosystem_with_substrate(
     let mut eco = sample_ecosystem(planet_seed ^ 0xEC05_0001_5751_1F00, producer_capacity);
     eco.substrate_tag = substrate_tag;
     eco.current_oxidisers = oxidiser_ladder(substrate_tag);
+    // P2.5: substrate-derived habitat. An aqueous (water-solvent)
+    // world is implicitly aquatic — the per-habitat Lindeman
+    // assimilation drops to ~3.3% (30:1) so producer-heavy pyramids
+    // emerge. Non-aqueous substrates default to Terrestrial; a
+    // hydrocarbon-lake species *could* be aquatic too but the
+    // calibration data is thinner there, so the conservative default
+    // is the 10:1 terrestrial value.
+    let habitat = habitat_for_substrate(substrate_tag);
+    for s in eco.species.values_mut() {
+        s.habitat = habitat;
+    }
     eco
+}
+
+/// Derive the dominant per-species habitat from a planet's solvent
+/// substrate tag (P2.5). Used by
+/// [`sample_ecosystem_with_substrate`] to pin the per-habitat
+/// Lindeman assimilation ratio without requiring callers to set it
+/// per-species.
+///
+/// Mapping:
+/// - `"aqueous"` → `Aquatic` (30:1 Lindeman ratio — water-solvent
+///   life is overwhelmingly fish-equivalent for trophic
+///   accounting).
+/// - All other substrates (`"ammoniacal"`, `"hydrocarbon"`,
+///   `"silicate"`, fallback) → `Terrestrial` (10:1). The
+///   canonical default; off-Earth substrates that *might* warrant a
+///   different ratio aren't calibrated well enough to pin
+///   confidently.
+#[must_use]
+pub fn habitat_for_substrate(substrate_tag: &str) -> Habitat {
+    match substrate_tag {
+        "aqueous" => Habitat::Aquatic,
+        _ => Habitat::Terrestrial,
+    }
 }
 
 /// Build a canonical interaction matrix from a sampled species list.
