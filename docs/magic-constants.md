@@ -132,8 +132,8 @@ non-Earth body in a test?
 | `magnetism.rs:124-125` | `REMANENCE_SCALE_NUM / DEN` | 0.5 | `Solar-system-fitted` (Mars-highlands umbrella above dipole) | `unvalidated` | Crustal-remanence per-cell scale. |
 | `magnetism.rs:132` | `REMANENCE_REF_THICKNESS_KM` | 35 | `Earth-fitted` (mirrors `tectonics::CONTINENTAL_THICKNESS_KM`) | `unvalidated` | Reference thickness for remanence weighting. |
 | `magnetism.rs:140-141` | `MIN_DIPOLE_STRENGTH_NUM / DEN` | 0.1 | `literature` (real geomagnetic excursions weaken to ~10% nominal) | `unvalidated` | Strength floor at reversal midpoint. Drives 5× cosmic-ray flux amplification. |
-| `magnetism.rs:145-147` | `REVERSAL_TRIAL_NUM / DEN` | `1/250_000` | `Earth-fitted` (one reversal per ~250 000 ticks ≈ ~250 000 years if 1 tick=1 year) | `known-bad` cadence | **Cadence-inconsistent**: most other laws run per-month (`MONTHS_PER_YEAR = 12`); this constant assumes 1 tick = 1 year, so the apparent reversal rate is 12× too slow under monthly cadence. Flagged in `post-fix-astro-review.md` time-scale row. |
-| `magnetism.rs:152` | `REVERSAL_DURATION_TICKS` | 1000 | `Earth-fitted` | `known-bad` cadence | Same cadence concern as above. |
+| `magnetism.rs:153-159` | `REVERSAL_TRIAL_NUM / DEN` | `1 / (250_000 × MONTHS_PER_YEAR)` = `1/3_000_000` per tick | `Earth-fitted` (one reversal per ~250 000 years on the per-month physics clock) | `validated` | Per-month trial probability. Scaled by `MONTHS_PER_YEAR = 12` so the per-year rate matches the Earth-like target regardless of the per-month cadence (T1). |
+| `magnetism.rs:166` | `REVERSAL_DURATION_TICKS` | `1000 × MONTHS_PER_YEAR` = `12_000` ticks (~1000 years) | `Earth-fitted` | `validated` | Reversal-window duration in month-ticks. Scaled by `MONTHS_PER_YEAR = 12` so a 1000-year reversal stays 1000 years (T1). |
 
 #### Tectonics (`tectonics.rs`)
 
@@ -382,7 +382,7 @@ non-Earth body in a test?
 |---|---|---|
 | `validated` | ~25 | `LINDEMAN_RATIO` (per-habitat), `bolometric_scale_at_age`, `EUV_DECAY_GYR`, HZ inner/outer coefficients, `K_HALF_SAT_DEFAULT`, crust albedos, Stefan-Boltzmann `ln_sigma`, molecular masses, chemistry latents, `COSMIC_RAY_MULTIPLIER_FLOOR / CEILING`, `CFL_SAFETY`, `EARTH_RADIUS_M` |
 | `partial` | ~5 | `subsurface_heat_fraction` (per-substrate; Ammoniacal is best-guess), `q_factor_icy` (Enceladus OK, Europa miss), `DEFAULT_SCALE_HEIGHT_M` (Earth pinned, per-planet override exists) |
-| `known-bad` | 3 | `tidal_dimensional_calibration` (Europa ~25× shy), `REVERSAL_TRIAL_DEN` / `REVERSAL_DURATION_TICKS` (cadence-inconsistent: assume 1 tick = 1 year, but simulation runs per-month) |
+| `known-bad` | 1 | `tidal_dimensional_calibration` (Europa ~25× shy). `REVERSAL_TRIAL_DEN` / `REVERSAL_DURATION_TICKS` previously sat here for cadence inconsistency; T1 rescaled both by `MONTHS_PER_YEAR` so they now match the per-month physics clock. |
 | `unvalidated` | majority | Most ecology / civ constants; most `empirical-best-fit` physics constants without a non-Earth anchor |
 | `arithmetic` / numerical | many | Q32.32 clamps, CFL safety, neighbour direction tables — no physical content, do not need cross-planet validation |
 
@@ -407,11 +407,12 @@ constant from `unvalidated` → `validated` (or `known-bad` →
      5.4× empirical factor doesn't apply to icy moons). Currently
      the `europa_like_*` tests pin the *produced* range rather than
      the literature value with a `FIXME: calibration` flag.
-2. **`REVERSAL_TRIAL_DEN`, `REVERSAL_DURATION_TICKS` cadence
-   inconsistency**. Magnetism law assumes 1 tick = 1 year; rest of
-   simulation runs per-month (`MONTHS_PER_YEAR = 12`). Either
-   re-base the constants to per-month or document the cadence
-   exception. Flagged in `post-fix-astro-review.md` time-scale row.
+2. ~~**`REVERSAL_TRIAL_DEN`, `REVERSAL_DURATION_TICKS` cadence
+   inconsistency**~~ — **resolved (T1)**. Both constants are now
+   scaled by `MONTHS_PER_YEAR = 12` in `magnetism.rs`, so the
+   per-month physics clock produces the documented per-year cadence
+   (one reversal per ~250 000 years, ~1000-year window). Markov-chain
+   frequency and reversal-envelope tests verify the new scaling.
 
 ### Physics — priority B (anchors missing)
 

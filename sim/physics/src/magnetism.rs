@@ -140,16 +140,30 @@ pub const REMANENCE_REF_THICKNESS_KM: i64 = 35;
 pub const MIN_DIPOLE_STRENGTH_NUM: i64 = 1;
 pub const MIN_DIPOLE_STRENGTH_DEN: i64 = 10;
 
+/// Months per year — matches `protocol::MONTHS_PER_YEAR = 12`.
+/// Inlined locally because `sim-physics` has no protocol dep; the
+/// reversal cadence constants below are scaled by this so the
+/// per-month tick stream produces the documented per-year rate.
+const MONTHS_PER_YEAR: u64 = 12;
+
 /// Earth-like default Markov-chain trial probability numerator.
-/// One reversal per ~250 000 ticks on average.
+/// One reversal per ~250 000 years on average. With the per-month
+/// tick cadence this is `1 / (250 000 × 12)` = `1 / 3 000 000` per
+/// tick so the per-year rate stays Earth-like.
 pub const REVERSAL_TRIAL_NUM: u64 = 1;
 /// Earth-like default Markov-chain trial probability denominator.
-pub const REVERSAL_TRIAL_DEN: u64 = 250_000;
+/// `250 000 years × 12 months/year = 3 000 000 month-ticks` so the
+/// expected reversal cadence is one per ~250 000 years on the
+/// per-month physics clock (was `250_000` when ticks were assumed
+/// to be years; see `docs/magic-constants.md` T1 entry).
+pub const REVERSAL_TRIAL_DEN: u64 = 250_000 * MONTHS_PER_YEAR;
 
-/// Earth-like default reversal duration in ticks. ~1000 ticks per
-/// flip; the strength envelope reaches its floor at the midpoint
-/// (~500 ticks in) and ramps back to 1.0 at the close.
-pub const REVERSAL_DURATION_TICKS: u64 = 1000;
+/// Earth-like default reversal duration in ticks. ~1000 years per
+/// flip = `1000 × 12 = 12 000` month-ticks; the strength envelope
+/// reaches its floor at the midpoint (~6 000 ticks ≈ 500 years in)
+/// and ramps back to 1.0 at the close. Was `1000` when ticks were
+/// assumed to be years.
+pub const REVERSAL_DURATION_TICKS: u64 = 1000 * MONTHS_PER_YEAR;
 
 /// Markov-chain law driving the geomagnetic reversal cycle (Sprint
 /// 5 Item 20). One trial per macro-step from a stable polarity; on
@@ -172,17 +186,23 @@ pub struct MagneticReversal {
     pub seed_salt: u64,
     /// Trial probability numerator — `num/den` per tick.
     pub trial_num: u64,
-    /// Trial probability denominator. Earth-like default 250 000.
+    /// Trial probability denominator. Earth-like default
+    /// `250 000 × MONTHS_PER_YEAR = 3 000 000` (one reversal per
+    /// ~250 000 years on the per-month physics clock).
     pub trial_den: u64,
-    /// Reversal window in ticks. Earth-like default 1000.
+    /// Reversal window in ticks. Earth-like default
+    /// `1000 × MONTHS_PER_YEAR = 12 000` (1000-year flip on the
+    /// per-month physics clock).
     pub reversal_duration_ticks: u64,
     /// Strength-envelope floor at the midpoint of a reversal.
     pub min_strength: Real,
 }
 
 impl MagneticReversal {
-    /// Earth-like calibration: ~1/250 000 per-tick reversal trial,
-    /// ~1000-tick reversal window, strength floor 0.1.
+    /// Earth-like calibration: ~1/3 000 000 per-tick reversal
+    /// trial (one event per ~250 000 years on the per-month
+    /// physics clock), ~12 000-tick (~1000-year) reversal window,
+    /// strength floor 0.1.
     #[must_use]
     pub fn earth_like() -> Self {
         Self {
@@ -774,11 +794,14 @@ mod tests {
     /// Magnetic-reversal Markov chain frequency check (Sprint 5
     /// Item 20). Run for many trial-period multiples and count the
     /// completed reversals; assert the count falls in a broad
-    /// statistical band around the expected mean. The 250 000-tick
-    /// Earth-like default would require 2.5 M ticks per the spec;
-    /// for the test we shrink the trial denominator to 250 and run
-    /// 250 000 ticks, which keeps the same expected ~1000 reversals
-    /// while finishing in a fraction of a second.
+    /// statistical band around the expected mean. The Earth-like
+    /// default (`1 / (250 000 × MONTHS_PER_YEAR)` per tick) would
+    /// require ~30 M ticks for the same expected count; for the
+    /// test we shrink the trial denominator to 250 and run 250 000
+    /// ticks, which keeps the same expected ~1000 reversals while
+    /// finishing in a fraction of a second. Independent of the
+    /// per-month cadence scaling — the trial-rate × tick-count
+    /// ratio is what's being checked.
     #[test]
     fn magnetic_reversal_occurs_on_average_every_250000_ticks() {
         let mut state = PhysicsState::new(HexGrid::new(2, 2));
@@ -831,9 +854,11 @@ mod tests {
 
     /// Force a reversal at t=0 and check the strength envelope
     /// reaches its trough mid-window and recovers to full strength
-    /// after the window closes (Sprint 5 Item 20).
+    /// after the window closes (Sprint 5 Item 20). The Earth-like
+    /// window is `REVERSAL_DURATION_TICKS = 1000 × MONTHS_PER_YEAR
+    /// = 12 000` month-ticks (~1000 years); midpoint at ~6000.
     #[test]
-    fn reversal_event_weakens_field_for_1000_tick_window() {
+    fn reversal_event_weakens_field_for_1000_year_window() {
         let mut state = PhysicsState::new(HexGrid::new(2, 2));
         let law = MagneticReversal::earth_like();
         // Force the reversal start. The Markov chain normally
@@ -843,10 +868,14 @@ mod tests {
         *state.dipole_state_mut() = DipoleState::Reversing;
         *state.reversal_start_tick_mut() = Some(0);
 
-        // Advance to t=500 — the midpoint of the 1000-tick window.
-        // Expect strength to be near `min_strength = 0.1`, well
-        // below 0.6 per the spec.
-        for _ in 0..500 {
+        let duration = REVERSAL_DURATION_TICKS;
+        let midpoint = duration / 2;
+        let past_end = duration + duration / 2;
+
+        // Advance to the midpoint of the reversal window. Expect
+        // strength to be near `min_strength = 0.1`, well below 0.6
+        // per the spec.
+        for _ in 0..midpoint {
             state.advance_macro_step();
             law.step(&mut state);
         }
@@ -857,10 +886,9 @@ mod tests {
         );
         assert_eq!(state.dipole_state(), DipoleState::Reversing);
 
-        // Advance to t=1500 — well past the 1000-tick window.
-        // Polarity should have flipped to `Reversed` and strength
-        // restored to 1.0.
-        for _ in 500..1500 {
+        // Advance past the close of the window. Polarity should
+        // have flipped to `Reversed` and strength restored to 1.0.
+        for _ in midpoint..past_end {
             state.advance_macro_step();
             law.step(&mut state);
         }
