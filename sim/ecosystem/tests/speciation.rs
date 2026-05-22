@@ -164,6 +164,7 @@ fn niche_pressure_drives_sympatric_speciation() {
             kind: InteractionKind::Competition,
             strength: Real::from((1, 100)),
             functional_response: FunctionalResponse::Linear,
+            half_saturation: Interaction::default_half_saturation(),
         },
     );
     matrix.insert(
@@ -173,6 +174,7 @@ fn niche_pressure_drives_sympatric_speciation() {
             kind: InteractionKind::Competition,
             strength: Real::from((1, 100)),
             functional_response: FunctionalResponse::Linear,
+            half_saturation: Interaction::default_half_saturation(),
         },
     );
 
@@ -666,6 +668,7 @@ fn reversal_window_elevates_speciation_rate() {
             kind: InteractionKind::Competition,
             strength: Real::from((1, 100)),
             functional_response: FunctionalResponse::Linear,
+            half_saturation: Interaction::default_half_saturation(),
         },
     );
     matrix.insert(
@@ -675,6 +678,7 @@ fn reversal_window_elevates_speciation_rate() {
             kind: InteractionKind::Competition,
             strength: Real::from((1, 100)),
             functional_response: FunctionalResponse::Linear,
+            half_saturation: Interaction::default_half_saturation(),
         },
     );
 
