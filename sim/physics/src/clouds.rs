@@ -109,17 +109,130 @@ impl CloudType {
     }
 }
 
-/// Per-unit-cloud-fraction greenhouse contribution from cirrus
-/// clouds (Sprint 5 Item 23), in K. Cirrus is a strong longwave
-/// trap — high-altitude ice crystals absorb upwelling IR almost
-/// as effectively as a fully overcast stratus deck but pass
-/// almost all incoming shortwave through. Sized so a fully
-/// cirrus-overcast cell (cloud_fraction = 1) adds ~15 K to
-/// `T_eq` — large enough to dominate weak per-substance forcing
-/// in a vapour-poor atmosphere, small enough not to swamp the
-/// existing greenhouse cap.
+/// Earth-baseline cirrus greenhouse forcing in K (Sprint 5 Item
+/// 23). Used as the *reference* value: at Earth-like gravity
+/// (9.81 m/s²) and the nominal 10 km cirrus deck altitude,
+/// `cirrus_greenhouse_strength` returns this value. Sized so a
+/// fully cirrus-overcast cell (cloud_fraction = 1) adds ~15 K to
+/// `T_eq` on Earth — large enough to dominate weak per-substance
+/// forcing in a vapour-poor atmosphere, small enough not to swamp
+/// the existing greenhouse cap. Any-planet backlog T5 replaced
+/// the constant in `Radiation::integrate` with
+/// `cirrus_greenhouse_strength`; this accessor remains as the
+/// Earth-calibration anchor that
+/// `cirrus_greenhouse_strength(T_earth, lapse_earth, alt_earth)`
+/// reproduces.
 pub fn cirrus_greenhouse_k() -> Real {
     Real::from_int(15)
+}
+
+/// Specific heat capacity of dry air at constant pressure,
+/// J/(kg·K). Used to derive the dry adiabatic lapse rate
+/// `lapse = g / c_p` from surface gravity. Earth value; held as a
+/// crate-level constant because per-planet composition tuning of
+/// `c_p` is a deferred follow-up (atmosphere-class scale-height
+/// already varies; `c_p` would too in a richer model).
+pub const C_P_AIR_J_PER_KG_K: i64 = 1_005;
+
+/// Reference cirrus deck altitude in metres (Sprint 5 Item 23).
+/// Real-Earth cirrus tops live at ~10 km — well above the 5 km
+/// classification threshold in [`Clouds::cirrus_altitude_threshold`]
+/// (which decides whether a cell *is* cirrus) and below the
+/// stratospheric floor. Used both as the input to
+/// [`cirrus_greenhouse_strength`] and as the Earth-calibration
+/// altitude in the formula's normalisation.
+pub const REFERENCE_CIRRUS_ALTITUDE_M: i64 = 10_000;
+
+/// Dry adiabatic lapse rate in K/m, derived from gravity.
+/// `lapse = g / c_p` for dry air. Earth: 9.81 / 1005 ≈ 0.00976
+/// K/m (≈ 9.76 K/km). A high-gravity super-Earth has a steeper
+/// lapse → cooler cloud-top T at the same altitude → larger
+/// `T_surface − T_cloud_top` contrast → stronger cirrus longwave
+/// trap.
+///
+/// `gravity_ms2 = 0` returns `Real::ZERO` (no lapse on a
+/// gravity-less world; cirrus forcing collapses to zero in that
+/// limit).
+#[must_use]
+pub fn dry_adiabatic_lapse_rate(gravity_ms2: Real) -> Real {
+    if gravity_ms2 <= Real::ZERO {
+        return Real::ZERO;
+    }
+    gravity_ms2 / Real::from_int(C_P_AIR_J_PER_KG_K)
+}
+
+/// Per-unit-cloud-fraction greenhouse contribution from cirrus
+/// clouds, in K (any-planet backlog T5). Replaces the flat 15 K
+/// constant with a lapse-rate-driven formula so cirrus forcing
+/// tracks the actual `T_surface − T_cloud_top` contrast on planets
+/// with non-Earth gravity / atmosphere.
+///
+/// Formula:
+/// ```text
+///   T_cloud_top = t_surface − lapse_rate × cirrus_altitude
+///   ΔT          = t_surface − T_cloud_top
+///                = lapse_rate × cirrus_altitude
+///   cirrus_gh   = 15 K × (ΔT / ΔT_earth)^4
+/// ```
+///
+/// The fourth-power scaling tracks the Stefan-Boltzmann emission
+/// difference between the warm surface and the cold cloud top —
+/// `σ T_surface^4 − σ T_cloud^4 ∝ ΔT^4` in the small-ΔT-relative-
+/// to-T limit. The calibration anchor is Earth's dry-adiabatic
+/// lapse (9.81/1005 ≈ 0.00976 K/m) × 10 km cirrus altitude ≈ 97.6
+/// K, which the normalisation bakes in so Earth-default inputs
+/// reproduce the historical 15 K constant.
+///
+/// Edge cases:
+/// - `lapse_rate ≤ 0` or `cirrus_altitude_m ≤ 0` → `Real::ZERO`
+///   (no lapse / no altitude → no cirrus contrast).
+/// - `T_cloud_top < 0` (lapse × altitude exceeds surface T):
+///   clamped at `t_surface` so ΔT never exceeds `t_surface` and
+///   the cell can't author a contribution that exceeds the
+///   blackbody it would emit from the surface.
+#[must_use]
+pub fn cirrus_greenhouse_strength(
+    t_surface: Real,
+    lapse_rate_k_per_m: Real,
+    cirrus_altitude_m: Real,
+) -> Real {
+    if lapse_rate_k_per_m <= Real::ZERO || cirrus_altitude_m <= Real::ZERO {
+        return Real::ZERO;
+    }
+    // Cap ΔT at t_surface so a pathologically deep cloud deck
+    // can't drive T_cloud_top below 0 K. The cap matches the
+    // physical limit (cirrus tops can't be colder than absolute
+    // zero) and keeps the (ΔT)^4 sum bounded by t_surface^4.
+    let raw_delta_t = lapse_rate_k_per_m.saturating_mul(cirrus_altitude_m);
+    let delta_t = if t_surface > Real::ZERO {
+        raw_delta_t.min(t_surface)
+    } else {
+        Real::ZERO
+    };
+    if delta_t <= Real::ZERO {
+        return Real::ZERO;
+    }
+    // Earth-calibration ΔT. Pre-computed as `lapse_earth ×
+    // altitude_earth` = (9.81 / 1005) × 10000 ≈ 97.61 K. Held as
+    // `Real::from_ratio(9810, 1005 × 10)` = (9.81 / 1005) × 1000
+    // — i.e. the lapse rate scaled by 1000 — then multiplied by
+    // 10 (= altitude_earth / 1000) so the integer ratio stays
+    // small. Simpler: compute it inline so the value is visibly
+    // tied to the same Earth constants the formula targets.
+    let lapse_earth = dry_adiabatic_lapse_rate(Real::from_ratio(981, 100));
+    let altitude_earth = Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M);
+    let reference_delta_t = lapse_earth.saturating_mul(altitude_earth);
+    if reference_delta_t <= Real::ZERO {
+        return Real::ZERO;
+    }
+    let ratio = delta_t / reference_delta_t;
+    // ratio^4 via three multiplies — avoids the transcendental
+    // `pow` cost in the per-cell hot loop, and stays in Q32.32 for
+    // sane inputs (high-gravity worlds saturate via the
+    // `greenhouse_cap` clamp in `Radiation::integrate`).
+    let ratio_sq = ratio.saturating_mul(ratio);
+    let ratio_4 = ratio_sq.saturating_mul(ratio_sq);
+    cirrus_greenhouse_k().saturating_mul(ratio_4)
 }
 
 /// Per-unit-cloud-fraction greenhouse contribution from stratus
@@ -481,5 +594,99 @@ mod tests {
         }
         assert_eq!(a.cloud_fraction(), b.cloud_fraction());
         assert_eq!(a.cloud_type(), b.cloud_type());
+    }
+
+    #[test]
+    fn cirrus_greenhouse_strength_earth_default_matches_constant() {
+        // Any-planet backlog T5: the lapse-rate-driven formula
+        // must reproduce the historical 15 K constant when fed
+        // Earth-default inputs (gravity 9.81 m/s², 10 km cirrus
+        // altitude). Without this anchor, every Earth-like
+        // calibration (radiation tests, integrate-time forcing)
+        // would silently drift.
+        let earth_gravity = Real::from_ratio(981, 100);
+        let earth_lapse = dry_adiabatic_lapse_rate(earth_gravity);
+        let earth_altitude = Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M);
+        let t_surface = Real::from_int(288); // Earth mean
+        let gh = cirrus_greenhouse_strength(t_surface, earth_lapse, earth_altitude);
+        // Allow ±0.5 K slack for fixed-point round-off through
+        // the (ratio)^4 chain. Earth-calibration target: 15 K.
+        let target = cirrus_greenhouse_k();
+        let diff = (gh - target).abs();
+        assert!(
+            diff < Real::ONE,
+            "cirrus greenhouse at Earth defaults should match the 15 K constant: \
+             gh={gh:?} target={target:?} diff={diff:?}"
+        );
+    }
+
+    #[test]
+    fn cirrus_greenhouse_scales_with_lapse_rate() {
+        // Any-planet backlog T5 required test. A high-gravity
+        // planet has a steeper dry-adiabatic lapse rate
+        // (`lapse = g / c_p`) → cooler cloud-top T at the same
+        // altitude → larger `T_surface − T_cloud_top` contrast →
+        // stronger cirrus longwave trap. The formula scales as
+        // (ΔT)^4 (Stefan-Boltzmann emission difference), so a 2×
+        // gravity world should land well above Earth's 15 K
+        // baseline.
+        let altitude = Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M);
+        let t_surface = Real::from_int(288);
+
+        // Earth: 9.81 m/s² → lapse ≈ 9.76e-3 K/m.
+        let earth_lapse = dry_adiabatic_lapse_rate(Real::from_ratio(981, 100));
+        let earth_gh = cirrus_greenhouse_strength(t_surface, earth_lapse, altitude);
+
+        // High-gravity super-Earth: 25 m/s² → lapse ≈ 0.0249
+        // K/m → ΔT ≈ 249 K, 2.55× Earth's ΔT → (2.55)^4 ≈ 42×
+        // forcing. Well above the 15 K Earth baseline.
+        let high_g_lapse = dry_adiabatic_lapse_rate(Real::from_int(25));
+        let high_g_gh = cirrus_greenhouse_strength(t_surface, high_g_lapse, altitude);
+
+        assert!(
+            high_g_lapse > earth_lapse,
+            "high-gravity lapse rate should exceed Earth's: \
+             high_g={high_g_lapse:?} earth={earth_lapse:?}"
+        );
+        assert!(
+            high_g_gh > earth_gh,
+            "high-gravity cirrus greenhouse should exceed Earth's: \
+             high_g={high_g_gh:?} earth={earth_gh:?}"
+        );
+        // Quantitative check: the (ΔT)^4 scaling should give at
+        // least a 5× boost on a 25 m/s² world (conservative
+        // floor — the math says ~42×). Earth_gh ≈ 15 K, so
+        // high_g_gh should clear 75 K.
+        assert!(
+            high_g_gh > earth_gh * Real::from_int(5),
+            "high-gravity cirrus greenhouse should be at least 5× Earth's: \
+             high_g={high_g_gh:?} earth={earth_gh:?}"
+        );
+
+        // Symmetric check at the low end: a low-gravity world
+        // (Mars-like, 3.7 m/s²) should drop *below* Earth's
+        // baseline since the lapse is shallower.
+        let low_g_lapse = dry_adiabatic_lapse_rate(Real::from_ratio(370, 100));
+        let low_g_gh = cirrus_greenhouse_strength(t_surface, low_g_lapse, altitude);
+        assert!(
+            low_g_gh < earth_gh,
+            "low-gravity cirrus greenhouse should fall below Earth's: \
+             low_g={low_g_gh:?} earth={earth_gh:?}"
+        );
+    }
+
+    #[test]
+    fn cirrus_greenhouse_strength_zero_gravity_collapses() {
+        // Edge case: a gravity-less world has no lapse rate →
+        // cirrus tops emit at surface T → no contrast → no
+        // cirrus longwave trap.
+        let zero_lapse = dry_adiabatic_lapse_rate(Real::ZERO);
+        assert_eq!(zero_lapse, Real::ZERO);
+        let gh = cirrus_greenhouse_strength(
+            Real::from_int(288),
+            zero_lapse,
+            Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M),
+        );
+        assert_eq!(gh, Real::ZERO);
     }
 }

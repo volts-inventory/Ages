@@ -47,7 +47,10 @@ pub use atmospheric_escape::{
     jeans_factor, EscapeChannels, PlanetEscapeParams, ATMOSPHERIC_SUBSTANCES,
 };
 pub use chemistry::{Chemistry, Substance};
-pub use clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType, Clouds};
+pub use clouds::{
+    cirrus_greenhouse_k, cirrus_greenhouse_strength, dry_adiabatic_lapse_rate,
+    stratus_greenhouse_k, CloudType, Clouds, C_P_AIR_J_PER_KG_K, REFERENCE_CIRRUS_ALTITUDE_M,
+};
 pub use coriolis::Coriolis;
 pub use em::Electromagnetism;
 pub use fluid::GravityFlow;
