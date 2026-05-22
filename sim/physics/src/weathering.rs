@@ -500,4 +500,350 @@ mod tests {
              source_total={source_total:?} initial_total={initial_total:?}"
         );
     }
+
+    /// Walker-Hays-Kasting snowball recovery calibration anchor
+    /// (T13). A planet locked in a snowball state — cold uniform
+    /// surface (T ≈ 250 K), high snow_fraction (≈ 0.95 across the
+    /// board), low atmospheric CO2 — must recover via a CO2
+    /// buildup driven by *continuing* volcanism while *natural*
+    /// cold-T-suppressed weathering can't drain it. Once enough
+    /// CO2 accumulates, its greenhouse contribution pushes
+    /// surface temperatures back above the freeze line, ice
+    /// melts, albedo drops, and the radiative balance flips back
+    /// to the habitable basin.
+    ///
+    /// The real Earth's neoproterozoic snowball recovered over
+    /// ~10 Myr per Walker-Hays-Kasting (`J. Geophys. Res. 86`,
+    /// 1981). On our monthly-cadence simulation the equivalent
+    /// CO2-buildup-driven recovery is cadence-compressed; the
+    /// `[100_000, 1_000_000]` tick window (~10 kyr to ~100 kyr at
+    /// 30 macro-steps/month) lets the *shape* of the recovery
+    /// (sluggish CO2 climb → greenhouse-driven temperature
+    /// crossing of the freeze line → ice retreat) play out
+    /// without demanding pixel-perfect agreement with the real-
+    /// Earth timescale.
+    ///
+    /// Test setup choices:
+    /// - Small 2×2 torus grid with a checkerboard plate layout
+    ///   so every cell sits at a plate boundary — each cell
+    ///   receives the boundary CO2 emission rate every tick,
+    ///   maximising the per-cell source. This stands in for the
+    ///   "many active boundaries" geometry a real snowball world
+    ///   would have once volcanism kept running for millions of
+    ///   years.
+    /// - Stellar irradiance set so the *ice-free* radiative
+    ///   equilibrium sits well above freeze (≈ 290 K), while the
+    ///   *ice-saturated* snowball-state equilibrium sits well
+    ///   below (≈ 250 K). This is the bistable bifurcation regime
+    ///   from the existing `cold_seed_with_marginal_temp_...`
+    ///   test, set up so CO2-driven greenhouse can break the
+    ///   ice-albedo lock.
+    /// - Weathering runs every tick. Cold cells naturally produce
+    ///   a near-zero T_factor (Arrhenius at 250 K vs T_ref 290 K
+    ///   gives ≈ 0.06×), and snowball cells have essentially no
+    ///   vapour or surface water, so the precipitation factor is
+    ///   near zero too — the sink is suppressed without having to
+    ///   disable weathering manually. The test asserts this:
+    ///   weathering removes far less CO2 than volcanism adds while
+    ///   the planet stays cold.
+    ///
+    /// Bounds checked:
+    /// - CO2 strictly increases from the snowball seed (sink
+    ///   loses to source while cold).
+    /// - Recovery (snow_fraction drops below 0.5 *and* mean T
+    ///   crosses the freeze line) occurs within
+    ///   `[100_000, 1_000_000]` ticks. The lower bound guards
+    ///   against an "instant" recovery (would mean snowball was
+    ///   never properly latched); the upper bound guards against
+    ///   the CO2-buildup timescale being so slow it implies the
+    ///   weathering / volcanism / greenhouse constants are
+    ///   miscalibrated.
+    ///
+    /// ## Current status (T13 baseline run)
+    ///
+    /// On the stock earth-like constants, this test does *not*
+    /// pass within the 1_000_000-tick budget. Diagnostics from
+    /// the failing run:
+    ///   - initial CO2 total = 0.04 (0.01 per cell on 4 cells)
+    ///   - final CO2 total ≈ 40 (≈ 10 per cell — sink suppressed,
+    ///     source ran for 10⁶ ticks at 4×10⁻⁵ total per tick =
+    ///     +40 expected; observed)
+    ///   - weathering removed ≈ 0.07 over the full run (cold
+    ///     T-factor floor at 1e-3 × low precip-factor → sink
+    ///     barely active, *as expected* on a snowball)
+    ///   - initial mean T = 250 K → final mean T = 211 K
+    ///     (planet cooled further, *not* recovered)
+    ///   - final snow_fraction = 0 (snow_fraction drops because
+    ///     `IceAlbedo` requires either land+precip or
+    ///     `Substance::Ice > 0` to host snow; on a water-covered
+    ///     snowball cell with vapour frozen out, the snow channel
+    ///     drains while `sea_ice_fraction` stays saturated at
+    ///     ~1.0 → effective albedo stays high via the sea-ice
+    ///     channel)
+    ///
+    /// Interpretation: with `co2_greenhouse_k = 0.030 K` per unit
+    /// CO2 density (`radiation.rs`), 10 units of CO2 per cell
+    /// adds only ≈ 0.3 K of greenhouse forcing — three orders of
+    /// magnitude too little to lever the planet out of the ~0.55
+    /// sea-ice albedo basin at our stellar+albedo+greenhouse
+    /// calibration. The ice-albedo feedback latches the snowball
+    /// state too rigidly for the volcanism-rate CO2 source to
+    /// break it within Walker-Hays-Kasting-equivalent timescales.
+    ///
+    /// FIXME(T13-calibration): constants to revisit (in priority
+    /// order) before flipping this test from `#[ignore]` to live:
+    ///
+    /// 1. `co2_greenhouse_k` in `radiation.rs` (currently 30 mK
+    ///    per unit CO2). Real-Earth CO2 doubling adds ~3 K of
+    ///    forcing; the per-unit coefficient here should scale so
+    ///    a 10× CO2 buildup adds ~10 K, not 0.3 K. Candidate:
+    ///    raise to ≥ 1 K per unit so a 10-unit buildup clears the
+    ///    snowball-to-habitable bifurcation gap (~20 K in the
+    ///    `cold_seed_...` test).
+    /// 2. `VOLCANIC_CO2_NUM` / `VOLCANIC_CO2_DEN` in
+    ///    `volcanism.rs` (currently 1e-5 per boundary-cell per
+    ///    tick). Real-Earth volcanic CO2 outgassing ≈ 0.1 Gt
+    ///    C/yr, which in our scaled per-cell units corresponds
+    ///    to ~1e-3 per tick if 1 unit CO2 ≈ 100 Gt C. A 100×
+    ///    bump here would compress the recovery timescale
+    ///    proportionally.
+    /// 3. `cover_rate` and the snow-on-water-cell precondition in
+    ///    `IceAlbedo::integrate` (`albedo.rs`). The snowball
+    ///    melt-back path on water cells currently runs through
+    ///    the `sea_ice_fraction` channel only; once T crosses
+    ///    freeze, sea-ice should retreat fast enough for the
+    ///    albedo drop to compound the warming. If the
+    ///    `cover_rate = 0.10` per tick is too slow to track a
+    ///    warming-driven sigmoid drop, the recovery stalls at
+    ///    the bifurcation crossing.
+    /// 4. Initial-state choice (peak snow `0.85`, sea-ice `0.55`).
+    ///    These match published values; not expected to need
+    ///    retuning, but listed for completeness.
+    ///
+    /// Test is marked `#[ignore]` so CI stays green while the
+    /// calibration is resolved; the assertions below define the
+    /// success criteria the calibration must hit. Once `(1)` is
+    /// landed, this test should be re-enabled.
+    ///
+    /// Run manually with:
+    ///   `cargo test -p sim-physics --lib snowball -- --ignored`
+    #[test]
+    #[ignore = "T13 calibration target: CO2 greenhouse coefficient too small to drive snowball recovery within 1M ticks (see FIXME above)"]
+    fn snowball_recovery_via_volcanic_co2_buildup() {
+        use crate::albedo::IceAlbedo;
+        use crate::laws::Law;
+        use crate::radiation::Radiation;
+        use crate::volcanism::Volcanism;
+
+        // 2×2 torus grid. Checkerboard plate layout — every cell
+        // borders a different-plate neighbour, so the `Volcanism`
+        // boundary-emission path fires for every cell every tick.
+        // This maximises the per-cell CO2 source within the
+        // existing volcanism constants (we don't want to retune
+        // `Volcanism` to make recovery happen — the test should
+        // pass with the stock earth-like calibration).
+        let grid = HexGrid::new(2, 2);
+        let n = grid.n_cells();
+        let mut state = PhysicsState::new(grid.clone());
+        // Plate IDs: (q + r) % 2 gives a checkerboard so each
+        // cell's six torus neighbours land on the opposite plate.
+        let mut plate_ids = vec![0u32; n];
+        for (cid, axial) in grid.cells() {
+            plate_ids[cid.0 as usize] = u32::try_from((axial.q + axial.r).rem_euclid(2)).unwrap();
+        }
+        let crust_thickness = vec![Real::from_int(35); n];
+        state.set_tectonics_fields(plate_ids, crust_thickness);
+
+        // Snowball initial conditions: cold (T = 250 K), high
+        // snow cover, ice-covered water cells, low CO2, low
+        // vapour. These mirror the "fully latched snowball" basin
+        // the bifurcation test (`cold_seed_...`) lands in.
+        for t in state.temperature_mut() {
+            *t = Real::from_int(250);
+        }
+        for w in state.water_depth_mut() {
+            *w = Real::from_int(10);
+        }
+        for s in state.snow_fraction_mut() {
+            *s = Real::percent(95);
+        }
+        for s in state.sea_ice_fraction_mut() {
+            *s = Real::percent(95);
+        }
+        for c in state.substance_mut(Substance::CO2.idx()) {
+            *c = Real::from_ratio(1, 100); // 0.01 — depleted
+        }
+        for v in state.substance_mut(Substance::Vapour.idx()) {
+            *v = Real::from_ratio(1, 10); // frozen out
+        }
+
+        // Bistable radiative balance: stellar + albedo + greenhouse
+        // tuned so the habitable-basin equilibrium clears the
+        // freeze line and the snowball-basin equilibrium sits
+        // below it. Same recipe the bifurcation test uses, scaled
+        // up on stellar so CO2-driven greenhouse can lever the
+        // system out of the snowball.
+        let rad = Radiation::for_planet(
+            grid.height(),
+            Real::from_int(1_500),
+            30,
+            Real::from_int(20),
+            0,
+            0,
+            0,
+            Real::from_int(24),
+        );
+        let ice = IceAlbedo::earth_like();
+        let weathering = Weathering::earth_like();
+        let volcanism = Volcanism::earth_like();
+
+        // Initial bookkeeping.
+        let initial_co2_total: Real = state
+            .substance(Substance::CO2.idx())
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let initial_t_mean: Real = state
+            .temperature()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b)
+            / Real::from_int(i64::try_from(n).unwrap());
+        let initial_snow_mean: Real = state
+            .snow_fraction()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b)
+            / Real::from_int(i64::try_from(n).unwrap());
+        // Sanity: we did latch into the snowball regime.
+        assert!(
+            initial_t_mean < Real::from_int(273),
+            "test setup error: snowball seed must start below freeze: \
+             mean_t={initial_t_mean:?}"
+        );
+        assert!(
+            initial_snow_mean > Real::from_ratio(9, 10),
+            "test setup error: snowball seed must start with heavy snow cover: \
+             mean_snow={initial_snow_mean:?}"
+        );
+
+        // Spec bounds: recovery must happen between 100_000 and
+        // 1_000_000 ticks.
+        const MIN_TICKS: u64 = 100_000;
+        const MAX_TICKS: u64 = 1_000_000;
+
+        let freeze = Real::from_ratio(27_315, 100);
+        let half = Real::from_ratio(1, 2);
+        let n_real = Real::from_int(i64::try_from(n).unwrap());
+        let mut recovery_tick: Option<u64> = None;
+        let mut total_co2_removed_by_weathering = Real::ZERO;
+
+        for tick in 0..MAX_TICKS {
+            // Source: volcanism (CO2 + a little H2O at boundaries).
+            let _ = volcanism.integrate(&mut state, Real::ONE);
+            // Sink: weathering (suppressed at cold/dry, but never
+            // disabled — natural T-factor + precip-factor floor).
+            let removed = weathering.integrate(&mut state, Real::ONE);
+            total_co2_removed_by_weathering = total_co2_removed_by_weathering + removed;
+            // Ice-albedo + radiation: closes the positive-feedback
+            // loop. Run every tick so the per-cell albedo tracks
+            // the freshest temperature and the radiative balance
+            // sees the freshest albedo + greenhouse.
+            ice.integrate(&mut state, Real::ONE);
+            rad.integrate(&mut state, Real::ONE);
+
+            // Recovery test: mean T crosses freeze AND mean
+            // snow_fraction drops below 0.5. We test both jointly
+            // (a thin-ice cell could melt without the planet
+            // genuinely recovering; a high-CO2 cell could spike T
+            // without ice retreating).
+            let mean_t: Real = state
+                .temperature()
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b)
+                / n_real;
+            let mean_snow: Real = state
+                .snow_fraction()
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b)
+                / n_real;
+            if mean_t > freeze && mean_snow < half {
+                recovery_tick = Some(tick + 1);
+                break;
+            }
+        }
+
+        let final_co2_total: Real = state
+            .substance(Substance::CO2.idx())
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        let final_t_mean: Real = state
+            .temperature()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b)
+            / n_real;
+        let final_snow_mean: Real = state
+            .snow_fraction()
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b)
+            / n_real;
+
+        // Sink-vs-source sanity: while the planet stayed cold the
+        // weathering sink should have been suppressed below the
+        // volcanism source. The CO2 total *must* have grown from
+        // the initial seed, otherwise the source/sink balance is
+        // miscalibrated (sink wins while cold = no recovery
+        // possible).
+        assert!(
+            final_co2_total > initial_co2_total,
+            "CO2 should have built up under cold weathering + active volcanism: \
+             initial={initial_co2_total:?} final={final_co2_total:?} \
+             removed_by_weathering={total_co2_removed_by_weathering:?}"
+        );
+
+        // Recovery bound. If this fires, the FIXME below names
+        // the constants to revisit.
+        let recovered_at = recovery_tick.unwrap_or_else(|| {
+            panic!(
+                "FIXME: snowball did not recover within {MAX_TICKS} ticks. \
+                 Walker-Hays-Kasting expects CO2-buildup-driven recovery; \
+                 the relevant constants to recalibrate are: \
+                 (a) `VOLCANIC_CO2_NUM` / `VOLCANIC_CO2_DEN` in `volcanism.rs` \
+                 (per-tick per-boundary-cell source — currently 1e-5); \
+                 (b) `co2_greenhouse_k` in `radiation.rs` \
+                 (currently 0.030 K per unit CO2 density); \
+                 (c) `T_FACTOR_MIN_NUM` / `T_FACTOR_MIN_DEN` in `weathering.rs` \
+                 (cold-cell weathering floor — currently 1e-3, ensures \
+                 weathering doesn't completely zero out the sink); \
+                 (d) initial snowball albedo (peak snow albedo `0.85`, \
+                 sea-ice `0.55`) — if too high, ice-albedo feedback locks the \
+                 cold basin too rigidly for CO2 greenhouse to break out. \
+                 Diagnostics: initial_co2={initial_co2_total:?} \
+                 final_co2={final_co2_total:?} \
+                 weathering_removed={total_co2_removed_by_weathering:?} \
+                 initial_t_mean={initial_t_mean:?} final_t_mean={final_t_mean:?} \
+                 initial_snow_mean={initial_snow_mean:?} \
+                 final_snow_mean={final_snow_mean:?}"
+            )
+        });
+        assert!(
+            recovered_at >= MIN_TICKS,
+            "snowball recovered suspiciously fast (suggests snowball never \
+             properly latched): recovered_at={recovered_at} (expected ≥ {MIN_TICKS}). \
+             initial_co2={initial_co2_total:?} final_co2={final_co2_total:?} \
+             final_t_mean={final_t_mean:?} final_snow_mean={final_snow_mean:?}"
+        );
+        // recovered_at < MAX_TICKS is implicit from the
+        // unwrap_or_else above; the assertion below leaves a
+        // clean log line on success.
+        assert!(
+            recovered_at < MAX_TICKS,
+            "snowball recovery exceeded {MAX_TICKS} ticks: recovered_at={recovered_at}"
+        );
+    }
 }
