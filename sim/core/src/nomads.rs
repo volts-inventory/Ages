@@ -1118,7 +1118,17 @@ mod tests {
             terrain_centre_q: 0,
             terrain_centre_r: 0,
             locking_state: sim_world::LockingState::FreeRotator,
-            star: Star::new(SpectralType::G, Real::from_int(1_361)),
+            // Modern-Sun analog: G dwarf at ~45% through its 10 Gyr
+            // MS lifetime. After P2.4's faint-young-sun correction,
+            // `Star::new` lands at the *faint* ZAMS (0.70× = 953
+            // W/m²); use `with_age` to keep this fixture at the
+            // present-day Sun-on-Earth ~1361 W/m².
+            star: Star::with_age(
+                SpectralType::G,
+                Real::from_int(1_361),
+                Real::from_ratio(45, 10),
+                Real::from_int(10),
+            ),
         }
     }
 

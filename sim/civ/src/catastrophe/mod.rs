@@ -623,7 +623,17 @@ mod tests {
             metabolic_substrate: sim_world::MetabolicSubstrate::Aqueous,
             substrate_perturbation: Real::ZERO,
             locking_state: sim_world::LockingState::FreeRotator,
-            star: sim_world::Star::new(sim_world::SpectralType::G, Real::from_int(1_361)),
+            // Modern-Sun analog: G dwarf at ~45% through its 10 Gyr
+            // MS lifetime. After P2.4's faint-young-sun correction,
+            // `Star::new` lands at the *faint* ZAMS (0.70× = 953
+            // W/m²); construct via `with_age` to keep this fixture
+            // at the present-day Sun-on-Earth ~1361 W/m².
+            star: sim_world::Star::with_age(
+                sim_world::SpectralType::G,
+                Real::from_int(1_361),
+                Real::from_ratio(45, 10),
+                Real::from_int(10),
+            ),
         }
     }
 
