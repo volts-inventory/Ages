@@ -1003,7 +1003,7 @@ pub fn derive_population_biology(
 ///
 /// Numbers per the implementation-plan Sprint 2 Item 7a spec.
 #[must_use]
-pub(crate) fn substrate_default_envelope(substrate: MetabolicSubstrate) -> ToleranceEnvelope {
+pub fn substrate_default_envelope(substrate: MetabolicSubstrate) -> ToleranceEnvelope {
     match substrate {
         // Aqueous: liquid water 273-373 K, near-neutral pH, modest
         // salinity, low radiation, Earth-surface pressure range.
@@ -1064,7 +1064,7 @@ pub(crate) fn substrate_default_envelope(substrate: MetabolicSubstrate) -> Toler
 /// move ±20% of its value. Edges are then re-ordered so `lo <= hi`
 /// stays an invariant even if the random offsets cross.
 #[must_use]
-pub(crate) fn derive_tolerance_envelope(
+pub fn derive_tolerance_envelope(
     seed: u64,
     substrate: MetabolicSubstrate,
 ) -> ToleranceEnvelope {
@@ -1127,6 +1127,33 @@ pub(crate) fn derive_tolerance_envelope(
 #[allow(dead_code)]
 pub(crate) fn substrate_for_planet(planet: &Planet) -> MetabolicSubstrate {
     planet.metabolic_substrate
+}
+
+/// Map a substrate tag (`"aqueous" | "ammoniacal" | "hydrocarbon" |
+/// "silicate"`) back to a `MetabolicSubstrate`. Inverse of
+/// `MetabolicSubstrate::tag()`. Unknown tags fall back to `Aqueous`
+/// (the canonical default used by hand-built fixtures); the live
+/// production path always passes a known tag derived from
+/// `planet.metabolic_substrate.tag()`.
+#[must_use]
+pub fn substrate_from_tag(tag: &str) -> MetabolicSubstrate {
+    match tag {
+        "ammoniacal" => MetabolicSubstrate::Ammoniacal,
+        "hydrocarbon" => MetabolicSubstrate::Hydrocarbon,
+        "silicate" => MetabolicSubstrate::Silicate,
+        _ => MetabolicSubstrate::Aqueous,
+    }
+}
+
+/// Tag-based wrapper around [`derive_tolerance_envelope`]. Used by
+/// `sim-ecosystem`'s `sample_ecosystem_with_substrate` which only
+/// carries the substrate as its protocol tag (`&'static str`), not
+/// the `MetabolicSubstrate` enum. Re-uses the same per-species
+/// jitter so eco-species and civ-bearing species drawn from the
+/// same `(seed, substrate)` would converge on the same envelope.
+#[must_use]
+pub fn sample_tolerance_for_substrate(seed: u64, substrate_tag: &str) -> ToleranceEnvelope {
+    derive_tolerance_envelope(seed, substrate_from_tag(substrate_tag))
 }
 
 /// Apply a catastrophe to a species and return the surviving
