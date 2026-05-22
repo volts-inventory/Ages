@@ -57,12 +57,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub mod speciation;
 pub use speciation::{
-    clamp_cosmic_ray_multiplier, daughter_eco_role, derive_daughter_species, divergence_pull,
-    next_species_id, polyploid_check, step_speciation, SpeciationTracker, SpeciationTrigger,
-    ALLOPATRIC_ISOLATION_TICKS, COSMIC_RAY_MULTIPLIER_CEILING, COSMIC_RAY_MULTIPLIER_FLOOR,
-    FOUNDER_BIOMASS_FRAC, POLYPLOID_PER_TICK_PROB_RECIP, POST_EXTINCTION_BOOST_TICKS,
-    POST_EXTINCTION_RADIATION_MULTIPLIER, SYMPATRIC_COMPETITION_BIOMASS_FRAC,
-    SYMPATRIC_PRESSURE_TICKS,
+    apply_character_displacement, clamp_cosmic_ray_multiplier, daughter_eco_role,
+    derive_daughter_species, divergence_pull, next_species_id, polyploid_check, step_speciation,
+    SpeciationTracker, SpeciationTrigger, ALLOPATRIC_ISOLATION_TICKS,
+    COSMIC_RAY_MULTIPLIER_CEILING, COSMIC_RAY_MULTIPLIER_FLOOR, FOUNDER_BIOMASS_FRAC,
+    INHERITED_INTERACTION_STRENGTH_FRAC, POLYPLOID_PER_TICK_PROB_RECIP,
+    POST_EXTINCTION_BOOST_TICKS, POST_EXTINCTION_RADIATION_MULTIPLIER,
+    RADIATION_DISPLACEMENT_REFERENCE, SISTER_COMPETITION_STRENGTH,
+    SYMPATRIC_COMPETITION_BIOMASS_FRAC, SYMPATRIC_PRESSURE_TICKS,
+    TEMPERATURE_DISPLACEMENT_REFERENCE_K, TOLERANCE_DISPLACEMENT_FRAC,
 };
 
 /// Default Lindeman 10:1 assimilation ratio — back-compat fallback
