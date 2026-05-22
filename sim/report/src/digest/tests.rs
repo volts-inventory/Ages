@@ -1,7 +1,9 @@
 use super::*;
 use protocol::{
-    CivCollapsed, CivFounded, CivSurplusChanged, Event, FigureBorn, RelationConfirmed, RunHeader,
-    TradeRouteClosed, TradeRouteEstablished, SCHEMA_VERSION,
+    CatastropheFired, CivCollapsed, CivFounded, CivResilienceTick, CivSurplusChanged, Event,
+    ExtinctionCause, FigureBorn, HgtEvent, RelationConfirmed, RunHeader, SpeciationEvent,
+    SpeciationTriggerKind, SpeciesExtinct, TraitName, TradeRouteClosed, TradeRouteEstablished,
+    SCHEMA_VERSION,
 };
 
 fn run_start() -> Event {
@@ -162,4 +164,211 @@ fn aggregates_surplus_history_and_trade_routes() {
         "second route is still open at run end"
     );
     assert!(second.close_reason.is_none());
+}
+
+/// Ecosystem aggregate fold counts speciation, HGT, catastrophes,
+/// and extinctions; tracks the known / extinct species id sets;
+/// and averages the resilience trace.
+#[test]
+fn aggregates_ecosystem_summary_across_events() {
+    let half_q32 = (0.5_f64 * (1_u64 << 32) as f64) as i64;
+    let one_q32 = 1_i64 << 32;
+    let three_halves_q32 = (1.5_f64 * (1_u64 << 32) as f64) as i64;
+    let events = vec![
+        run_start(),
+        // Two catastrophes — one volcano + one hurricane.
+        Event::CatastropheFired(CatastropheFired {
+            tick: 10,
+            civ_id: 1,
+            catastrophe_kind: "volcano".into(),
+            fraction_lost_q32: 0,
+        }),
+        Event::CatastropheFired(CatastropheFired {
+            tick: 20,
+            civ_id: 1,
+            catastrophe_kind: "hurricane".into(),
+            fraction_lost_q32: 0,
+        }),
+        Event::CatastropheFired(CatastropheFired {
+            tick: 30,
+            civ_id: 1,
+            catastrophe_kind: "volcano".into(),
+            fraction_lost_q32: 0,
+        }),
+        // Two speciation events. Daughter 5 then 6, from parent 0.
+        Event::SpeciationOccurred(SpeciationEvent {
+            tick: 40,
+            parent_id: 0,
+            daughter_id: 5,
+            trigger: SpeciationTriggerKind::Sympatric,
+        }),
+        Event::SpeciationOccurred(SpeciationEvent {
+            tick: 50,
+            parent_id: 5,
+            daughter_id: 6,
+            trigger: SpeciationTriggerKind::Polyploid,
+        }),
+        // One HGT — donor 5 → recipient 6.
+        Event::HorizontalGeneTransfer(HgtEvent {
+            tick: 60,
+            donor_id: 5,
+            recipient_id: 6,
+            trait_swapped: TraitName::RadiationMax,
+        }),
+        // Species 5 goes extinct.
+        Event::SpeciesExtinct(SpeciesExtinct {
+            tick: 70,
+            species_id: 5,
+            cause: ExtinctionCause::PopulationCollapse,
+        }),
+        // Three resilience ticks — mean = (0.5 + 1.0 + 1.5) / 3 = 1.0.
+        Event::CivResilienceTick(CivResilienceTick {
+            tick: 80,
+            civ_id: 1,
+            resilience_q32: half_q32,
+            producer_biomass_q32: 0,
+            previous_q32: one_q32,
+        }),
+        Event::CivResilienceTick(CivResilienceTick {
+            tick: 90,
+            civ_id: 1,
+            resilience_q32: one_q32,
+            producer_biomass_q32: 0,
+            previous_q32: half_q32,
+        }),
+        Event::CivResilienceTick(CivResilienceTick {
+            tick: 100,
+            civ_id: 1,
+            resilience_q32: three_halves_q32,
+            producer_biomass_q32: 0,
+            previous_q32: one_q32,
+        }),
+        Event::RunEnd {
+            tick: 200,
+            reason: "fixed_horizon".into(),
+        },
+    ];
+    let d = Digest::from_events(&events);
+    let e = &d.ecosystem;
+    assert_eq!(e.speciation_count, 2);
+    assert_eq!(e.hgt_count, 1);
+    assert_eq!(e.catastrophes_by_kind.get("volcano").copied(), Some(2));
+    assert_eq!(e.catastrophes_by_kind.get("hurricane").copied(), Some(1));
+    assert!(e.extinct_species_ids.contains(&5));
+    assert_eq!(e.extinct_species_count(), 1);
+    // Known: 0 (parent), 5, 6 — three species seen.
+    assert_eq!(e.known_species_ids.len(), 3);
+    // Mean resilience ≈ 1.0 — Q32.32 representation within rounding.
+    let mean = e.mean_resilience_q32.expect("3 ticks → Some(mean)");
+    let mean_f = mean as f64 / (1_u64 << 32) as f64;
+    assert!(
+        (mean_f - 1.0).abs() < 1e-6,
+        "mean resilience should be ~1.0, got {mean_f}",
+    );
+    // Magnetic-reversal / Hadley / tidal-heating / subsurface
+    // are not yet emitted as events; the digest should report 0 /
+    // None placeholders so the wire schema can grow them later
+    // without restructuring the field.
+    assert_eq!(e.magnetic_reversal_events, 0);
+    assert!(e.hadley_cell_count.is_none());
+    assert!(e.mean_hadley_jet_q32.is_none());
+    assert!(e.total_tidal_heating_tw_q32.is_none());
+    assert!(e.mean_subsurface_temp_k_q32.is_none());
+}
+
+/// End-to-end smoke test: the digest's new ecosystem aggregates
+/// surface in the rendered markdown's "Ecosystem & dynamics"
+/// section. Locks the digest → renderer wiring so a refactor that
+/// stops piping aggregates through to the planet card surfaces
+/// loudly.
+#[test]
+fn rendered_markdown_includes_ecosystem_section() {
+    let events = vec![
+        run_start(),
+        Event::SpeciationOccurred(SpeciationEvent {
+            tick: 10,
+            parent_id: 0,
+            daughter_id: 1,
+            trigger: SpeciationTriggerKind::Sympatric,
+        }),
+        Event::HorizontalGeneTransfer(HgtEvent {
+            tick: 20,
+            donor_id: 0,
+            recipient_id: 1,
+            trait_swapped: TraitName::RadiationMax,
+        }),
+        Event::CatastropheFired(CatastropheFired {
+            tick: 30,
+            civ_id: 1,
+            catastrophe_kind: "volcano".into(),
+            fraction_lost_q32: 0,
+        }),
+        Event::RunEnd {
+            tick: 100,
+            reason: "fixed_horizon".into(),
+        },
+    ];
+    let d = Digest::from_events(&events);
+    let md = crate::markdown(&d);
+    assert!(
+        md.contains("## Ecosystem & dynamics"),
+        "rendered markdown should include the ecosystem section",
+    );
+    assert!(
+        md.contains("Speciation events | 1"),
+        "speciation count should surface as a table row; got:\n{md}",
+    );
+    assert!(
+        md.contains("Horizontal gene transfer events | 1"),
+        "HGT count should surface as a table row",
+    );
+    assert!(
+        md.contains("volcano×1"),
+        "catastrophe histogram should surface volcano count",
+    );
+}
+
+/// Single-event smoke tests: each new aggregate increments
+/// independently. Belt-and-suspenders alongside the combined test
+/// above — locks the per-event semantics in case the combined test
+/// drifts.
+#[test]
+fn ecosystem_aggregates_single_event_increments() {
+    let only_speciation = Digest::from_events(&[
+        run_start(),
+        Event::SpeciationOccurred(SpeciationEvent {
+            tick: 1,
+            parent_id: 0,
+            daughter_id: 1,
+            trigger: SpeciationTriggerKind::FounderEffect,
+        }),
+    ]);
+    assert_eq!(only_speciation.ecosystem.speciation_count, 1);
+    assert_eq!(only_speciation.ecosystem.hgt_count, 0);
+
+    let only_hgt = Digest::from_events(&[
+        run_start(),
+        Event::HorizontalGeneTransfer(HgtEvent {
+            tick: 1,
+            donor_id: 0,
+            recipient_id: 1,
+            trait_swapped: TraitName::TemperatureToleranceLow,
+        }),
+    ]);
+    assert_eq!(only_hgt.ecosystem.hgt_count, 1);
+    assert_eq!(only_hgt.ecosystem.speciation_count, 0);
+
+    let only_extinct = Digest::from_events(&[
+        run_start(),
+        Event::SpeciesExtinct(SpeciesExtinct {
+            tick: 1,
+            species_id: 9,
+            cause: ExtinctionCause::Catastrophe,
+        }),
+    ]);
+    assert_eq!(only_extinct.ecosystem.extinct_species_count(), 1);
+    assert!(only_extinct.ecosystem.extinct_species_ids.contains(&9));
+
+    // No resilience ticks → mean is None, not Some(0).
+    assert!(only_speciation.ecosystem.mean_resilience_q32.is_none());
 }

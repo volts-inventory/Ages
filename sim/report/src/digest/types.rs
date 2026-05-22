@@ -2,7 +2,7 @@
 //! walker lives in `build`; this file holds the data shapes.
 
 use protocol::{Event, PlanetDerived, PlanetMap, SpeciesDerived};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
 pub struct Digest {
@@ -49,6 +49,94 @@ pub struct Digest {
     /// any future timeline sections can re-walk without re-reading
     /// the log.
     pub events: Vec<Event>,
+    /// Aggregate ecosystem / planet-level summaries the post-run
+    /// report surfaces in a dedicated section. Populated from
+    /// `SpeciesExtinct`, `SpeciationOccurred`,
+    /// `HorizontalGeneTransfer`, `CatastropheFired`,
+    /// `CivResilienceTick` etc. Fields default to zero / `None` when
+    /// the corresponding events weren't emitted in the run.
+    pub ecosystem: EcosystemSummary,
+}
+
+/// Ecosystem / planet-level aggregate summary, populated by the
+/// digest fold. Surfaces in the post-run report's planet header so
+/// long-running dynamics (speciation, HGT, mass extinction, civ
+/// resilience drift) get an at-a-glance summary instead of having to
+/// be reconstructed from the event log.
+///
+/// Fields cover both "events on the wire" (speciation, HGT,
+/// extinction, catastrophes, resilience) and "events that aren't yet
+/// emitted but exist in the sim" (Hadley layout, tidal heating,
+/// subsurface ocean temp, magnetic reversal). The `Option<…>` fields
+/// stay `None` until the protocol grows the matching events;
+/// downstream consumers can switch on presence without a schema
+/// migration.
+#[derive(Debug, Clone, Default)]
+pub struct EcosystemSummary {
+    /// Unique species ids that emitted at least one `SpeciesExtinct`
+    /// event during the run.
+    pub extinct_species_ids: BTreeSet<u32>,
+    /// Unique species ids the digest has ever seen alive — union of
+    /// the run's host `Species` event, all parent / daughter ids
+    /// referenced in `SpeciationOccurred` events, and all donor /
+    /// recipient ids referenced in `HorizontalGeneTransfer`. Used to
+    /// compute the extant-vs-extinct split at run end.
+    pub known_species_ids: BTreeSet<u32>,
+    /// Count of `SpeciationOccurred` events. The daughter ids land
+    /// in `known_species_ids` so the extant count is
+    /// `known_species_ids.len() - extinct_species_ids.len()`.
+    pub speciation_count: u32,
+    /// Count of `HorizontalGeneTransfer` events.
+    pub hgt_count: u32,
+    /// Histogram of catastrophe kinds → fire count across the run.
+    /// Keyed by `CatastropheFired::catastrophe_kind` (e.g. `volcano`,
+    /// `hurricane`, `solar_flare`).
+    pub catastrophes_by_kind: BTreeMap<String, u32>,
+    /// Mean civ ecological resilience scalar over the run, as the
+    /// arithmetic mean of every `CivResilienceTick::resilience_q32`
+    /// emitted. `None` when no resilience ticks fired (very short
+    /// run, or pre-resilience event logs).
+    pub mean_resilience_q32: Option<i64>,
+    /// Number of magnetic-reversal start / end events the run
+    /// emitted. The sim has a magnetic-state model but doesn't yet
+    /// emit per-reversal events; this counter stays `0` until the
+    /// protocol grows them and the downstream report layer surfaces
+    /// "any magnetic reversal fired this run" as `count > 0`.
+    pub magnetic_reversal_events: u32,
+    /// Hadley cell count from the planet's `HadleyCirculation::layout`,
+    /// if surfaced by the protocol. Currently always `None` (the
+    /// layout is internal to `sim_physics::hadley`); reserved for a
+    /// future protocol pass that emits the layout summary.
+    pub hadley_cell_count: Option<u32>,
+    /// Mean Hadley-cell jet velocity (m/s), Q32.32. `None` until
+    /// the protocol exposes the jet field. Reserved for future use.
+    pub mean_hadley_jet_q32: Option<i64>,
+    /// Total tidal-heating budget summed across all moons, in TW
+    /// (terawatts), Q32.32. `None` until the per-moon tidal heating
+    /// reads off the moon-system surface in an event payload.
+    pub total_tidal_heating_tw_q32: Option<i64>,
+    /// Mean subsurface-ocean temperature (Kelvin), Q32.32. Only
+    /// meaningful for icy substrates with sub-surface oceans. `None`
+    /// until the protocol carries it.
+    pub mean_subsurface_temp_k_q32: Option<i64>,
+}
+
+impl EcosystemSummary {
+    /// Extant species count: known minus extinct. Returns `0` if
+    /// `extinct_species_ids` is a superset (shouldn't happen for a
+    /// well-formed run; defensive against malformed logs).
+    #[must_use]
+    pub fn extant_species_count(&self) -> usize {
+        self.known_species_ids
+            .len()
+            .saturating_sub(self.extinct_species_ids.len())
+    }
+
+    /// Extinct species count.
+    #[must_use]
+    pub fn extinct_species_count(&self) -> usize {
+        self.extinct_species_ids.len()
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -12,6 +12,16 @@ use crate::q32::q32_to_f64;
 use protocol::Event;
 use std::collections::BTreeSet;
 
+/// Resilience band that triggers a highlight pin for a
+/// `CivResilienceTick` event. Resilience is `producer_biomass /
+/// initial_producer_biomass` clamped to `[0, 2]`; 1.0 is baseline.
+/// Pin the event only when it drops well below baseline (degraded
+/// ecosystem starving the civ) or rises well above (thriving
+/// boom) — anything else is per-civ slow drift that lives in the
+/// per-civ chapter.
+const RESILIENCE_HIGHLIGHT_LOW: f64 = 0.5;
+const RESILIENCE_HIGHLIGHT_HIGH: f64 = 1.5;
+
 /// Default top-N% of scored events to surface. The ~5% recommendation
 /// is calibrated for very long runs; for the M6 5000-tick
 /// shakedown this would surface noise, so the renderer caps the
@@ -219,22 +229,17 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // civ tools. Score 0.95 puts them alongside first tech
         // unlocks and conflict resolutions in the highlight reel.
         Event::TemplateDiscovered(_) | Event::ToolDiscovered(_) => Some(0.95),
-        // Species extinction is a structural ecosystem beat —
-        // genuinely consequential for the planet's biota. Pin it at
-        // 0.90 so it sits just below tool / template discoveries
-        // in the highlight reel.
-        Event::SpeciesExtinct(_) => Some(0.90),
-        // HGT events are individually low-stakes — a single trait
-        // axis nudged 5% toward another microbe. The aggregate
-        // effect surfaces through downstream tolerance / dormancy
-        // shifts; the events themselves stay out of the highlight
-        // reel.
+        // Species extinction + speciation: these are structural
+        // ecosystem beats and now land as pins in the main loop
+        // (see the dedicated arms in `highlights`). Returning
+        // `None` here keeps the scored long-tail from re-counting
+        // them.
+        Event::SpeciesExtinct(_) | Event::SpeciationOccurred(_) => None,
+        // HGT events get a per-event pin (the swap fingerprint is
+        // narratively legible — "donor → recipient swapped trait
+        // X") so the dedicated arm in `highlights` handles them
+        // and the scored long tail stays out of the way.
         Event::HorizontalGeneTransfer(_) => None,
-        // Speciation events likewise reshape the planet's biota —
-        // new daughter species joining the registry. Pin slightly
-        // below extinction (0.88) so a run with both events shows
-        // the extinction-then-radiation arc with extinction first.
-        Event::SpeciationOccurred(_) => Some(0.88),
     }
 }
 
@@ -388,6 +393,65 @@ pub fn highlights(digest: &Digest) -> Vec<Highlight> {
                     });
                 }
             }
+            Event::SpeciesExtinct(e) => {
+                out.push(Highlight {
+                    tick: e.tick,
+                    kind: HighlightKind::Pin,
+                    text: format!(
+                        "Species {} extinct ({}).",
+                        e.species_id,
+                        extinction_cause_label(e.cause),
+                    ),
+                });
+            }
+            Event::SpeciationOccurred(e) => {
+                out.push(Highlight {
+                    tick: e.tick,
+                    kind: HighlightKind::Pin,
+                    text: format!(
+                        "Speciation: parent species {} → daughter species {} ({}).",
+                        e.parent_id,
+                        e.daughter_id,
+                        speciation_trigger_label(&e.trigger),
+                    ),
+                });
+            }
+            Event::HorizontalGeneTransfer(h) => {
+                out.push(Highlight {
+                    tick: h.tick,
+                    kind: HighlightKind::Pin,
+                    text: format!(
+                        "HGT: donor species {} → recipient species {} swapped {}.",
+                        h.donor_id,
+                        h.recipient_id,
+                        trait_name_label(h.trait_swapped),
+                    ),
+                });
+            }
+            Event::CivResilienceTick(t) => {
+                // Pin only meaningful drifts: well below baseline
+                // (degraded ecosystem starving the civ) or well
+                // above (thriving boom). Mid-band 0.05 step ticks
+                // would drown the highlight reel; they surface
+                // through the per-civ chapter's resilience trace
+                // (when that lands) and the digest mean.
+                let r = q32_to_f64(t.resilience_q32);
+                if !(RESILIENCE_HIGHLIGHT_LOW..=RESILIENCE_HIGHLIGHT_HIGH).contains(&r) {
+                    let direction = if r < RESILIENCE_HIGHLIGHT_LOW {
+                        "degraded"
+                    } else {
+                        "thriving"
+                    };
+                    out.push(Highlight {
+                        tick: t.tick,
+                        kind: HighlightKind::Pin,
+                        text: format!(
+                            "Civ {} ecosystem {} (resilience {:.2}).",
+                            t.civ_id, direction, r,
+                        ),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -526,4 +590,207 @@ fn figure_name(digest: &Digest, figure_id: u32) -> String {
         .flat_map(|c| c.figures.iter())
         .find(|f| f.id == figure_id)
         .map_or_else(|| format!("figure {figure_id}"), |f| f.name.clone())
+}
+
+/// Snake-case display label for an `ExtinctionCause`. Matches the
+/// wire-format serde rename (`PopulationCollapse` ↔
+/// `population_collapse` etc.) so the report and the event log
+/// agree on the strings.
+fn extinction_cause_label(cause: protocol::ExtinctionCause) -> &'static str {
+    match cause {
+        protocol::ExtinctionCause::PopulationCollapse => "population_collapse",
+        protocol::ExtinctionCause::KeystoneCascade => "keystone_cascade",
+        protocol::ExtinctionCause::Catastrophe => "catastrophe",
+    }
+}
+
+/// Display label for a `SpeciationTriggerKind`. Carries the
+/// inner payload (isolation ticks / generation index) where the
+/// variant has one, so the highlight line conveys "why now" not
+/// just "what kind".
+fn speciation_trigger_label(trigger: &protocol::SpeciationTriggerKind) -> String {
+    match trigger {
+        protocol::SpeciationTriggerKind::Allopatric { isolation_ticks } => {
+            format!("allopatric, {isolation_ticks} ticks isolated")
+        }
+        protocol::SpeciationTriggerKind::Sympatric => "sympatric".to_string(),
+        protocol::SpeciationTriggerKind::Polyploid => "polyploid".to_string(),
+        protocol::SpeciationTriggerKind::FounderEffect => "founder_effect".to_string(),
+        protocol::SpeciationTriggerKind::PostExtinctionRadiation { generation } => {
+            format!("post_extinction_radiation, gen {generation}")
+        }
+    }
+}
+
+/// Display label for the `TraitName` axis a HGT event swapped.
+fn trait_name_label(t: protocol::TraitName) -> &'static str {
+    match t {
+        protocol::TraitName::DormancyCapability => "dormancy_capability",
+        protocol::TraitName::TemperatureToleranceLow => "temperature_tolerance_low",
+        protocol::TraitName::TemperatureToleranceHigh => "temperature_tolerance_high",
+        protocol::TraitName::RadiationMax => "radiation_max",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::{
+        CivResilienceTick, Event, ExtinctionCause, HgtEvent, RunHeader, SpeciationEvent,
+        SpeciationTriggerKind, SpeciesExtinct, TraitName, SCHEMA_VERSION,
+    };
+
+    fn run_start() -> Event {
+        Event::RunStart(RunHeader {
+            schema_version: SCHEMA_VERSION,
+            seed: 1,
+            ages_version: "test".into(),
+        })
+    }
+
+    /// `SpeciesExtinct` event produces a pin highlight that carries
+    /// the species id and the snake-case cause label.
+    #[test]
+    fn species_extinct_event_yields_pin_highlight() {
+        let events = vec![
+            run_start(),
+            Event::SpeciesExtinct(SpeciesExtinct {
+                tick: 100,
+                species_id: 7,
+                cause: ExtinctionCause::PopulationCollapse,
+            }),
+            Event::RunEnd {
+                tick: 200,
+                reason: "fixed_horizon".into(),
+            },
+        ];
+        let d = Digest::from_events(&events);
+        let h = highlights(&d);
+        let line = h
+            .iter()
+            .find(|hl| hl.text.contains("Species 7 extinct"))
+            .expect("species extinction highlight should be present");
+        assert!(matches!(line.kind, HighlightKind::Pin));
+        assert!(line.text.contains("population_collapse"));
+        assert_eq!(line.tick, 100);
+    }
+
+    /// Speciation events render parent + daughter species ids and
+    /// the trigger kind label.
+    #[test]
+    fn speciation_event_yields_pin_highlight_with_trigger() {
+        let events = vec![
+            run_start(),
+            Event::SpeciationOccurred(SpeciationEvent {
+                tick: 50,
+                parent_id: 1,
+                daughter_id: 5,
+                trigger: SpeciationTriggerKind::Allopatric {
+                    isolation_ticks: 240,
+                },
+            }),
+            Event::RunEnd {
+                tick: 200,
+                reason: "fixed_horizon".into(),
+            },
+        ];
+        let d = Digest::from_events(&events);
+        let h = highlights(&d);
+        let line = h
+            .iter()
+            .find(|hl| hl.text.contains("Speciation: parent species 1"))
+            .expect("speciation highlight should be present");
+        assert!(matches!(line.kind, HighlightKind::Pin));
+        assert!(line.text.contains("daughter species 5"));
+        assert!(line.text.contains("allopatric"));
+        assert!(line.text.contains("240"));
+    }
+
+    /// HGT events render donor + recipient species ids and the
+    /// snake-case trait axis that was swapped.
+    #[test]
+    fn hgt_event_yields_pin_highlight_with_trait() {
+        let events = vec![
+            run_start(),
+            Event::HorizontalGeneTransfer(HgtEvent {
+                tick: 75,
+                donor_id: 3,
+                recipient_id: 4,
+                trait_swapped: TraitName::DormancyCapability,
+            }),
+            Event::RunEnd {
+                tick: 200,
+                reason: "fixed_horizon".into(),
+            },
+        ];
+        let d = Digest::from_events(&events);
+        let h = highlights(&d);
+        let line = h
+            .iter()
+            .find(|hl| hl.text.contains("HGT: donor species 3"))
+            .expect("HGT highlight should be present");
+        assert!(matches!(line.kind, HighlightKind::Pin));
+        assert!(line.text.contains("recipient species 4"));
+        assert!(line.text.contains("dormancy_capability"));
+    }
+
+    /// `CivResilienceTick` events outside the threshold band (below
+    /// 0.5 / above 1.5) are pinned; mid-band ticks stay out of the
+    /// reel.
+    #[test]
+    fn civ_resilience_tick_pins_only_extreme_values() {
+        // 0.3 (Q32.32 = 0.3 * 2^32) — degraded ecosystem.
+        let degraded_q32 = (0.3_f64 * (1_u64 << 32) as f64) as i64;
+        let baseline_q32 = (1.0_f64 * (1_u64 << 32) as f64) as i64;
+        let thriving_q32 = (1.8_f64 * (1_u64 << 32) as f64) as i64;
+        let events = vec![
+            run_start(),
+            Event::CivResilienceTick(CivResilienceTick {
+                tick: 50,
+                civ_id: 1,
+                resilience_q32: degraded_q32,
+                producer_biomass_q32: 0,
+                previous_q32: baseline_q32,
+            }),
+            // Mid-band tick — should NOT pin.
+            Event::CivResilienceTick(CivResilienceTick {
+                tick: 75,
+                civ_id: 1,
+                resilience_q32: baseline_q32,
+                producer_biomass_q32: 0,
+                previous_q32: degraded_q32,
+            }),
+            Event::CivResilienceTick(CivResilienceTick {
+                tick: 100,
+                civ_id: 1,
+                resilience_q32: thriving_q32,
+                producer_biomass_q32: 0,
+                previous_q32: baseline_q32,
+            }),
+            Event::RunEnd {
+                tick: 200,
+                reason: "fixed_horizon".into(),
+            },
+        ];
+        let d = Digest::from_events(&events);
+        let h = highlights(&d);
+        let degraded_line = h.iter().find(|hl| hl.text.contains("degraded"));
+        let thriving_line = h.iter().find(|hl| hl.text.contains("thriving"));
+        assert!(
+            degraded_line.is_some(),
+            "below-floor resilience should pin a 'degraded' highlight",
+        );
+        assert!(
+            thriving_line.is_some(),
+            "above-ceiling resilience should pin a 'thriving' highlight",
+        );
+        // The mid-band 1.0 tick should not appear.
+        for hl in &h {
+            assert!(
+                !hl.text.contains("(resilience 1.00)"),
+                "mid-band resilience should not pin; saw line {:?}",
+                hl.text,
+            );
+        }
+    }
 }
