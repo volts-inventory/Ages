@@ -336,9 +336,9 @@ mod tests {
         // cloud_fraction. Assert that cirrus contributes a lower
         // albedo (sunlight passes through) and a higher
         // greenhouse value (longwave is trapped) than stratus.
-        use crate::albedo::{base_albedo_for, effective_albedo_for};
+        use crate::albedo::{base_albedo_for, effective_albedo_for, Crust};
 
-        let base = base_albedo_for(Real::ZERO, Real::ZERO); // bare rock
+        let base = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Default); // bare rock
         let cloud_f = Real::ONE; // full cover for both cells
 
         let cirrus_albedo =

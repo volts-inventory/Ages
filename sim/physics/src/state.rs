@@ -280,6 +280,18 @@ pub struct PhysicsState {
     /// post-reversal cosmic-ray-driven mutation pulses). `0`
     /// before the first reversal of a run.
     last_reversal_tick: u64,
+    /// Planet-wide crust archetype consumed by
+    /// [`crate::albedo::base_albedo_for`] (P3.7). Carried in
+    /// `PhysicsState` rather than on each law because the
+    /// per-cell albedo loop reads it through
+    /// [`PhysicsState::planet_crust`] once per macro-step in
+    /// [`crate::albedo::effective_albedo_slice`]. Defaults to
+    /// [`crate::albedo::Crust::Default`] (0.20 bare-rock
+    /// baseline); production init paths overwrite via
+    /// [`PhysicsState::set_planet_crust`] after sampling the
+    /// planet's crust class. Tests that don't care about
+    /// petrology can leave the default in place.
+    planet_crust: crate::albedo::Crust,
 }
 
 impl PhysicsState {
@@ -358,6 +370,11 @@ impl PhysicsState {
             dipole_strength: Real::ONE,
             reversal_start_tick: None,
             last_reversal_tick: 0,
+            // P3.7: default to the catch-all `Default` crust
+            // (0.20 bare-rock baseline). `init_planet` overrides
+            // via `set_planet_crust` after the planet's crust
+            // class is sampled.
+            planet_crust: crate::albedo::Crust::Default,
             grid,
         }
     }
@@ -368,6 +385,26 @@ impl PhysicsState {
     #[must_use]
     pub fn macro_step(&self) -> u64 {
         self.macro_step
+    }
+
+    /// Planet-wide crust archetype (P3.7). Read by
+    /// [`crate::albedo::effective_albedo_slice`] each macro-step
+    /// to scale the bare-cell base albedo by petrology. Defaults
+    /// to [`crate::albedo::Crust::Default`] (0.20 baseline) until
+    /// production init overrides it via [`Self::set_planet_crust`].
+    #[must_use]
+    pub fn planet_crust(&self) -> crate::albedo::Crust {
+        self.planet_crust
+    }
+
+    /// Set the planet-wide crust archetype (P3.7). Called once at
+    /// planet init from `sim_world::init_planet`, after the
+    /// planet's `Crust` class has been sampled. The albedo loop
+    /// reads this on every macro-step; setting it after init has
+    /// undefined climate impact (the law's relaxation has already
+    /// integrated against the previous archetype's albedo).
+    pub fn set_planet_crust(&mut self, crust: crate::albedo::Crust) {
+        self.planet_crust = crust;
     }
 
     /// Bump the macro-step counter. Only the orchestrator should

@@ -39,8 +39,8 @@ pub mod weathering;
 pub mod wind;
 
 pub use albedo::{
-    albedo_radiation_factor, base_albedo_for, effective_albedo_for, effective_albedo_slice,
-    sigmoid_real, IceAlbedo,
+    albedo_radiation_factor, base_albedo_for, crust_base_albedo, effective_albedo_for,
+    effective_albedo_slice, sigmoid_real, Crust, IceAlbedo,
 };
 pub use atmospheric_escape::{
     atmospheric_escape_step, escape_rate_for, escape_rate_for_with_local_field, ion_escape_factor,

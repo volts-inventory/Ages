@@ -11,7 +11,30 @@ use crate::{Atmosphere, BiosphereClass, Composition, Crust, Magnetosphere, Plane
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sim_arith::Real;
-use sim_physics::{PhysicsState, Substance};
+use sim_physics::{Crust as PhysicsCrust, PhysicsState, Substance};
+
+/// Map the worldgen `Crust` archetype (developmental bias —
+/// fossil-fuel / piezoelectric / rare-earth biases) onto the
+/// physics-side petrological `Crust` (P3.7), which keys
+/// reflectivity off surface mineralogy. The two enums live in
+/// different crates because they answer different questions:
+/// worldgen wants "what biases does this crust impart on the
+/// civ's tech tree?"; physics wants "what's the bare-cell base
+/// albedo?". Variants without a dedicated reflectivity hint fall
+/// through to [`PhysicsCrust::Default`] (0.20 bare-rock baseline).
+#[must_use]
+pub fn physics_crust_for(crust: Crust) -> PhysicsCrust {
+    match crust {
+        // Earth-like basalt-dominated crust → dark mafic albedo.
+        Crust::Basaltic => PhysicsCrust::Basaltic,
+        // Titan-style tholin / dark organic surface.
+        Crust::Hydrocarbon => PhysicsCrust::Hydrocarbon,
+        // No dedicated reflectivity hint for the three
+        // "developmental-bias" archetypes — they're petrologically
+        // unconstrained, so default to the bare-rock baseline.
+        Crust::Piezoelectric | Crust::Ferrous | Crust::RareEarth => PhysicsCrust::Default,
+    }
+}
 
 /// EM discharge threshold (lightning ceiling) per magnetosphere
 /// class. Planet-metadata imprints derive from this — every per-cell charge
@@ -30,6 +53,14 @@ pub fn discharge_threshold_for(magnetosphere: Magnetosphere) -> Real {
 /// same Planet + same grid → identical cell-level state every time.
 #[allow(clippy::too_many_lines)]
 pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
+    // P3.7: pipe the planet's petrological crust class into
+    // `PhysicsState` so the per-cell albedo loop sees a darker
+    // base on basalt worlds and a lighter one on
+    // hydrocarbon-tholin / icy / sedimentary worlds. Set early
+    // so any law that reads albedo during init sees the right
+    // baseline.
+    state.set_planet_crust(physics_crust_for(planet.crust));
+
     let grid = state.grid().clone();
     let centre_q = planet
         .terrain_centre_q
