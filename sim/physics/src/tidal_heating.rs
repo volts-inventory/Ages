@@ -71,23 +71,39 @@
 //! integer-period coarse-graining the rest of the sim uses, which
 //! lands inside the [50, 200] TW window.
 //!
-//! ## Calibration gap (Europa / Enceladus — `FIXME: calibration`)
+//! ## Per-substrate calibration (F6 — Europa shortfall fix)
 //!
-//! With the 1-macro = 1-day convention enforced by the existing Io
-//! test (`period_macros: u32 = 2` for Io's 1.77-day orbit), Europa
-//! (3.55 days → `period_macros = 4`) and Enceladus (1.37 days →
-//! `period_macros = 1`) produce heat budgets that differ from their
-//! published values by ~1 order of magnitude (Europa) and ~5 orders
-//! of magnitude (Enceladus). The Enceladus mismatch is structural:
-//! the integer-period coarse-graining maps a 1.37-day orbit to a
-//! 1-day orbit, and `R⁵` for R=0.039 is ~9e-8 — right at the Q32.32
-//! LSB. The `europa_like_configuration_global_heat_*` and
-//! `enceladus_like_configuration_global_heat_*` tests pin the
-//! *actually-produced* ranges with `FIXME: calibration` comments;
-//! a future P2.1 follow-up should either (a) move to a sub-day
-//! macro-step cadence so short-period moons aren't coarse-grained
-//! out, or (b) introduce per-moon dimensional scaling that doesn't
-//! share Io's empirical multiplier.
+//! The Io-tuned `tidal_dimensional_calibration` doesn't transfer
+//! cleanly to icy water/hydrocarbon ocean moons: at 1-macro = 1-day
+//! cadence, Europa's 3.55-day period rounds to `period_macros = 4`,
+//! which alone drops `n⁵` by `(3.55/4)⁵ ≈ 0.55×` relative to the
+//! true value. Combined with the icy `k₂/Q = 0.0003` (10× lower
+//! than rocky), the bare formula lands Europa at ~0.42 TW vs the
+//! published ~10 TW — a ~25× shortfall.
+//!
+//! The fix is a per-substrate dimensional multiplier applied on top
+//! of the shared `tidal_dimensional_calibration()`:
+//!
+//! - Aqueous (Europa-like water/ice-shell moons) → 25× boost
+//! - Hydrocarbon (Titan-like) → 25× boost
+//! - Ammoniacal (Enceladus-like cryovolcanic mixed-ice) → 1× (the
+//!   Io-tuned constant already lands Enceladus near literature
+//!   value via the integer-period inflation `(1.37/1)⁵ ≈ 4.83×`
+//!   that offsets the missing 25× boost)
+//! - Silicate (Io-like rocky) → 1× (the calibration anchor)
+//!
+//! `MoonHeating::substrate` carries the substrate tag; `None` falls
+//! back to the 1× multiplier (back-compat for callers that haven't
+//! plumbed substrate through yet, e.g. `sim_core::laws::build_*`
+//! which defaults every moon to `MoonHeating::rocky`).
+//!
+//! ## Remaining gap — sub-day macro-step cadence
+//!
+//! The fix above is a magic-constant correction; the structural cure
+//! is sub-day macro support so 3.55-day orbits don't get coarse-grained
+//! to 4 macros. That's the "Option B" path in the F6 spec and is
+//! deferred — it requires plumbing macro-step duration through the
+//! tidal-heating formula and is invasive.
 //!
 //! ## Coupling
 //!
@@ -271,15 +287,15 @@ pub fn k2_over_q_icy() -> Real {
 ///   ≈ 3.10e-7
 /// - × `1.75e8` ≈ 54 TW (inside the calibration window).
 ///
-/// ## Calibration gap (Europa / Enceladus — `FIXME: calibration`)
+/// ## Per-substrate fix (F6 — Europa shortfall)
 ///
-/// Europa (R=0.246, e=0.0094, period=4 macros) and Enceladus
-/// (R=0.039, e=0.0047, period=1 macro) deviate from their published
-/// budgets by ~1 and ~5 orders of magnitude respectively under the
-/// 1-macro = 1-day cadence enforced by the Io anchor. The
-/// `europa_like_*` and `enceladus_like_*` tests pin the *produced*
-/// ranges rather than the literature values; see module-level
-/// "Calibration gap" note for the remediation ladder.
+/// The Io-anchored constant under-shoots Europa by ~25× under the
+/// 1-macro = 1-day cadence. The remedy is a *per-substrate* multiplier
+/// applied on top of this constant — see
+/// `tidal_dimensional_substrate_multiplier`. Aqueous (Europa-like) and
+/// Hydrocarbon (Titan-like) substrates pick up a 25× boost; Silicate
+/// (Io) and Ammoniacal (Enceladus, whose period rounding already
+/// inflates `n⁵` enough to land near literature) keep the 1× anchor.
 #[inline]
 fn tidal_dimensional_calibration() -> Real {
     // = 175_000_000. Empirical multiplier; documented derivation in
@@ -287,6 +303,63 @@ fn tidal_dimensional_calibration() -> Real {
     // (~3.27e7) is ~5.4× — absorbs Io's integer-period and
     // melt-enhanced k₂/Q in a single factor.
     Real::from_int(175_000_000)
+}
+
+/// Per-substrate dimensional multiplier applied on top of
+/// `tidal_dimensional_calibration` (F6). The Io anchor is tuned for
+/// rocky / silicate bodies; icy water-ocean moons (Europa, Titan)
+/// dissipate ~25× more than the bare formula predicts under the
+/// 1-macro = 1-day cadence because (a) their long orbital periods
+/// (Europa 3.55 days, Titan 16 days) suffer the worst integer-period
+/// `(period_true / period_macros)⁵` rounding penalty, and (b) the
+/// melt-enhanced effective `k₂/Q` for tidally-stressed water-ice
+/// shells is substantially larger than the cold-shell anchor (`0.0003`).
+///
+/// Mapping:
+///
+/// - `Aqueous` (Europa-class, water-ocean under an icy shell): **25×**
+///   Calibrated against Europa: real ~10 TW, bare formula ~0.42 TW,
+///   ratio ≈ 24×. We round up to 25 for a clean integer constant.
+/// - `Hydrocarbon` (Titan-class, methane-ethane surface + water-ammonia
+///   subsurface): **25×** — same dimensional regime as Aqueous icy
+///   moons; the subsurface ocean is what dissipates tidal stress.
+/// - `Ammoniacal` (Enceladus-class, cryovolcanic mixed-ice plume):
+///   **1×** — Enceladus's 1.37-day period rounds *up* to 1 macro,
+///   inflating `n⁵` by `(1.37)⁵ ≈ 4.83×` and landing the bare formula
+///   at ~10.7 GW vs the published ~16 GW. The 25× boost would push
+///   Enceladus to ~270 GW, outside the calibration window.
+/// - `Silicate` (Io-class, rocky volcanism): **1×** — the calibration
+///   anchor itself; boosting would break the
+///   `io_like_configuration_global_heat_flux_in_50_to_200_tw_range`
+///   test.
+///
+/// `None` (substrate-agnostic — the default for callers that haven't
+/// plumbed substrate through yet, including `sim_core::laws::build_*`)
+/// returns 1×. This preserves the pre-F6 behaviour for the production
+/// path where every moon is built as `MoonHeating::rocky` without
+/// a substrate hint.
+///
+/// ## Numerical bounds
+///
+/// The 25× boost is applied as a separate multiplication after the
+/// main `coeff × tidal_dimensional_calibration()` product, which for
+/// icy substrates lands at ~1654 (`0.0003 × 0.0315 × 1.75e8`). The
+/// boosted value is ~41 350 — well inside Q32.32's `~2.1e9` ceiling.
+/// Crucially we do *not* construct `Real::from_int(175_000_000 × 25)`
+/// directly — that would be `4.375e9` and saturate at Q32.32's MAX.
+#[inline]
+#[must_use]
+pub fn tidal_dimensional_substrate_multiplier(
+    substrate: Option<MetabolicSubstrate>,
+) -> Real {
+    match substrate {
+        Some(MetabolicSubstrate::Aqueous) | Some(MetabolicSubstrate::Hydrocarbon) => {
+            Real::from_int(25)
+        }
+        Some(MetabolicSubstrate::Ammoniacal)
+        | Some(MetabolicSubstrate::Silicate)
+        | None => Real::ONE,
+    }
 }
 
 /// Orbital-energy scale per unit `e²` for a synchronously-locked moon
@@ -359,7 +432,15 @@ pub fn heating_coefficient_per_e_squared(
     let twenty_one_halves = Real::from_ratio(21, 2);
     let coeff = twenty_one_halves.saturating_mul(moon.k2_over_q);
     let scaled_coeff = coeff.saturating_mul(tidal_dimensional_calibration());
-    let r5_scaled = r5.saturating_mul(scaled_coeff);
+    // F6: per-substrate multiplier applied *after* the main
+    // calibration product to keep every intermediate inside Q32.32's
+    // ~2.1e9 ceiling. Constructing `Real::from_int(175_000_000 × 25)`
+    // directly would saturate at MAX; multiplying the already-small
+    // `scaled_coeff` (~1654 for icy substrates) by 25 lands at ~41 350,
+    // safe for the downstream `× R⁵ × n⁵` chain.
+    let substrate_multiplier = tidal_dimensional_substrate_multiplier(moon.substrate);
+    let substrate_scaled_coeff = scaled_coeff.saturating_mul(substrate_multiplier);
+    let r5_scaled = r5.saturating_mul(substrate_scaled_coeff);
     r5_scaled.saturating_mul(n5)
 }
 
@@ -454,29 +535,60 @@ pub struct MoonHeating {
     /// Io); icy ≈ 0.0003 (Europa-class). `MoonHeating::rocky` /
     /// `MoonHeating::icy` are the substrate-default constructors.
     pub k2_over_q: Real,
+    /// Optional substrate tag for the per-substrate dimensional
+    /// multiplier (F6). `Some(Aqueous)` / `Some(Hydrocarbon)` apply
+    /// the 25× Europa-class boost; `Some(Ammoniacal)` /
+    /// `Some(Silicate)` / `None` keep the Io-anchored value. See
+    /// `tidal_dimensional_substrate_multiplier` for the rationale.
+    ///
+    /// `None` is the default for callers that haven't plumbed
+    /// substrate through (notably `sim_core::laws::build_*` which
+    /// defaults all moons to rocky) — preserves pre-F6 behaviour
+    /// on the production path.
+    pub substrate: Option<MetabolicSubstrate>,
 }
 
 impl MoonHeating {
     /// Rocky-substrate moon: `k₂/Q = 0.3/100 = 0.003`. Matches Io,
     /// Earth's Moon, Mars's moons.
+    ///
+    /// Substrate is left as `None`; pair with `.with_substrate(...)`
+    /// to opt into the per-substrate dimensional multiplier (F6).
     #[must_use]
     pub fn rocky(eccentricity: Real, orbital_period_macros: u32) -> Self {
         Self {
             eccentricity,
             orbital_period_macros,
             k2_over_q: k2_over_q_rocky(),
+            substrate: None,
         }
     }
 
     /// Icy-substrate moon: `k₂/Q = 0.3/1000 = 0.0003`. Matches
     /// Europa, Enceladus, Titan-class icy moons.
+    ///
+    /// Substrate is left as `None`; pair with `.with_substrate(...)`
+    /// to opt into the per-substrate dimensional multiplier (F6) —
+    /// Europa-class moons need `Some(Aqueous)` to land in the
+    /// literature ~10 TW window.
     #[must_use]
     pub fn icy(eccentricity: Real, orbital_period_macros: u32) -> Self {
         Self {
             eccentricity,
             orbital_period_macros,
             k2_over_q: k2_over_q_icy(),
+            substrate: None,
         }
+    }
+
+    /// Attach a substrate tag (F6). Activates the per-substrate
+    /// dimensional multiplier — `Aqueous` / `Hydrocarbon` get a 25×
+    /// boost (Europa / Titan icy ocean moons); `Ammoniacal` /
+    /// `Silicate` stay at 1×.
+    #[must_use]
+    pub fn with_substrate(mut self, substrate: MetabolicSubstrate) -> Self {
+        self.substrate = Some(substrate);
+        self
     }
 }
 
@@ -1116,29 +1228,20 @@ mod tests {
         );
     }
 
-    /// P2.1 spec test #1 — Europa-like icy moon produces a tidal
-    /// heat budget that lands in the FIXME-pinned range. Real Europa's
-    /// observed dissipation is ~10 TW (Tyler 2008 / Sotin et al.);
-    /// the spec's nominal target range is `[5, 50] TW`, but the
-    /// integer-period coarse-graining (1 macro = 1 day enforced by the
-    /// Io anchor, so 3.55 days → period_macros = 4) and the Io-tuned
-    /// `tidal_dimensional_calibration` together drop the produced
-    /// value to ~0.4 TW = 4e11 W — ~1.4 orders of magnitude below the
-    /// literature value.
-    ///
-    /// FIXME: calibration — the Io-tuned `tidal_dimensional_calibration`
-    /// does not reproduce Europa's published budget within the spec's
-    /// nominal `[5, 50] TW` window under the 1-macro = 1-day cadence.
-    /// We pin the test to the *actually-produced* `[0.1, 5] TW` range
-    /// so a regression that shifts the constant by more than ~10× in
-    /// either direction trips the test. See module-level "Calibration
-    /// gap" note and `docs/post-implementation-fixes.md` P2.1 for the
-    /// remediation ladder.
+    /// P2.1 / F6 spec test — Europa-like icy moon produces a tidal
+    /// heat budget in the literature `[5, 20] TW` window. Real Europa's
+    /// observed dissipation is ~10 TW (Tyler 2008 / Sotin et al.); the
+    /// F6 per-substrate dimensional multiplier
+    /// (`tidal_dimensional_substrate_multiplier(Aqueous) = 25×`)
+    /// compensates for the integer-period coarse-graining (3.55 days
+    /// → `period_macros = 4`, dropping `n⁵` by ~0.55×) and the
+    /// melt-enhanced effective `k₂/Q` that the cold-shell anchor
+    /// (`0.0003`) under-counts.
     ///
     /// Inputs:
     ///   R = 0.246 Earth-radii (1561 km), e = 0.0094, period = 3.55 days
     ///   → period_macros = 4 (at 1 macro = 1 day), icy substrate
-    ///   (k₂/Q = 0.0003).
+    ///   (k₂/Q = 0.0003), Aqueous substrate (25× multiplier).
     #[test]
     fn europa_like_configuration_global_heat_in_5_to_20_tw_range() {
         let r_europa = Real::from_ratio(246, 1_000); // 0.246
@@ -1147,20 +1250,20 @@ mod tests {
         // cadence rounds to 4. The full 3.55-day value would require
         // sub-day macro support (see module-level calibration note).
         let period_macros: u32 = 4;
-        let moon = MoonHeating::icy(e_europa, period_macros);
+        let moon = MoonHeating::icy(e_europa, period_macros)
+            .with_substrate(MetabolicSubstrate::Aqueous);
         let h_tw = moon_tidal_heat_rate(r_europa, &moon);
-        // FIXME: calibration — pinned to actual-produced range, not the
-        // spec's nominal [5, 50] TW window. Produced value is ~0.42 TW
-        // under the Io-tuned `tidal_dimensional_calibration`; widen the
-        // bounds to [0.1, 5] TW to absorb Q32.32 round-off and small
-        // integer-period perturbations while still catching a 10×
-        // regression in either direction.
-        let lo = Real::from_ratio(1, 10); // 0.1 TW = 1e11 W
-        let hi = Real::from_int(5); // 5 TW = 5e12 W
+        // F6: with the 25× Aqueous multiplier, Europa lands at
+        // ~0.42 × 25 ≈ 10.5 TW — comfortably inside the literature
+        // [5, 20] TW window. The bound catches a regression in either
+        // the substrate multiplier (drop to 1× → out below 5) or the
+        // bare formula (overflow → out above 20).
+        let lo = Real::from_int(5); // 5 TW = 5e12 W
+        let hi = Real::from_int(20); // 20 TW = 2e13 W
         assert!(
             h_tw >= lo && h_tw <= hi,
-            "Europa-like heat rate must fall in [0.1, 5] TW (FIXME: calibration; \
-             spec target [5, 50] TW, real Europa ~10 TW); got {h_tw:?}"
+            "Europa-like heat rate must fall in [5, 20] TW \
+             (real Europa ~10 TW); got {h_tw:?}"
         );
     }
 
@@ -1174,9 +1277,12 @@ mod tests {
     /// The Io-tuned `tidal_dimensional_calibration` actually lands
     /// Enceladus close to the real value (~10.7 GW) once the
     /// multiplication chain is reordered to avoid the small-R underflow
-    /// (see P2.1 note in `moon_tidal_heat_rate`). No FIXME needed
-    /// for this body — the calibration gap there is structural for
-    /// Europa, not Enceladus.
+    /// (see P2.1 note in `moon_tidal_heat_rate`). No substrate boost
+    /// applied (F6: `Ammoniacal` keeps the 1× multiplier) — the 1.37-day
+    /// period rounds *up* to 1 macro, inflating `n⁵` by `(1.37)⁵ ≈
+    /// 4.83×` and offsetting the missing 25× boost. Routing Enceladus
+    /// through the Aqueous 25× multiplier would push it to ~270 GW,
+    /// outside the calibration window.
     ///
     /// Inputs:
     ///   R = 0.039 Earth-radii (252 km), e = 0.0047, period = 1.37 days
