@@ -72,7 +72,7 @@
 
 use crate::laws::Law;
 use crate::state::PhysicsState;
-use sim_arith::transcendental::{cos, half_pi, sqrt};
+use sim_arith::transcendental::{cos, half_pi, sin, sqrt};
 use sim_arith::Real;
 
 /// Direction of meridional flow at the surface within a cell. The
@@ -190,6 +190,143 @@ pub fn default_gravity_ms2() -> Real {
     Real::from_ratio(981, 100)
 }
 
+/// Default equator-pole potential-temperature contrast (K) used in
+/// the Held-Hou Hadley-edge closure. Earth's annual-mean
+/// radiative-equilibrium contrast at the tropopause is ≈ 60 K — the
+/// gradient the atmosphere *would* have absent the Hadley
+/// circulation. (The observed surface contrast is smaller, ≈ 30 K,
+/// because the actual Hadley circulation has already flattened it.)
+pub const DEFAULT_DELTA_THETA_K: i64 = 60;
+
+/// Default mean equatorial reference temperature (K) used in the
+/// Held-Hou closure. Earth tropical surface ≈ 300 K; the closure
+/// is scale-invariant up to a logarithm in `T_eq`, so using the
+/// surface value is the standard simplification.
+pub const DEFAULT_T_EQ_K: i64 = 300;
+
+/// Default Held-Hou closure tropopause height (m). The closure's
+/// `H` parameter is the Hadley-cell lid (the tropopause), not the
+/// atmospheric e-folding scale height — the cell extends from the
+/// surface to the tropopause and the upper-level return flow
+/// closes through that lid. Earth tropopause ≈ 12 km.
+pub const DEFAULT_TROPOPAUSE_M: i64 = 12_000;
+
+/// Held-Hou Hadley-edge latitude (radians) from the
+/// angular-momentum + baroclinic-instability closure of Held & Hou
+/// (1980, JAS). The edge is the latitude at which the
+/// angular-momentum-conserving poleward flow can no longer remain
+/// stable to baroclinic overturning; equivalently, where the implied
+/// subtropical jet becomes too strong to maintain against shear
+/// instability.
+///
+/// The closure is:
+/// ```text
+///     sin²(lat_edge) ≈ (5/3) · g · H · Δθ / ((Ω · R)² · T_eq)
+/// ```
+/// where:
+/// - `g` is surface gravity (m/s²),
+/// - `H` is the tropopause height (m) — the Hadley-cell lid,
+/// - `Δθ` is the equator-pole radiative-equilibrium potential
+///   temperature contrast (K),
+/// - `Ω` is the planet's angular rotation rate (rad/s),
+/// - `R` is the planet radius (m),
+/// - `T_eq` is the equatorial reference temperature (K).
+///
+/// This is the textbook Held-Hou form (`(y_h/R)² ≈ 5gΔθH /
+/// (3Ω²R²θ₀)`). For Earth with `H = 12 km`, `Δθ = 60 K`, `T_eq =
+/// 300 K`, `Ω = 7.27e-5 rad/s`, `R = 6.371e6 m`, the closure
+/// returns `lat_edge ≈ 25-26°` — within the observed 25-30°
+/// subtropical Hadley-cell boundary. A slow rotator (longer day,
+/// smaller `Ω`) gives a larger numerator-to-denominator ratio and
+/// thus a poleward-shifted edge — the classic "wider Hadley cell on
+/// a slow rotator" result.
+///
+/// The function clamps the inner ratio so `sin(lat_edge) ∈ [0, 1]`;
+/// pathological inputs (zero Ω, huge Δθ) saturate the edge to π/2.
+#[must_use]
+pub fn held_hou_hadley_edge(
+    omega_rad_s: Real,
+    radius_m: Real,
+    gravity_ms2: Real,
+    tropopause_m: Real,
+    delta_theta_k: Real,
+    t_eq_k: Real,
+) -> Real {
+    // Slow-rotator limit: Ω → 0 sends sin² → ∞, which the closure
+    // saturates at sin = 1 → lat_edge = π/2 (Hadley extends
+    // pole-to-pole). The cell-count branch in `compute_hadley_layout`
+    // already collapses to a single cell in this regime; this guard
+    // makes the helper safe to call independently.
+    if omega_rad_s <= Real::ZERO || radius_m <= Real::ZERO || t_eq_k <= Real::ZERO {
+        return half_pi();
+    }
+    let five_over_three = Real::from_ratio(5, 3);
+    // Numerator: (5/3) · g · H · Δθ. Each factor is bounded
+    // (g ≈ 10, H ≈ 1e4, Δθ ≈ 60), so the product fits Q32.32
+    // comfortably (~ 1e7).
+    let numerator = five_over_three * gravity_ms2 * tropopause_m * delta_theta_k;
+    // Denominator: (Ω · R)² · T_eq. Compute `Ω · R` first so the
+    // intermediate stays small (Ω · R ≈ 463 m/s for Earth);
+    // squaring it gives ≈ 2.14e5, times T_eq ≈ 300 gives ≈ 6.4e7
+    // — still within Q32.32.
+    let omega_r = omega_rad_s * radius_m;
+    let denominator = omega_r * omega_r * t_eq_k;
+    if denominator <= Real::ZERO {
+        return half_pi();
+    }
+    let sin_sq = numerator / denominator;
+    // Clamp to [0, 1] so sqrt + arcsin stay in domain.
+    let sin_clamped = sqrt(sin_sq).min(Real::ONE).max(Real::ZERO);
+    arcsin_unit(sin_clamped)
+}
+
+/// Compute `arcsin(x)` for `x ∈ [0, 1]` via Newton's method on
+/// `f(θ) = sin(θ) − x = 0`. Returns θ ∈ `[0, π/2]`. Used by the
+/// Held-Hou closure to invert `sin(lat_edge)`; isolated here so the
+/// numerics are reviewable without distracting from the physics.
+///
+/// Newton iteration: `θ_{n+1} = θ_n − (sin(θ_n) − x) / cos(θ_n)`.
+/// Convergence is quadratic; 16 iterations more than cover Q32.32's
+/// precision. `cos(θ)` is bounded away from zero by clamping the
+/// final approach to `θ ≤ π/2 − ε` so the divide is safe.
+///
+/// `x` is assumed already clamped to `[0, 1]`. Out-of-domain inputs
+/// snap to the nearest valid endpoint rather than panicking.
+fn arcsin_unit(x: Real) -> Real {
+    if x <= Real::ZERO {
+        return Real::ZERO;
+    }
+    let pi_2 = half_pi();
+    if x >= Real::ONE {
+        return pi_2;
+    }
+    // Initial guess: cubic Taylor `arcsin(x) ≈ x + x³/6`. Good
+    // enough to land Newton in the quadratic-convergence regime for
+    // x ≤ 0.9 (worst case |error| ≈ 0.03 rad at x = 0.9).
+    let x_cube = x * x * x;
+    let mut theta = x + x_cube / Real::from_int(6);
+    if theta >= pi_2 {
+        theta = pi_2 - Real::from_ratio(1, 1_000_000);
+    }
+    // Newton refinement. Clamp θ slightly below π/2 each iteration
+    // so `cos(θ)` stays ≥ ~1e-3 and the divide doesn't explode on
+    // x → 1 inputs that slipped past the early-out.
+    let cos_floor = Real::from_ratio(1, 1_000);
+    let theta_ceiling = pi_2 - Real::from_ratio(1, 1_000_000);
+    for _ in 0..16 {
+        let s = sin(theta);
+        let c = cos(theta).max(cos_floor);
+        let delta = (s - x) / c;
+        let next = theta - delta;
+        let next_clamped = next.max(Real::ZERO).min(theta_ceiling);
+        if next_clamped == theta {
+            return next_clamped;
+        }
+        theta = next_clamped;
+    }
+    theta
+}
+
 /// Compute the circulation-cell layout for a planet from its
 /// rotation rate, radius, surface gravity, and atmospheric scale
 /// height. All inputs are in SI units except the planet radius,
@@ -280,7 +417,26 @@ pub fn compute_hadley_layout(
     let ratio = radius_m / rossby;
     let cells_per_hem = cell_count_from_ratio(ratio);
 
-    let cells = lay_out_cells(cells_per_hem);
+    // Held-Hou Hadley-edge closure: derive the equator-to-Hadley
+    // boundary latitude from baroclinic-instability angular-momentum
+    // balance rather than hard-coding 30°. Only the 3-cell layout
+    // consults this edge — the 1-cell (slow rotator) case is
+    // pole-to-pole by construction, and the 4+-cell (rapid rotator)
+    // case sits at sub-Earth Rossby radius where the Held-Hou
+    // single-Hadley-cell closure no longer applies.
+    //
+    // P3.6: this replaces the previous hard-coded `π/6` (= 30°)
+    // edge with `arcsin(sqrt((5/3) g H Δθ / ((ΩR)² T_eq)))`.
+    let hadley_edge = held_hou_hadley_edge(
+        omega,
+        radius_m,
+        g,
+        Real::from_int(DEFAULT_TROPOPAUSE_M),
+        Real::from_int(DEFAULT_DELTA_THETA_K),
+        Real::from_int(DEFAULT_T_EQ_K),
+    );
+
+    let cells = lay_out_cells(cells_per_hem, hadley_edge);
 
     HadleyCellLayout {
         cells,
@@ -335,11 +491,17 @@ fn cell_count_from_ratio(ratio: Real) -> u32 {
 ///   - 5 cells: [P, E, P, E, P]
 ///   - 6 cells: [P, E, P, E, P, E]
 ///
-/// Band edges are chosen on a non-uniform mesh: the boundary
-/// latitudes follow a geometric / linear interpolation tuned so the
-/// Hadley cell extends ~30° and the polar cell ~60°-pole on the
-/// three-cell layout, matching Earth's observed climatology.
-fn lay_out_cells(cells_per_hem: u32) -> Vec<HadleyCell> {
+/// `hadley_edge` is the Held-Hou-derived Hadley-cell boundary
+/// (radians, in `(0, π/2)`). Only the 3-cell layout reads it; the
+/// 1-cell and 4+-cell layouts derive their boundaries from a uniform
+/// mesh because the single-Hadley-cell baroclinic closure doesn't
+/// apply outside the Earth-like regime. For the 3-cell layout, the
+/// Hadley cell spans `[0, hadley_edge]` and the polar / Ferrel split
+/// is placed at the midpoint of `hadley_edge` and `π/2` — the polar
+/// cell takes the same width as the post-Hadley Ferrel cell. The
+/// hard-coded 30°/60° split of the previous implementation has been
+/// replaced by this closure (P3.6).
+fn lay_out_cells(cells_per_hem: u32, hadley_edge: Real) -> Vec<HadleyCell> {
     let n = cells_per_hem.clamp(1, MAX_CELLS_PER_HEMISPHERE);
     let pi_2 = half_pi();
     if n == 1 {
@@ -350,31 +512,45 @@ fn lay_out_cells(cells_per_hem: u32) -> Vec<HadleyCell> {
         }];
     }
     if n == 3 {
-        // Earth-like split: 0–30°, 30°–60°, 60°–90°.
-        let third = pi_2 / Real::from_int(3);
-        let two_thirds = third + third;
+        // Held-Hou-derived 3-cell split (P3.6): the Hadley edge is
+        // `hadley_edge`, then the Ferrel cell spans from there to a
+        // poleward boundary that sits halfway between `hadley_edge`
+        // and the pole. This places the polar cell at a width
+        // comparable to Earth's observed ~30° polar cap while
+        // letting the Hadley edge move with the closure. Guard
+        // against degenerate `hadley_edge` ≥ π/2 by pinning the
+        // Ferrel band to a non-empty interior; this only fires on
+        // pathological inputs (the closure clamps to π/2 in the
+        // slow-rotator limit, but that limit also routes to the
+        // n=1 branch above).
+        let edge = hadley_edge
+            .max(Real::from_ratio(1, 1_000))
+            .min(pi_2 - Real::from_ratio(1, 1_000));
+        // Polar boundary: midpoint of (edge, π/2). Symmetric split
+        // of the post-Hadley latitude band between Ferrel and polar.
+        let ferrel_polar_boundary = (edge + pi_2) / Real::from_int(2);
         return vec![
             HadleyCell {
                 lat_start: Real::ZERO,
-                lat_end: third,
+                lat_end: edge,
                 direction: CellDirection::Poleward,
             },
             HadleyCell {
-                lat_start: third,
-                lat_end: two_thirds,
+                lat_start: edge,
+                lat_end: ferrel_polar_boundary,
                 direction: CellDirection::Equatorward,
             },
             HadleyCell {
-                lat_start: two_thirds,
+                lat_start: ferrel_polar_boundary,
                 lat_end: pi_2,
                 direction: CellDirection::Poleward,
             },
         ];
     }
     // General case: equal-width bands. The 2 / 4 / 5 / 6 cases all
-    // use a uniform mesh; the climatologically-tuned 3-cell case
-    // above is the only exception. Direction starts with Poleward
-    // (Hadley) at the equator and alternates.
+    // use a uniform mesh; the closure-tuned 3-cell case above is
+    // the only exception. Direction starts with Poleward (Hadley)
+    // at the equator and alternates.
     let width = pi_2 / Real::from_int(i64::from(n));
     (0..n)
         .map(|i| {
@@ -762,8 +938,11 @@ mod tests {
     /// peak position). Both the Hadley and the Ferrel cells
     /// contribute to the jet on the real Earth — we sample inside
     /// Ferrel where the closed-form `(cos² lat_start − cos² lat_end)
-    /// / cos lat_end` integrand peaks under the equal-third band
-    /// split this layout uses (0–30°, 30°–60°, 60°–90°).
+    /// / cos lat_end` integrand peaks. Under the P3.6 Held-Hou
+    /// closure the 3-cell split is ~25°/~57.5°/90° (Hadley/Ferrel
+    /// boundary at the closure-derived edge, polar boundary at the
+    /// midpoint of edge and the pole) — the `cos²` integrand still
+    /// peaks comfortably inside the Ferrel interior at 45°.
     ///
     /// `dt = Real::from_int(3)` is the per-tick accumulator factor —
     /// the apply step's coefficient is dimensionless (the kernel
@@ -858,5 +1037,96 @@ mod tests {
         for v in state.fluid_velocity().0 {
             assert_eq!(*v, Real::ZERO);
         }
+    }
+
+    /// P3.6 acceptance test: the Held-Hou closure must place the
+    /// Earth-equivalent Hadley edge in `[25°, 35°]`, matching the
+    /// observed subtropical-jet boundary. The 3-cell layout's first
+    /// cell (`cells[0]`) spans `[0, hadley_edge]`; we read its
+    /// `lat_end` and convert to degrees.
+    ///
+    /// This replaces the prior hard-coded `π/6` (= 30°) edge with
+    /// `arcsin(sqrt((5/3) g H Δθ / ((ΩR)² T_eq)))`. With the default
+    /// closure parameters (`H = 12 km`, `Δθ = 60 K`, `T_eq = 300 K`)
+    /// Earth lands at ≈ 25-26°, within the 25-35° subtropical-jet
+    /// band the spec calls out.
+    #[test]
+    fn earth_like_hadley_edge_within_25_to_35_degrees() {
+        let layout = compute_hadley_layout(
+            Real::from_int(24),       // 24-hour day
+            Real::ONE,                // 1.0 Earth radii
+            default_gravity_ms2(),
+            DEFAULT_SCALE_HEIGHT_M,
+        );
+        assert_eq!(
+            layout.cells_per_hemisphere(),
+            3,
+            "Earth-like inputs must produce 3 cells per hemisphere \
+             for this test to probe the Held-Hou edge: layout={layout:?}"
+        );
+        // Hadley edge in radians.
+        let edge_rad = layout.cells[0].lat_end;
+        // Convert to degrees: deg = rad · 180 / π. `half_pi` =
+        // π/2 rad = 90°, so `deg = (edge_rad / half_pi) · 90`.
+        let edge_frac = edge_rad / half_pi();
+        let edge_deg = edge_frac * Real::from_int(90);
+        let lo = Real::from_int(25);
+        let hi = Real::from_int(35);
+        assert!(
+            edge_deg >= lo && edge_deg <= hi,
+            "Held-Hou Hadley edge for Earth-equivalent planet must \
+             sit in [25°, 35°]; got edge_rad={edge_rad:?}, \
+             edge_deg={edge_deg:?}"
+        );
+    }
+
+    /// P3.6 acceptance test: holding planet radius and gravity
+    /// fixed, a slow rotator (longer day_length, smaller Ω) must
+    /// shift the Held-Hou Hadley edge polewards relative to a fast
+    /// rotator. The closure's `sin²(lat_edge) ∝ 1/(ΩR)²` predicts
+    /// edge expansion as Ω shrinks: doubling the day length quadruples
+    /// the sin² factor and roughly doubles the sin (until saturation).
+    ///
+    /// Both planets must stay in the 3-cell regime — otherwise the
+    /// 1-cell pole-to-pole case (which `cells_per_hemisphere == 1`
+    /// triggers for the slowest rotators) would compare apples to
+    /// oranges. A 30-hour day still lands in the 3-cell window
+    /// (ratio ≈ 1.29 vs Earth's ≈ 1.6); a 40-hour day collapses to
+    /// 1 cell. We probe 24 h (Earth) vs 30 h (slow).
+    #[test]
+    fn slow_rotator_has_wider_hadley_cell_than_fast_rotator() {
+        let fast = compute_hadley_layout(
+            Real::from_int(24),       // Earth day length
+            Real::ONE,
+            default_gravity_ms2(),
+            DEFAULT_SCALE_HEIGHT_M,
+        );
+        let slow = compute_hadley_layout(
+            Real::from_int(30),       // slower rotator (30-hour day)
+            Real::ONE,
+            default_gravity_ms2(),
+            DEFAULT_SCALE_HEIGHT_M,
+        );
+        assert_eq!(
+            fast.cells_per_hemisphere(),
+            3,
+            "fast (24h) rotator must be in the 3-cell regime: \
+             layout={fast:?}"
+        );
+        assert_eq!(
+            slow.cells_per_hemisphere(),
+            3,
+            "slow (30h) rotator must also be in the 3-cell regime \
+             (else we'd be comparing different layouts): \
+             layout={slow:?}"
+        );
+        let fast_edge = fast.cells[0].lat_end;
+        let slow_edge = slow.cells[0].lat_end;
+        assert!(
+            slow_edge > fast_edge,
+            "slow rotator's Hadley edge must move polewards relative \
+             to fast rotator's: fast_edge={fast_edge:?}, \
+             slow_edge={slow_edge:?}"
+        );
     }
 }
