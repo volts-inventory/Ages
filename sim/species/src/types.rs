@@ -487,6 +487,38 @@ pub enum FunctionalResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpeciesId(pub u32);
 
+/// A horizontally-transferred plasmid carrying one trait axis +
+/// value from a donor microbial species. Sprint 3 P3.3 — rather
+/// than smooth interpolation, HGT trials *deposit* a plasmid in the
+/// recipient's `plasmids` registry; each tick the plasmid is
+/// evaluated against local conditions and either sweeps (the
+/// species' actual trait snaps to `trait_value`) or is lost
+/// (probabilistically removed in proportion to misfit).
+///
+/// The struct is `Copy` because every field is `Copy` — `Real`,
+/// `TraitName`, `u32`, `u64`. Identity lives in `id`; deduplication
+/// across multiple HGT acquisitions of the same axis from the same
+/// donor is the caller's responsibility (the per-trial code in
+/// `step_hgt` allocates a fresh id from a per-species counter so
+/// concurrent acquisitions never alias).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Plasmid {
+    /// Unique per-species plasmid id. Allocated monotonically from
+    /// the recipient species' `next_plasmid_id` counter at acquisition
+    /// time so `BTreeMap` iteration order is the acquisition order.
+    pub id: u32,
+    /// Which trait axis the plasmid carries.
+    pub trait_delta: protocol::TraitName,
+    /// The donor's trait value at acquisition time. A successful
+    /// sweep snaps the recipient's actual trait to this value (no
+    /// interpolation).
+    pub trait_value: Real,
+    /// Sim tick at which the plasmid was acquired. Lets downstream
+    /// instrumentation diagnose how long a plasmid sat in the
+    /// recipient before sweeping / being lost.
+    pub acquired_tick: u64,
+}
+
 /// Sparse interaction matrix. Pairs are keyed `(predator/affector,
 /// prey/affected)` for asymmetric interactions (Predation,
 /// Parasitism, Commensalism, HabitatModification); for symmetric

@@ -3,7 +3,7 @@
 
 use crate::types::{
     CognitionAxes, CognitionTopology, DynamicTool, EcosystemRole, Habitat, Lifecycle, Manipulation,
-    Modality, PopulationBiology, ToleranceEnvelope,
+    Modality, Plasmid, PopulationBiology, ToleranceEnvelope,
 };
 use sim_arith::Real;
 use std::collections::{BTreeMap, BTreeSet};
@@ -157,6 +157,20 @@ pub struct Species {
     /// hundreds of ticks (see `DormantPool::resurrect_step`).
     /// Sprint 2 Item 7b.
     pub dormancy_capability: Real,
+    /// Plasmid carrier registry — Sprint 3 P3.3. Prokaryote HGT is
+    /// modelled as a selection event: an HGT trial *adds* a donor's
+    /// trait value as a plasmid to the recipient's set; each tick
+    /// the plasmid is evaluated against local conditions and either
+    /// sweeps (the species' actual trait snaps to the plasmid value)
+    /// or is lost (probabilistically removed in proportion to its
+    /// misfit). Defaults to empty so every existing `Species { ... }`
+    /// literal stays compilable without per-call updates.
+    /// Keyed by `Plasmid::id` so iteration is deterministic.
+    pub plasmids: BTreeMap<u32, Plasmid>,
+    /// Next id allocator for plasmids. Monotonic per-species so HGT
+    /// trials can deduplicate concurrent acquisitions without
+    /// colliding. Initialised to `0` at species genesis.
+    pub next_plasmid_id: u32,
     /// True iff the species is still alive in the run. The
     /// extinction rule (Sprint 2 Item 6a) flips this off when a
     /// species' biomass / population pool stays below

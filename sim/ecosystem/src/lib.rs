@@ -41,7 +41,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod hgt;
-pub use hgt::{step_hgt, HGT_BASE_RATE, HGT_INTERPOLATION};
+pub use hgt::{step_hgt, LocalConditions, HGT_BASE_RATE, SWEEP_THRESHOLD};
 
 use protocol::{ExtinctionCause, SpeciesExtinct};
 use rand::{Rng, SeedableRng};
