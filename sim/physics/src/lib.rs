@@ -43,8 +43,8 @@ pub use albedo::{
     sigmoid_real, IceAlbedo,
 };
 pub use atmospheric_escape::{
-    atmospheric_escape_step, escape_rate_for, jeans_factor, EscapeChannels, PlanetEscapeParams,
-    ATMOSPHERIC_SUBSTANCES,
+    atmospheric_escape_step, escape_rate_for, escape_rate_for_with_local_field, ion_escape_factor,
+    jeans_factor, EscapeChannels, PlanetEscapeParams, ATMOSPHERIC_SUBSTANCES,
 };
 pub use chemistry::{Chemistry, Substance};
 pub use clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType, Clouds};
