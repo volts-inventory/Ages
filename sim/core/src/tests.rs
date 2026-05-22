@@ -9,6 +9,12 @@ use sim_species::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::laws::build_laws;
+use sim_world::{
+    AtmosphericComposition, BiosphereClass, Composition, Crust, CrustalComposition, LockingState,
+    MetabolicSubstrate, Planet, SpectralType, Star,
+};
+
 #[test]
 fn deterministic_event_log_for_same_seed() {
     let cfg = RunConfig::dev(42, 10);
@@ -780,5 +786,272 @@ fn macro_parasites_can_hgt() {
         "expected >= 1 HGT acquisition event between Micro/Virus parasites \
          over 200k ticks (expected ~40 at base rate); the parasite pair \
          is Microbial after T7 so the HGT path should be live for them",
+    );
+}
+
+// ---------------------------------------------------------------------
+// T16: Super-Earth gravity end-to-end check.
+//
+// P0.5 / Item 21 separated `Planet::gravity()` from a stored scalar to a
+// derived `EARTH_G × M / R²` accessor, and T3 threaded that derived value
+// into `Tides::for_gravity` / `Wind::for_gravity`. No prior test verified
+// that a high-gravity super-Earth actually drops through the build_laws
+// → integrate_civ_step pipeline without Q32.32 overflow, *and* that the
+// per-planet law coefficients visibly differ from the Earth-equivalent
+// baseline (the whole point of the mass/radius coupling).
+//
+// This test pins:
+//   1. A directly-constructed super-Earth Planet (M=5, R=1.5 → g ≈ 2.22 g).
+//   2. `planet.gravity()` lands inside ±5% of 2.22 g and
+//      `planet.escape_velocity()` clears Earth's ~11.18 km/s by a
+//      meaningful margin (super-Earth surface gravity *and* radius lift
+//      escape velocity well above Earth's).
+//   3. `build_laws` for the super-Earth produces a `tide_k` and `wind_k`
+//      that differ measurably from the Earth-equivalent baseline (tides
+//      scale `sqrt(g)`, winds scale `1/g`).
+//   4. A 1000-tick integration with the super-Earth laws + a parallel
+//      ecosystem step completes without panicking and leaves at least
+//      one extant ecosystem species — covers the "no Q32 overflow,
+//      something still alive" floor the spec calls out.
+// ---------------------------------------------------------------------
+
+/// Build a Planet with explicit mass/radius and otherwise Earth-like
+/// fields. The substrate, atmosphere, and mean temperature come from
+/// the caller so a single helper covers both the super-Earth case and
+/// the Earth-equivalent baseline used for the law-coefficient diff.
+fn earth_like_planet(
+    mass: Real,
+    radius: Real,
+    substrate: MetabolicSubstrate,
+    atmosphere: Atmosphere,
+    mean_temperature: Real,
+) -> Planet {
+    Planet {
+        seed: 1024,
+        name: "T16-SuperEarth".to_string(),
+        mass,
+        radius,
+        composition: Composition::Rocky,
+        mean_temperature,
+        temperature_gradient: Real::from_int(20),
+        terrain_peak: Real::from_int(5_000),
+        terrain_centre_q: 0,
+        terrain_centre_r: 0,
+        sea_level: Real::from_int(1_000),
+        atmosphere,
+        atmospheric_composition: AtmosphericComposition::vacuum(),
+        surface_pressure: Real::from_int(101_325),
+        biosphere: BiosphereClass::Lush,
+        biosphere_density: Real::from_ratio(7, 10),
+        magnetosphere: Magnetosphere::Strong,
+        crust: Crust::Basaltic,
+        crustal_composition: CrustalComposition::empty(),
+        stellar_luminosity: Real::from_int(1_361),
+        orbital_distance_au: Real::ONE,
+        moon_count: 0,
+        moons: Vec::new(),
+        orbital_eccentricity_x100: 2,
+        axial_tilt_deg: Real::from_int(23),
+        day_length_hours: Real::from_int(24),
+        orbital_period_months: 12,
+        metabolic_substrate: substrate,
+        substrate_perturbation: Real::ZERO,
+        locking_state: LockingState::FreeRotator,
+        // Modern-Sun analog: G-dwarf 45% through its 10 Gyr lifetime,
+        // bolometric scale ~1.0 so the planet sees Earth-like irradiance.
+        star: Star::with_age(
+            SpectralType::G,
+            Real::from_int(1_361),
+            Real::from_ratio(45, 10),
+            Real::from_int(10),
+        ),
+    }
+}
+
+#[test]
+fn super_earth_run_with_2g_gravity_does_not_overflow() {
+    // Step 1: construct the super-Earth (mass=5 Earth, radius=1.5 Earth
+    // → g = 9.81 × 5 / 2.25 ≈ 21.8 m/s² ≈ 2.22 g). Aqueous solvent,
+    // Earth-like 288 K mean temp, Oxidising atmosphere — every other
+    // axis pinned to the Earth baseline so the only varying input is
+    // the mass/radius pair.
+    let super_earth = earth_like_planet(
+        Real::from_int(5),
+        Real::from_ratio(15, 10),
+        MetabolicSubstrate::Aqueous,
+        Atmosphere::Oxidising,
+        Real::from_int(288),
+    );
+    // Earth-equivalent baseline (mass=1, radius=1) for law-coefficient
+    // comparison. Identical aside from the mass/radius pair.
+    let earth = earth_like_planet(
+        Real::ONE,
+        Real::ONE,
+        MetabolicSubstrate::Aqueous,
+        Atmosphere::Oxidising,
+        Real::from_int(288),
+    );
+
+    // Step 2: derived gravity ≈ 2.22 g. Earth-g ≈ 9.81 m/s²; the super-
+    // Earth should land near 21.8 m/s² (within 5% — covers the
+    // EARTH_GRAVITY_MS2_X100 hundredths anchor + Q32.32 rounding).
+    let g_se = super_earth.gravity().to_f64_for_display();
+    let g_expected = 9.81 * 5.0 / (1.5 * 1.5);
+    assert!(
+        (g_se - g_expected).abs() / g_expected < 0.05,
+        "super-Earth gravity should be ~{g_expected:.2} m/s²; got {g_se:.2}"
+    );
+
+    // Step 3: escape velocity clears Earth's ~11.18 km/s by a wide
+    // margin. v_escape ∝ sqrt(M/R) so 5/1.5 ≈ 3.33× → sqrt ≈ 1.83×
+    // → ~20.4 km/s. We assert a loose floor of "> Earth's ~11.2 km/s"
+    // per the spec; the tighter ~20 km/s prediction lives in the
+    // surrounding comment as documentation.
+    let v_esc = super_earth.escape_velocity().to_f64_for_display();
+    assert!(
+        v_esc > 11.2,
+        "super-Earth escape velocity must clear Earth's ~11.2 km/s; got {v_esc:.2}"
+    );
+
+    // Step 4: build the per-planet laws for both worlds and verify the
+    // tide / wind coefficients track the documented scaling.
+    let laws_se = build_laws(&super_earth, 8);
+    let laws_earth = build_laws(&earth, 8);
+
+    // Tide amplitude scales as sqrt(g) (gradient force linear in g,
+    // restoring weight linear in g → response in the square root).
+    // A 2.22 g super-Earth should land at sqrt(2.22) ≈ 1.49× Earth's
+    // tide_k. Loose check: the two coefficients must differ by ≥ 25 %
+    // so a future regression that drops gravity coupling from Tides
+    // tripping this assertion is the obvious failure mode.
+    let tide_se = laws_se.tides.tide_k.to_f64_for_display();
+    let tide_earth = laws_earth.tides.tide_k.to_f64_for_display();
+    assert!(
+        tide_se > tide_earth * 1.25,
+        "super-Earth tide_k ({tide_se:.6}) should exceed Earth tide_k \
+         ({tide_earth:.6}) by ≥ 25 % per the sqrt(g) scaling"
+    );
+
+    // Wind pressure-gradient acceleration scales as 1/g (same gradient
+    // → smaller per-mass acceleration in a heavier-air column at the
+    // same scale height). A 2.22 g super-Earth should see roughly half
+    // Earth's wind_k. Loose check: super-Earth wind_k strictly below
+    // Earth wind_k by ≥ 25 %.
+    let wind_se = laws_se.wind.wind_k.to_f64_for_display();
+    let wind_earth = laws_earth.wind.wind_k.to_f64_for_display();
+    assert!(
+        wind_se < wind_earth * 0.75,
+        "super-Earth wind_k ({wind_se:.6}) should be ≤ 75 % of Earth wind_k \
+         ({wind_earth:.6}) per the 1/g scaling"
+    );
+
+    // Step 5: 1000-tick integration with the super-Earth laws. Drive the
+    // same `integrate_civ_step` the production tick loop uses + a
+    // parallel ecosystem step. The full `run()` path requires a planet
+    // sampled from a seed; this test exercises the law-construction +
+    // integration coupling directly so the super-Earth (which the
+    // worldgen sampler does not currently land on) gets covered.
+    let grid_width = 12u32;
+    let grid_height = 8u32;
+    let grid = sim_physics::HexGrid::new(grid_width, grid_height);
+    let mut state = sim_physics::PhysicsState::new(grid);
+    let mut planet_for_init = super_earth.clone();
+    sim_world::init_planet(&mut state, &planet_for_init);
+
+    let mut laws = build_laws(&planet_for_init, grid_height);
+    // Mirror `run()`'s tectonic-plate installation so the per-tick
+    // tectonics path doesn't no-op on un-initialised plate state.
+    let (tectonics, plate_id, crust_thickness) =
+        sim_physics::Tectonics::sample_plates_for_seed(planet_for_init.seed, state.grid());
+    state.set_tectonics_fields(plate_id, crust_thickness);
+    laws.install_tectonics(tectonics);
+    laws.magnetism.init_field(&mut state);
+
+    // Build a parallel ecosystem the same way `run()` does so the
+    // 1000-tick loop can assert at least one species persists at the
+    // end. Lush biosphere → solid producer capacity floor.
+    let n_cells = state.grid().n_cells();
+    let planet_capacity: Real = {
+        let n_cells_real = Real::from_int(n_cells as i64);
+        let cap = n_cells_real * planet_for_init.biosphere_density;
+        if cap < Real::ONE {
+            Real::ONE
+        } else {
+            cap
+        }
+    };
+    let habitability_weights: Vec<Real> = (0..n_cells as u32)
+        .map(|c| sim_world::cell_habitability(&state, &planet_for_init, c))
+        .collect();
+    let mut ecosystem: PlanetEcosystem = sim_ecosystem::sample_ecosystem_with_substrate_for_grid(
+        planet_for_init.seed,
+        planet_for_init.metabolic_substrate.tag(),
+        planet_capacity,
+        n_cells,
+        Some(&habitability_weights),
+    );
+    let n_species_initial = ecosystem.species.len();
+    assert!(
+        n_species_initial > 0,
+        "ecosystem must seed at least one species on a Lush super-Earth"
+    );
+
+    let orch_cfg = RunConfig::dev(1024, 1).orchestration;
+    let mut orch_state = sim_physics::OrchestratorState::new();
+    let solar = planet_for_init.stellar_luminosity;
+    let civs: Vec<sim_civ::Civ> = Vec::new();
+    for tick in 0..1000u64 {
+        // Mirror the lunar-eccentricity damping path so even a moonless
+        // super-Earth runs the same outer-loop shape as production.
+        {
+            let locking = planet_for_init.locking_state;
+            let r = planet_for_init.radius;
+            for moon in &mut planet_for_init.moons {
+                sim_world::step_eccentricity_damping(r, moon, locking, Real::ONE);
+            }
+        }
+        // Apparatus clamps — empty civs list means no clamps, but the
+        // call stays for parity with `physics_phase`.
+        sim_civ::apparatus::write_apparatus_clamps(&mut state, &civs, tick);
+        sim_physics::integrate_civ_step(
+            &mut state,
+            &mut orch_state,
+            &orch_cfg,
+            &laws.fluid,
+            &laws.heat,
+            &laws.em,
+            &laws.chemistry,
+            Some(&laws.radiation),
+            Some(&laws.wind),
+            Some(&laws.hydrology),
+            Some(&laws.tides),
+            Some(&laws.magnetism),
+            Some(&laws.lorentz),
+            Some(&laws.coriolis),
+            Some(&laws.vertical),
+            Some(&laws.weathering),
+            Some(&laws.ice_albedo),
+            Some(&laws.tectonics),
+            Some(&laws.volcanism),
+            Some(&laws.magnetic_reversal),
+            Some(&laws.clouds),
+            Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
+            Some(&laws.atmospheric_escape),
+            Some(&laws.hadley),
+        );
+        let _ = ecosystem.step_with_biogeochem_at_tick(&mut state, solar, tick);
+    }
+
+    // Step 6: post-run survivorship. At least one species still extant
+    // proves the integrated 1000-tick run didn't collapse the trophic
+    // pyramid under the high-gravity coefficients (and didn't panic
+    // through Q32.32 overflow on the way — the loop above would have
+    // unwound the test before we got here).
+    let extant_count = ecosystem.species.values().filter(|s| s.is_extant).count();
+    assert!(
+        extant_count >= 1,
+        "after 1000 ticks of super-Earth physics + ecosystem at least one \
+         species must remain extant; got {extant_count} of {n_species_initial} \
+         initial species"
     );
 }
