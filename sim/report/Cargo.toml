@@ -14,5 +14,5 @@ protocol.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sim-events = { path = "../events" }
+sim-events.workspace = true
 thiserror.workspace = true
