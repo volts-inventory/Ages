@@ -213,7 +213,13 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         .with_lapse_inputs(
             planet.gravity(),
             sim_arith::Real::from_int(sim_physics::REFERENCE_CIRRUS_ALTITUDE_M),
-        );
+        )
+        // Calibration fix C1: thread surface pressure into the
+        // greenhouse-cap scaling so Venus-equivalent worlds
+        // plateau in the literature 700-770 K runaway band
+        // (the legacy constant 250 K cap pinned Venus near
+        // ~559 K, ~150 K below the published anchor).
+        .with_surface_pressure(planet.surface_pressure);
 
     // Atmospheric wind. Per-planet tuning lives in
     // `wind_for_atmosphere`: density scaling on all three

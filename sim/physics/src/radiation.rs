@@ -122,7 +122,7 @@ fn night_factor() -> Real {
 /// temperate Earth-like cells stay below it (loop converges to a
 /// modest equilibrium) and a hot seed pushes past it (loop
 /// diverges into a Venus-style runaway, plateauing only when
-/// [`greenhouse_cap_k`] binds).
+/// [`greenhouse_cap_scaled`] binds).
 fn h2o_greenhouse_k() -> Real {
     Real::from_ratio(2, 1_000)
 }
@@ -156,26 +156,80 @@ fn ch4_decay_per_tick() -> Real {
     Real::from_ratio(999, 1_000)
 }
 
-/// Per-cell greenhouse contribution ceiling, in K. Physically
-/// motivated: real-atmosphere IR absorption bands saturate at
-/// high optical depth, so doubling the greenhouse gas column
-/// doesn't double the warming once the bands are already opaque
-/// (Beer-Lambert with τ ≫ 1). Without this cap a Venus-style
-/// runaway in the simulation has no upper bound — the H2O cycle
-/// keeps lifting `saturation_vapour_cap(T)` quartically with T,
-/// which lifts vapour, which lifts greenhouse forcing, with no
-/// physical stop until the fixed-point arithmetic overflows
+/// Earth's nominal surface pressure (Pa). Anchors the pressure-
+/// scaled greenhouse cap so the Earth-pressure case reduces to
+/// the original 250 K saturation ceiling.
+fn earth_surface_pressure_pa() -> Real {
+    Real::from_int(101_325)
+}
+
+/// `ln(10)` precomputed for converting natural log to log10.
+/// `log10(x) = ln(x) / ln(10)`; pulled into a helper so the
+/// pressure-cap formula avoids recomputing the constant per
+/// integrate call.
+fn ln_10() -> Real {
+    // ln(10) ≈ 2.30258509…; rational approximation keeps the
+    // Q32.32 representation deterministic across builds.
+    Real::from_ratio(2_302_585, 1_000_000)
+}
+
+/// Per-cell greenhouse contribution ceiling, in K, scaled by
+/// surface pressure. Physically motivated: real-atmosphere IR
+/// absorption bands saturate at high optical depth, so doubling
+/// the greenhouse gas column doesn't double the warming once the
+/// bands are already opaque (Beer-Lambert with τ ≫ 1). However,
+/// the *post-saturation* contribution from pressure-broadened
+/// continuum absorption and overlapping-band wing forcing does
+/// continue scaling with column density (i.e. with surface
+/// pressure for a well-mixed gas). A constant cap therefore
+/// underestimates the ceiling for thick atmospheres like Venus's
+/// 90-bar CO2 column.
+///
+/// Formula: `cap = 250 + 100 × log10(P / P_earth)`, clamped to
+/// `[50, 600]` K to keep the cap finite for arbitrarily thin /
+/// thick atmospheres and to stay well clear of the Q32.32 range.
+/// Anchor points:
+/// - Earth (~101 325 Pa) → 250 K (preserves legacy calibration
+///   and existing tests).
+/// - Venus (~9.2×10⁶ Pa) → 250 + 100 × log10(90.8) ≈ 446 K,
+///   which sits a Venus-equivalent runaway plateau in the
+///   literature 700-770 K band (bare T_eq ~309 K + ~446 K cap
+///   ≈ 755 K).
+/// - Mars (~610 Pa) → clamped at the 50 K floor (raw value
+///   would be 250 − 222 = 28 K).
+///
+/// Without this cap a Venus-style runaway in the simulation has
+/// no upper bound — the H2O cycle keeps lifting
+/// `saturation_vapour_cap(T)` quartically with T, which lifts
+/// vapour, which lifts greenhouse forcing, with no physical stop
+/// until the fixed-point arithmetic overflows
 /// (`saturation_vapour_cap` hits `Real`'s ~2.1e9 ceiling around
 /// T ≈ 5300 K).
-///
-/// 250 K is chosen so a fully-saturated runaway plateaus at
-/// roughly the surface temperature of Venus (~735 K = base T_eq
-/// of ~300 K + ~400 K of greenhouse forcing from saturated CO2
-/// + saturated H2O at runaway-onset). The exact value is a
-/// modelling choice; the cap exists to bound the feedback loop,
-/// not to recover any specific value.
-fn greenhouse_cap_k() -> Real {
-    Real::from_int(250)
+fn greenhouse_cap_scaled(surface_pressure_pa: Real) -> Real {
+    let earth_p = earth_surface_pressure_pa();
+    let base = Real::from_int(250);
+    // Guard against ln(0) / ln(negative): a zero / negative
+    // surface pressure short-circuits to the 50 K floor (the
+    // thin-atmosphere clamp). The constructor enforces a
+    // positive default, but the explicit guard keeps the helper
+    // robust if a caller threads through a degenerate value.
+    if surface_pressure_pa <= Real::ZERO {
+        return Real::from_int(50);
+    }
+    let ratio = surface_pressure_pa / earth_p;
+    // `ln(ratio)` panics on a non-positive argument; the divide
+    // above keeps `ratio > 0` because both numerator and
+    // denominator are positive Reals.
+    let log10_ratio = ln(ratio) / ln_10();
+    let raw_cap = base + Real::from_int(100) * log10_ratio;
+    // Clamp to `[50, 600]` K. The floor keeps thin-atmosphere
+    // worlds (Mars) from collapsing the runaway-bounding cap to
+    // zero; the ceiling keeps a hypothetical super-Earth with a
+    // multi-hundred-bar atmosphere from overflowing the per-cell
+    // feedback term.
+    let floor = Real::from_int(50);
+    let ceil = Real::from_int(600);
+    raw_cap.max(floor).min(ceil)
 }
 
 /// `ln(σ)` for σ = 5.67×10⁻⁸ W/(m²·K⁴). Pre-computed so the
@@ -290,6 +344,17 @@ pub struct Radiation {
     /// [`Radiation::with_lapse_inputs`] for atmospheres with a
     /// markedly different cloud-deck altitude.
     pub cirrus_altitude_m: Real,
+    /// Surface atmospheric pressure (Pa) used to scale the
+    /// greenhouse saturation cap via [`greenhouse_cap_scaled`].
+    /// Defaults to Earth's pressure (101 325 Pa) so legacy
+    /// callers / tests reproduce the historical 250 K cap;
+    /// sim-core overrides per-planet via
+    /// [`Radiation::with_surface_pressure`] so dense atmospheres
+    /// (Venus-equivalent worlds, super-Earths) get a higher cap
+    /// matching pressure-broadened continuum absorption and
+    /// thin atmospheres (Mars-equivalent worlds) get the
+    /// clamp-floored lower cap.
+    pub surface_pressure_pa: Real,
 }
 
 impl Radiation {
@@ -462,6 +527,13 @@ impl Radiation {
             // chain. sim-core overrides per-planet at law build.
             gravity_ms2: Real::from_ratio(981, 100),
             cirrus_altitude_m: Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M),
+            // Default to Earth pressure so existing callers /
+            // tests reproduce the historical 250 K cap exactly
+            // (the pressure-scaled formula evaluates to 250 K
+            // when `surface_pressure_pa == earth_surface_pressure_pa`).
+            // sim-core overrides per-planet via
+            // `with_surface_pressure` at law build.
+            surface_pressure_pa: earth_surface_pressure_pa(),
         }
     }
 
@@ -519,6 +591,30 @@ impl Radiation {
         self
     }
 
+    /// Override the surface pressure used by the per-cell
+    /// greenhouse-cap scaling (calibration fix C1). Thicker
+    /// atmospheres lift the saturation ceiling so Venus-
+    /// equivalent worlds plateau in the literature 700-770 K
+    /// runaway band; thinner atmospheres lower it (clamped at
+    /// the 50 K floor in [`greenhouse_cap_scaled`]) so Mars-
+    /// equivalent worlds don't accidentally trap heat with the
+    /// Earth-pressure ceiling. Defaults to
+    /// `earth_surface_pressure_pa()` so callers that omit the
+    /// override reproduce the legacy 250 K cap exactly.
+    ///
+    /// Non-positive inputs fall back to the Earth-pressure
+    /// default so a misconfigured caller doesn't collapse the
+    /// cap to the floor unintentionally.
+    #[must_use]
+    pub fn with_surface_pressure(mut self, surface_pressure_pa: Real) -> Self {
+        self.surface_pressure_pa = if surface_pressure_pa > Real::ZERO {
+            surface_pressure_pa
+        } else {
+            earth_surface_pressure_pa()
+        };
+        self
+    }
+
     /// Current seasonal index for the given macro-step.
     /// `0` always when `year_macros == 0` (seasons disabled).
     #[must_use]
@@ -563,7 +659,7 @@ impl Law for Radiation {
         let h2o_k = h2o_greenhouse_k();
         let co2_k = co2_greenhouse_k();
         let ch4_k = ch4_greenhouse_k();
-        let greenhouse_cap = greenhouse_cap_k();
+        let greenhouse_cap = greenhouse_cap_scaled(self.surface_pressure_pa);
 
         // Snapshot the gas densities that feed the per-cell
         // greenhouse term. Water vapour is the C-C-coupled channel
@@ -760,9 +856,13 @@ impl Law for Radiation {
             // [`crate::hydrology::saturation_vapour_cap`], which
             // rises quartically with T/T_ref — that's the
             // Clausius-Clapeyron-coupled positive feedback that
-            // drives runaway. Bounded by [`greenhouse_cap_k`] so
-            // a saturated runaway plateaus at a Venus-like temperature
-            // rather than overflowing fixed-point arithmetic.
+            // drives runaway. Bounded by [`greenhouse_cap_scaled`]
+            // so a saturated runaway plateaus at a Venus-like
+            // temperature rather than overflowing fixed-point
+            // arithmetic; the cap rises with surface pressure so
+            // dense atmospheres reach the literature-anchored
+            // Venus plateau (~735 K) rather than the legacy
+            // Earth-pressure ceiling (~559 K with a 250 K cap).
             // Per-cell cloud greenhouse contribution. Cirrus cells
             // add `cirrus_gh × cloud_fraction`; stratus cells add
             // the smaller `stratus_gh × cloud_fraction`. Without
@@ -792,7 +892,9 @@ impl Law for Radiation {
             // world temperatures) doesn't panic on the
             // `vapour[i] * h2o_k` multiply or the four-way sum. The
             // subsequent `min(greenhouse_cap)` clamps the meaningful
-            // contribution at 250 K regardless.
+            // contribution at the pressure-scaled cap (250 K at
+            // Earth pressure, ~446 K at Venus pressure; see
+            // `greenhouse_cap_scaled`).
             let v_term = vapour[i].saturating_mul(h2o_k);
             let c_term = co2[i].saturating_mul(co2_k);
             let m_term = ch4[i].saturating_mul(ch4_k);
@@ -1418,7 +1520,7 @@ mod tests {
         // The boost magnitude in this test (~85 %) is larger
         // than the real-Earth K-I threshold (~10 % above modern
         // solar) because the per-cell greenhouse coefficients
-        // and the [`greenhouse_cap_k`] ceiling are tuned for
+        // and the [`greenhouse_cap_scaled`] ceiling are tuned for
         // the simulation's Q32.32 range rather than calibrated
         // against the real K-I value. The qualitative bistable
         // threshold — temperate equilibrium vs. runaway — is
@@ -1503,27 +1605,16 @@ mod tests {
     // runaway-greenhouse Komabayashi-Ingersoll plateau falling in
     // the 700-770 K band. The simulation's greenhouse coupling
     // (`co2_greenhouse_k` + `h2o_greenhouse_k` + C-C-coupled vapour
-    // cap) and bounding cap (`greenhouse_cap_k`) should let a
-    // Venus-equivalent planet settle on (or near) that plateau.
+    // cap) and bounding cap (`greenhouse_cap_scaled`, pressure-
+    // scaled per calibration fix C1) lets a Venus-equivalent
+    // planet settle on (or near) that plateau when the surface
+    // pressure is set to the Venus 90-bar value via
+    // `Radiation::with_surface_pressure`.
     //
-    // FIXME(T11): the current calibration cannot reach the
-    // 700-770 K band. `greenhouse_cap_k = 250 K` clamps the per-
-    // cell greenhouse contribution at 250 K above the bare
-    // Stefan-Boltzmann equilibrium. With Venus-equivalent stellar
-    // irradiance (~2600 W/m²) and a low albedo the bare T_eq lands
-    // around 320 K — even fully saturated the planet plateaus near
-    // 570 K, not 735 K. Closing the gap requires either:
-    //   1. Raising `greenhouse_cap_k` to ~420-450 K.
-    //   2. Letting the cap scale with surface pressure (Venus's
-    //      90-bar column has tens of optical depths of CO2 beyond
-    //      band saturation; current cap models the saturated-band
-    //      regime alone).
-    //   3. Adding pressure-broadening / continuum absorption so
-    //      dense CO2 atmospheres trap longwave well past the
-    //      band-saturation point.
-    // This test pins the present behaviour so any recalibration
-    // either widens the assertion or — once the gap closes — moves
-    // the bounds into the literature 700-770 K band.
+    // With the pressure-scaled cap (`250 + 100 × log10(P/P_earth)`,
+    // clamped to `[50, 600]`), Venus's 9.2×10⁶ Pa column gives a
+    // cap of ~446 K above the bare ~309 K T_eq → ~755 K plateau,
+    // squarely in the literature band.
     #[test]
     fn venus_runaway_plateau_t_in_700_to_770_k() {
         // Venus-equivalent radiation environment:
@@ -1539,7 +1630,10 @@ mod tests {
         //     dynamic term carries all greenhouse forcing so the
         //     calibration target sits purely on
         //     `co2_greenhouse_k` × CO2 + `h2o_greenhouse_k` × vapour
-        //     + the saturation cap.
+        //     + the pressure-scaled saturation cap.
+        //   - surface pressure pinned to Venus's ~9.2×10⁶ Pa
+        //     (≈90.8 bar) so the pressure-scaled cap lifts to
+        //     ~446 K (calibration fix C1).
         let rad = Radiation::for_planet(
             1,
             Real::from_int(2_600),
@@ -1549,7 +1643,8 @@ mod tests {
             0,
             0,
             Real::from_int(24),
-        );
+        )
+        .with_surface_pressure(Real::from_int(9_200_000));
         let mut state = PhysicsState::new(HexGrid::new(3, 1));
         // Seed at 500 K so the runaway path triggers immediately
         // (vapour cap is already well above the K-I threshold at
@@ -1602,30 +1697,74 @@ mod tests {
             }
             sum / Real::from_int(i64::try_from(temps.len()).unwrap_or(1))
         };
-        // Literature plateau: T ∈ [700, 770] K. The current
-        // greenhouse_cap_k = 250 K cannot reach that band; the
-        // assertion below tracks the *actual* simulation plateau
-        // so a future recalibration that lifts the cap (or adds
-        // pressure-broadening) is forced to move the bounds toward
-        // the literature target.
+        // Literature plateau: T ∈ [700, 770] K. With the
+        // pressure-scaled cap (calibration fix C1) Venus's 90-bar
+        // surface pressure lifts the greenhouse ceiling from the
+        // legacy 250 K to ~446 K, putting the saturated runaway
+        // plateau in the literature band.
         //
-        // FIXME(T11): widen / move toward [700, 770] once
-        // `greenhouse_cap_k` is recalibrated against the Venus
-        // anchor (see module-level FIXME above this test).
-        // Observed plateau under current calibration: ~559 K.
-        // T_eq_base for stellar=2600 W/m², albedo=10 %, equator
-        // 1-row grid: `(2600 × 0.9 × 1.0 × 0.25 / σ)^(1/4) ≈ 309 K`,
-        // plus the saturated `greenhouse_cap_k = 250 K`, gives
-        // 309 + 250 = 559 K — within Q32.32 rounding of the
-        // observed value. Bounds set ±25 K around 559 K so a
-        // future change to either constant trips this marker.
-        let plateau_lo = Real::from_int(530);
-        let plateau_hi = Real::from_int(590);
+        // Decomposition: T_eq_base for stellar=2600 W/m²,
+        // albedo=10 %, equator 1-row grid:
+        // `(2600 × 0.9 × 1.0 × 0.25 / σ)^(1/4) ≈ 309 K`, plus the
+        // pressure-scaled cap `250 + 100 × log10(9.2×10⁶ /
+        // 101325) ≈ 446 K`, gives ~755 K — squarely in the band.
+        let plateau_lo = Real::from_int(700);
+        let plateau_hi = Real::from_int(770);
         assert!(
             final_mean_t >= plateau_lo && final_mean_t <= plateau_hi,
-            "Venus-equivalent plateau out of current calibration band \
-             [{plateau_lo:?}, {plateau_hi:?}] (literature target [700, 770] K, \
-             gap noted in T11 FIXME): got {final_mean_t:?}"
+            "Venus-equivalent plateau out of literature 700-770 K band: \
+             got {final_mean_t:?}"
+        );
+    }
+
+    // Calibration fix C1 — verify `greenhouse_cap_scaled` honours
+    // the documented anchors: Earth pressure → ~250 K (legacy
+    // baseline preserved), Venus pressure → ~446 K (lifts the
+    // runaway plateau into the literature 700-770 K band).
+    #[test]
+    fn greenhouse_cap_scales_with_pressure() {
+        // Earth-pressure caller (101 325 Pa) reproduces the
+        // legacy 250 K cap exactly (the formula is anchored on
+        // log10(P/P_earth) so the Earth case evaluates the
+        // additive term to zero).
+        let earth_cap = greenhouse_cap_scaled(Real::from_int(101_325));
+        let earth_lo = Real::from_int(249);
+        let earth_hi = Real::from_int(251);
+        assert!(
+            earth_cap >= earth_lo && earth_cap <= earth_hi,
+            "Earth-pressure cap should be ~250 K; got {earth_cap:?}"
+        );
+
+        // Venus-pressure caller (9.2×10⁶ Pa) lifts the cap into
+        // the ~440-450 K band. With `100 × log10(90.8) ≈ 195.8`
+        // the formula evaluates to ~446 K; allow ±10 K so the
+        // assertion survives Q32.32 rounding without becoming a
+        // brittle exact-value check.
+        let venus_cap = greenhouse_cap_scaled(Real::from_int(9_200_000));
+        let venus_lo = Real::from_int(436);
+        let venus_hi = Real::from_int(456);
+        assert!(
+            venus_cap >= venus_lo && venus_cap <= venus_hi,
+            "Venus-pressure cap should be ~446 K; got {venus_cap:?}"
+        );
+
+        // Mars-pressure caller (~610 Pa) clamps at the 50 K
+        // floor — the raw log10 evaluation would be negative
+        // (28 K), but the floor keeps the cap usable for thin-
+        // atmosphere worlds without collapsing it to zero.
+        let mars_cap = greenhouse_cap_scaled(Real::from_int(610));
+        assert!(
+            mars_cap == Real::from_int(50),
+            "Mars-pressure cap should clamp to the 50 K floor; got {mars_cap:?}"
+        );
+
+        // Defensive: a degenerate zero pressure should fall back
+        // to the 50 K floor (the ln(0) panic guard inside
+        // `greenhouse_cap_scaled`).
+        let zero_cap = greenhouse_cap_scaled(Real::ZERO);
+        assert!(
+            zero_cap == Real::from_int(50),
+            "Zero-pressure cap should fall back to the 50 K floor; got {zero_cap:?}"
         );
     }
 }
