@@ -392,16 +392,71 @@ impl EscapeChannels {
     }
 }
 
+/// Per-cell magnetic shielding factor used by the ion-escape and
+/// photochemical channels (P3.5). Reads the local shielding
+/// strength — which combines the global dipole with crustal
+/// remanence — rather than the planet-wide
+/// `PlanetEscapeParams::magnetic_strength` scalar. The canonical
+/// magnetosphere shielding form `1 / (1 + B_local)` applied to
+/// the per-cell field: at `B_local = 0` factor = 1.0 (no
+/// shielding); at `B_local = 1.0` (Earth baseline) = 0.5; at
+/// `B_local = 1.5` (strong crustal-remanence umbrella ceiling) ≈
+/// 0.4. The function is exposed so callers and tests can verify
+/// the per-cell coupling without going through the full
+/// `escape_rate_for` path.
+#[must_use]
+pub fn ion_escape_factor(local_magnetic_strength: Real) -> Real {
+    Real::ONE / (Real::ONE + local_magnetic_strength)
+}
+
 /// Compute the four-channel fractional escape rate per tick for a
 /// single substance at a single cell. The returned rates are
 /// *fractions of current density* — multiply by the cell's per-
 /// substance density to get the absolute mass loss. Each channel
 /// is scaled by the per-substance weight (light species lose faster).
+///
+/// Convenience wrapper around
+/// [`escape_rate_for_with_local_field`] that uses the planet-wide
+/// `params.magnetic_strength` as the local shielding strength
+/// (pre-P3.5 behaviour). Tests calling this directly retain the
+/// uniform-shielding semantics. The per-cell pass driven by
+/// `atmospheric_escape_step` calls the explicit variant so the
+/// per-cell `state.magnetic_field_local()` is honoured.
 #[must_use]
 pub fn escape_rate_for(
     substance: Substance,
     params: &PlanetEscapeParams,
     temperature_k: Real,
+    dt: Real,
+) -> EscapeChannels {
+    escape_rate_for_with_local_field(
+        substance,
+        params,
+        temperature_k,
+        params.magnetic_strength,
+        dt,
+    )
+}
+
+/// Per-cell variant of [`escape_rate_for`] (P3.5). Computes the
+/// four-channel fractional escape rate using
+/// `local_magnetic_strength` for the ion and photochemical
+/// shielding factors instead of the planet-wide
+/// `params.magnetic_strength` scalar. The Jeans and hydrodynamic
+/// channels don't depend on magnetic field and behave identically
+/// to `escape_rate_for`.
+///
+/// `local_magnetic_strength` is expected to lie in `[0, 1.5]` per
+/// the `magnetic_field_local` contract (`Magnetism::init_local_field`
+/// clamps to that range); callers passing values outside this
+/// window get a still-meaningful but uncalibrated factor via
+/// `1 / (1 + B)`.
+#[must_use]
+pub fn escape_rate_for_with_local_field(
+    substance: Substance,
+    params: &PlanetEscapeParams,
+    temperature_k: Real,
+    local_magnetic_strength: Real,
     dt: Real,
 ) -> EscapeChannels {
     let (w_num, w_den) = substance_weight(substance);
@@ -452,19 +507,23 @@ pub fn escape_rate_for(
     // strip H2O / CH4 directly. We're not modelling ozone
     // chemistry explicitly — using the same `1/(1+B)` form lets
     // the strong-field branch suppress photochem the same way
-    // it suppresses ion escape.
+    // it suppresses ion escape. P3.5: reads the per-cell local
+    // field (so a crustal-remanence umbrella shields its own
+    // patch of photochem too).
     let photochem_base = Real::from_ratio(PHOTOCHEMICAL_BASE_NUM, PHOTOCHEMICAL_BASE_DEN);
     let uv_ref = Real::from_int(PHOTOCHEMICAL_UV_REF_W_M2);
     let uv_factor = params.uv_flux_w_m2 / uv_ref;
-    let ozone_shield = Real::ONE / (Real::ONE + params.magnetic_strength);
+    let ozone_shield = ion_escape_factor(local_magnetic_strength);
     let photochemical = photochem_base * uv_factor * ozone_shield * weight * dt;
 
     // ---- Ion escape ----
     // Strong dipole suppresses (Earth); weak / absent enables (Mars).
     // `1 / (1 + B)` is the canonical magnetosphere-shielding form:
     // at B=0 the factor is 1; at B=1 it's 0.5; at B=10 it's ~0.09.
+    // P3.5: uses the per-cell local field (combines global dipole
+    // with cell-local crustal remanence).
     let ion_base = Real::from_ratio(ION_BASE_NUM, ION_BASE_DEN);
-    let ion_shield = Real::ONE / (Real::ONE + params.magnetic_strength);
+    let ion_shield = ion_escape_factor(local_magnetic_strength);
     let ion = ion_base * ion_shield * weight * dt;
 
     EscapeChannels {
@@ -494,10 +553,31 @@ pub fn atmospheric_escape_step(
 ) {
     let n = state.grid().n_cells();
     let temps = state.temperature().to_vec();
+    // P3.5: per-cell shielding. When the per-cell local field has
+    // been initialised (`Magnetism::init_local_field`), each cell
+    // reads its own shielding strength (combines global dipole
+    // with crustal remanence) instead of the planet-wide
+    // `params.magnetic_strength`. Pre-P3.5 call sites that haven't
+    // wired `init_local_field` get a uniform `magnetic_field_local`
+    // = `Real::ONE` (set in `PhysicsState::new`), which lands at
+    // ion_shield = 0.5 — measurably different from
+    // `params.magnetic_strength`, so the helper falls back to the
+    // params scalar when the slice length doesn't match grid size
+    // OR when `crustal_remanence` is empty (init hasn't ever run).
+    // That keeps existing tests (which use `PlanetEscapeParams`'s
+    // `magnetic_strength` directly) bit-identical to pre-P3.5.
+    let local_field = state.magnetic_field_local().to_vec();
+    let use_per_cell = state.crustal_remanence().len() == n && local_field.len() == n;
     for &substance in &ATMOSPHERIC_SUBSTANCES {
         let densities = state.substance_mut(substance.idx());
         for i in 0..n {
-            let channels = escape_rate_for(substance, params, temps[i], dt);
+            let local_b = if use_per_cell {
+                local_field[i]
+            } else {
+                params.magnetic_strength
+            };
+            let channels =
+                escape_rate_for_with_local_field(substance, params, temps[i], local_b, dt);
             let fraction = channels.total();
             // Fractional loss × current density → absolute loss;
             // clamp to the available mass so we never push the
@@ -924,6 +1004,216 @@ mod tests {
         assert!(
             h2o_factor > co2_factor * hundred,
             "H2O/CO2 Jeans ratio should exceed 100x on Mars; h2o={h2o_factor:?} co2={co2_factor:?}"
+        );
+    }
+
+    /// **P3.5 — per-cell magnetic shielding varies across the grid.**
+    ///
+    /// `Magnetism::init_local_field` should produce a per-cell
+    /// shielding pattern (not a uniform single value) by combining
+    /// the global dipole with deterministic SplitMix64-driven
+    /// crustal remanence. Sample a 6×6 grid and assert the
+    /// variance across cells is strictly positive — the previous
+    /// single planet-wide scalar gave variance zero by construction
+    /// and couldn't represent partial-magnetosphere planets at all.
+    #[test]
+    fn magnetic_field_local_varies_per_cell() {
+        let grid = HexGrid::new(6, 6);
+        let mut state = PhysicsState::new(grid);
+        state.set_planet_seed(0x1234_5678_ABCD_EF01);
+        // No tectonics installed → init_local_field falls back to
+        // ref-thickness for every cell, so the per-cell variation
+        // comes purely from the SplitMix64 noise pattern. That's
+        // the worst case for the variance assertion — if it's
+        // > 0 here, any non-uniform crust_thickness signal will
+        // only widen the spread.
+        let mag = crate::magnetism::Magnetism::earth_like();
+        mag.init_local_field(&mut state);
+
+        let local = state.magnetic_field_local();
+        assert_eq!(
+            local.len(),
+            state.grid().n_cells(),
+            "magnetic_field_local should be sized to grid n_cells"
+        );
+
+        // Compute mean then sum of squared deviations. Q32.32 keeps
+        // the intermediate products comfortably inside range — local
+        // values lie in [0, 1.5] and n_cells ≤ 36 on this 6×6 grid.
+        let n = local.len();
+        assert!(n > 0, "expected non-empty grid");
+        let n_real = Real::from_int(n as i64);
+        let mean = local.iter().copied().fold(Real::ZERO, |a, b| a + b) / n_real;
+        let var = local
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |acc, x| {
+                let d = x - mean;
+                acc + d * d
+            }) / n_real;
+        assert!(
+            var > Real::ZERO,
+            "per-cell shielding must have positive variance across a 6x6 grid; mean={mean:?} var={var:?}"
+        );
+
+        // Sanity: at least two cells must hold *different* values
+        // (variance > 0 implies this but the explicit assertion
+        // gives a clearer failure mode if Q32.32 rounding squashed
+        // the variance to zero).
+        let mut saw_distinct = false;
+        for i in 1..n {
+            if local[i] != local[0] {
+                saw_distinct = true;
+                break;
+            }
+        }
+        assert!(
+            saw_distinct,
+            "every cell got the same shielding strength — variance is illusory"
+        );
+    }
+
+    /// **P3.5 — crustal remanence creates a shielding "umbrella".**
+    ///
+    /// Mars's southern highlands hold strong frozen-in
+    /// magnetisation in their thick crust — ion-pickup loss is
+    /// measurably weaker over those patches than over the dipole-
+    /// free northern lowlands. The thickness-weighted remanence
+    /// term in `init_local_field` should reproduce this: a high-
+    /// crust-thickness cell should pick up a stronger local
+    /// shielding signal than a low-crust-thickness cell (a "dry
+    /// desert" with thin or no crust).
+    #[test]
+    fn crustal_remanence_creates_shielding_umbrella() {
+        let grid = HexGrid::new(4, 4);
+        let mut state = PhysicsState::new(grid);
+        state.set_planet_seed(0xDEAD_BEEF_CAFE_F00D);
+        let n = state.grid().n_cells();
+        // Install tectonics fields: one "highland" cell with thick
+        // continental crust, one "desert" cell with no crust, all
+        // others at oceanic baseline. The plate ids are arbitrary —
+        // `init_local_field` doesn't read them, only thickness.
+        let plate_id = vec![0u32; n];
+        let mut crust_thickness = vec![Real::from_int(7); n];
+        let highland_cell = 0usize;
+        let desert_cell = 1usize;
+        crust_thickness[highland_cell] = Real::from_int(70); // very thick
+        crust_thickness[desert_cell] = Real::ZERO; // no crust at all
+        state.set_tectonics_fields(plate_id, crust_thickness);
+
+        let mag = crate::magnetism::Magnetism::earth_like();
+        mag.init_local_field(&mut state);
+
+        let remanence = state.crustal_remanence();
+        assert_eq!(remanence.len(), n);
+
+        // Desert cell has zero crust → zero remanence (the
+        // thickness ratio multiplies the noise to zero).
+        assert_eq!(
+            remanence[desert_cell],
+            Real::ZERO,
+            "desert cell with zero crust should have zero remanence"
+        );
+
+        // Highland cell has thick crust → strictly positive
+        // remanence (assuming the SplitMix64 draw for that cell
+        // is non-zero, which the seed above guarantees — the test
+        // is deterministic on this seed).
+        assert!(
+            remanence[highland_cell] > Real::ZERO,
+            "highland cell with thick crust should have positive remanence; got {:?}",
+            remanence[highland_cell]
+        );
+
+        // And the local shielding follows: highland > desert.
+        // Dipole strength is 1.0 (default Normal state); the
+        // desert cell's local field is just the dipole, the
+        // highland cell's is dipole + remanence.
+        let local = state.magnetic_field_local();
+        assert!(
+            local[highland_cell] > local[desert_cell],
+            "highland local shielding should exceed desert; highland={:?} desert={:?}",
+            local[highland_cell],
+            local[desert_cell]
+        );
+    }
+
+    /// **P3.5 — Mars southern-highland pattern reduces local ion escape.**
+    ///
+    /// Two cells with the *same* global dipole, but one has high
+    /// crustal remanence (Mars southern highland) and the other
+    /// has none (Mars northern lowland). The ion-escape rate over
+    /// the remanence cell should be strictly lower than over the
+    /// bare cell — even with no global magnetosphere, the local
+    /// umbrella shields its patch. The previous single
+    /// `PlanetEscapeParams::magnetic_strength` scalar couldn't
+    /// represent this geographically-structured ion loss at all.
+    #[test]
+    fn mars_southern_highland_pattern_reduces_local_ion_escape() {
+        // Build a Mars-analog params block (no global dipole) and
+        // probe ion_escape_factor at two distinct local field
+        // values. Cell A: bare lowland (no remanence). Cell B:
+        // highland with remanence boost.
+        let mut mars_params = PlanetEscapeParams::mars_like();
+        // Force the planet-wide scalar to zero (Mars has no dipole)
+        // so the per-cell signal is purely the remanence.
+        mars_params.magnetic_strength = Real::ZERO;
+
+        // Bare-lowland local field: equal to the (zero) dipole +
+        // zero remanence = 0. Highland: 0 + 0.5 (typical Mars
+        // remanence umbrella ceiling per the spec calibration).
+        let bare_local = Real::ZERO;
+        let umbrella_local = Real::from_ratio(5, 10);
+
+        let dt = Real::ONE;
+        let temperature_k = Real::from_int(250);
+
+        let bare = escape_rate_for_with_local_field(
+            Substance::Oxidiser,
+            &mars_params,
+            temperature_k,
+            bare_local,
+            dt,
+        );
+        let umbrella = escape_rate_for_with_local_field(
+            Substance::Oxidiser,
+            &mars_params,
+            temperature_k,
+            umbrella_local,
+            dt,
+        );
+
+        // Umbrella shielding strictly suppresses ion escape vs the
+        // bare lowland. Quantitative ratio (1 + 0) / (1 + 0.5) =
+        // 2/3 → umbrella ion ≈ 0.67 × bare ion. Conservative
+        // assertion: strictly less and at least 10 % lower.
+        assert!(
+            umbrella.ion < bare.ion,
+            "umbrella ion escape should be strictly lower than bare lowland; umbrella={:?} bare={:?}",
+            umbrella.ion,
+            bare.ion
+        );
+        let nine_tenths = Real::from_ratio(9, 10);
+        assert!(
+            umbrella.ion < bare.ion * nine_tenths,
+            "umbrella ion escape should be at least 10% lower than bare lowland; umbrella={:?} bare={:?}",
+            umbrella.ion,
+            bare.ion
+        );
+
+        // The photochemical channel uses the same per-cell shielding
+        // factor; same ordering must hold there.
+        assert!(
+            umbrella.photochemical < bare.photochemical,
+            "umbrella photochemical loss should be strictly lower than bare lowland"
+        );
+
+        // And `ion_escape_factor` itself is monotone-decreasing in
+        // its argument — the explicit accessor (mirrored in the
+        // formula above) should agree with the channel.
+        assert!(
+            ion_escape_factor(umbrella_local) < ion_escape_factor(bare_local),
+            "ion_escape_factor must be monotone-decreasing in local field strength"
         );
     }
 }

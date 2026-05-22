@@ -90,6 +90,41 @@ pub struct PhysicsState {
     /// `magnetic_b_q` / `magnetic_b_r` must also refresh
     /// `magnetic_magnitude`.
     magnetic_magnitude: Vec<Real>,
+    /// Per-cell local magnetic-shielding strength (P3.5). Bounded
+    /// to `[0, 1.5]` where `1.0` represents Earth-equivalent
+    /// baseline magnetosphere shielding and values above `1.0`
+    /// represent crustal-remanence "umbrellas" — patches of locally
+    /// frozen-in magnetisation (Mars's southern highlands are the
+    /// canonical example) that suppress ion escape locally even
+    /// when the global dipole is weak. Initialised at planet build
+    /// time by `Magnetism::init_local_field` (combining
+    /// `state.dipole_strength` with a deterministic per-cell
+    /// crust-thickness-weighted SplitMix64 noise pattern), and
+    /// re-normalised every macro-step against the current
+    /// `dipole_strength` so a global reversal (Item 20) drags every
+    /// cell's local shielding down with it without obliterating the
+    /// per-cell variation. Read by `escape_rate_for` for both the
+    /// ion-escape and photochemical-shielding channels — the
+    /// previous single planet-wide `magnetic_strength` scalar
+    /// couldn't represent partial-magnetosphere planets where ion
+    /// loss is geographically structured.
+    magnetic_field_local: Vec<Real>,
+    /// Per-cell crustal-remanence baseline (P3.5). The
+    /// dipole-free component of `magnetic_field_local` — what each
+    /// cell's shielding would be if the global dipole vanished
+    /// entirely. Cached so per-tick re-normalisation against a
+    /// changing `dipole_strength` doesn't need to re-roll
+    /// SplitMix64 every cell every macro-step. Populated by
+    /// `Magnetism::init_local_field`; immutable across the run.
+    /// Length is either zero (no init yet) or `grid.n_cells()`.
+    crustal_remanence: Vec<Real>,
+    /// Planet seed used for the SplitMix64 per-cell remanence
+    /// pattern (P3.5). Recorded so re-normalisation in
+    /// `Magnetism::integrate` can reproduce the same per-cell
+    /// shape after a `dipole_strength` change without forcing
+    /// callers to re-pass the seed. Defaults to `0`; production
+    /// init paths overwrite it via `set_planet_seed`.
+    planet_seed: u64,
     /// Macro-step counter used by laws that need a planet-wide
     /// clock (tides, seasonal insolation, diurnal cycles). Advanced
     /// once per macro-step by `orchestration::integrate_civ_step`.
@@ -267,6 +302,18 @@ impl PhysicsState {
             magnetic_b_r: vec![Real::ZERO; n],
             magnetic_b_z: vec![Real::ZERO; n],
             magnetic_magnitude: vec![Real::ZERO; n],
+            // P3.5: per-cell local shielding. Default to `1.0`
+            // (Earth-equivalent baseline) for every cell so a
+            // freshly-constructed `PhysicsState` used in non-
+            // magnetism-aware tests retains the pre-P3.5 behaviour
+            // (uniform shielding = single planet-wide scalar).
+            // `Magnetism::init_local_field` overwrites this with
+            // the per-cell pattern at planet init.
+            magnetic_field_local: vec![Real::ONE; n],
+            // Empty until `Magnetism::init_local_field` populates
+            // it; the per-cell pass guards on length.
+            crustal_remanence: Vec::new(),
+            planet_seed: 0,
             macro_step: 0,
             upper_temperature: vec![Real::ZERO; n],
             // P1.1: zero by default; `init_subsurface_temperature` (or
@@ -470,6 +517,57 @@ impl PhysicsState {
     /// touch this; recognition reads via `magnetic_magnitude()`.
     pub fn magnetic_magnitude_mut(&mut self) -> &mut [Real] {
         &mut self.magnetic_magnitude
+    }
+
+    /// Per-cell local magnetic-shielding strength (P3.5). Bounded
+    /// to `[0, 1.5]`; `1.0` is Earth-equivalent baseline. Read by
+    /// `atmospheric_escape::escape_rate_for` for ion + photochem
+    /// shielding; authored by `Magnetism::init_local_field` and
+    /// re-normalised each macro-step by `Magnetism::integrate`.
+    #[must_use]
+    pub fn magnetic_field_local(&self) -> &[Real] {
+        &self.magnetic_field_local
+    }
+
+    /// Mutable accessor for `magnetic_field_local`. Tests directly
+    /// seed this for two-cell shielding-asymmetry probes; the
+    /// canonical write path is `Magnetism::init_local_field` +
+    /// `Magnetism::integrate`.
+    pub fn magnetic_field_local_mut(&mut self) -> &mut [Real] {
+        &mut self.magnetic_field_local
+    }
+
+    /// Per-cell crustal-remanence baseline (P3.5) — the dipole-
+    /// free component of `magnetic_field_local`. Empty until
+    /// `Magnetism::init_local_field` has run; otherwise sized to
+    /// `grid().n_cells()`. Read by `Magnetism::integrate` for
+    /// per-tick re-normalisation against the current dipole
+    /// strength.
+    #[must_use]
+    pub fn crustal_remanence(&self) -> &[Real] {
+        &self.crustal_remanence
+    }
+
+    /// Mutable accessor for `crustal_remanence`. Only
+    /// `Magnetism::init_local_field` writes to this; exposed so
+    /// tests that bypass the init path can pre-seed the baseline.
+    pub fn crustal_remanence_mut(&mut self) -> &mut Vec<Real> {
+        &mut self.crustal_remanence
+    }
+
+    /// Planet seed (P3.5). Used by `Magnetism::init_local_field`
+    /// to drive the SplitMix64 per-cell remanence pattern. Set
+    /// once at planet init; never read by laws (only by the
+    /// magnetic-init path).
+    #[must_use]
+    pub fn planet_seed(&self) -> u64 {
+        self.planet_seed
+    }
+
+    /// Set the planet seed (P3.5). Called once at planet init
+    /// before `Magnetism::init_local_field` runs.
+    pub fn set_planet_seed(&mut self, seed: u64) {
+        self.planet_seed = seed;
     }
 
     /// Per-cell upper-atmosphere temperature in K. Previously

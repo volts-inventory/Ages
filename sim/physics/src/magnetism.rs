@@ -95,6 +95,42 @@ pub enum DipoleState {
 /// any given tick.
 const REVERSAL_SALT: u64 = 0xF11A_70F1_5E12_DEAD;
 
+/// SplitMix64 salt for the per-cell crustal-remanence stream
+/// (P3.5). Independent of `REVERSAL_SALT` so the per-cell
+/// remanence pattern doesn't co-evolve with the reversal Markov
+/// chain. Used by `Magnetism::init_local_field` to spray
+/// per-cell noise on top of the global dipole.
+const REMANENCE_SALT: u64 = 0x6A0F_BE51_C7D2_1AB3;
+
+/// Maximum value `magnetic_field_local` can hold (P3.5). The
+/// spec calls for `[0, 1.5]`: `1.0` = Earth-equivalent baseline,
+/// `1.5` = strong crustal-remanence umbrella above baseline (Mars
+/// southern-highland-class). Any composition of dipole +
+/// remanence is clamped to this ceiling so a future global-field
+/// model can't accidentally overflow downstream factors.
+pub const LOCAL_FIELD_MAX_NUM: i64 = 3;
+pub const LOCAL_FIELD_MAX_DEN: i64 = 2;
+
+/// Crustal-remanence contribution scale (P3.5). Remanence is
+/// gated on `crust_thickness`: thicker crust holds more frozen-in
+/// magnetisation. The per-cell remanence is
+/// `REMANENCE_SCALE × thickness_ratio × noise01` where
+/// `thickness_ratio = crust_thickness / EARTH_REFERENCE_THICKNESS`
+/// and `noise01` is a SplitMix64-derived `[0, 1)` draw. At
+/// `REMANENCE_SCALE = 0.5` an average continental cell
+/// (thickness ≈ 35 km) tops out at +0.5 above the dipole — enough
+/// for the Mars-highlands umbrella to dominate the local shielding
+/// signal without saturating the `[0, 1.5]` ceiling on every cell.
+pub const REMANENCE_SCALE_NUM: i64 = 1;
+pub const REMANENCE_SCALE_DEN: i64 = 2;
+
+/// Reference crust thickness for the remanence weighting (P3.5).
+/// 35 km mirrors `tectonics::CONTINENTAL_THICKNESS_KM`; a cell at
+/// this thickness gets the full remanence weight (modulated by
+/// noise), oceanic cells (~7 km) get ~20 % of that, and zero-
+/// thickness cells get no remanence contribution at all.
+pub const REMANENCE_REF_THICKNESS_KM: i64 = 35;
+
 /// Floor the strength envelope decays to at the midpoint of a
 /// reversal window. Set to 0.1 so the inverse-coupled
 /// `cosmic_ray_ground_flux()` peaks at `1 / 0.2 = 5.0` — a ~5×
@@ -396,6 +432,149 @@ impl Magnetism {
         state.magnetic_magnitude_mut().copy_from_slice(&mag_buf);
     }
 
+    /// Initialise per-cell magnetic shielding (P3.5).
+    ///
+    /// Real ion escape on partial-magnetosphere planets is
+    /// geographically structured: Mars retains a strong crustal-
+    /// remanence signal in its southern highlands (Acidalia /
+    /// Terra Cimmeria), and ion-pickup loss is measurably weaker
+    /// over those patches than over the dipole-free northern
+    /// lowlands. The previous single `PlanetEscapeParams::
+    /// magnetic_strength` scalar collapsed this to one number and
+    /// couldn't represent the umbrella effect at all.
+    ///
+    /// For each cell we synthesise a local shielding strength by
+    /// combining the global dipole contribution
+    /// (`state.dipole_strength()`) with a SplitMix64-driven per-cell
+    /// remanence weighted by `state.crust_thickness()`:
+    ///
+    /// - `noise01` ∈ `[0, 1)` from SplitMix64 keyed on
+    ///   `(planet_seed XOR REMANENCE_SALT, cell_index)`. Deterministic
+    ///   across runs given the same seed.
+    /// - `thickness_ratio` = `crust_thickness[i] /
+    ///   REMANENCE_REF_THICKNESS_KM` clamped to `[0, 2]`. Cells
+    ///   without tectonics installed (empty `crust_thickness`) get
+    ///   thickness_ratio = 1 so they still see the noise-driven
+    ///   variation; otherwise thick continental cells pick up more
+    ///   remanence than thin oceanic cells.
+    /// - `remanence` = `REMANENCE_SCALE × thickness_ratio × noise01`.
+    ///   Cached in `state.crustal_remanence` so re-normalisation
+    ///   doesn't need to re-sample noise.
+    /// - `magnetic_field_local[i]` = `(dipole_strength + remanence)`
+    ///   clamped to `[0, LOCAL_FIELD_MAX]`.
+    ///
+    /// Call once at planet init *after* `set_planet_seed` and
+    /// `set_tectonics_fields` (or with empty tectonics if the
+    /// caller doesn't have plates yet). The global `Magnetism`
+    /// vector field can be initialised with `init_field` independently;
+    /// the two paths share no state.
+    #[allow(clippy::similar_names)]
+    pub fn init_local_field(&self, state: &mut PhysicsState) {
+        let n = state.grid().n_cells();
+        if n == 0 {
+            return;
+        }
+        let seed = state.planet_seed();
+        let dipole = state.dipole_strength();
+        let scale = Real::from_ratio(REMANENCE_SCALE_NUM, REMANENCE_SCALE_DEN);
+        let ref_thickness = Real::from_int(REMANENCE_REF_THICKNESS_KM);
+        let two = Real::from_int(2);
+        let local_max = Real::from_ratio(LOCAL_FIELD_MAX_NUM, LOCAL_FIELD_MAX_DEN);
+        // Snapshot crust_thickness up front so the borrow checker
+        // is happy when we touch state.crustal_remanence_mut() +
+        // state.magnetic_field_local_mut() below.
+        let thickness = state.crust_thickness().to_vec();
+        let mut remanence = vec![Real::ZERO; n];
+        let mut local = vec![Real::ZERO; n];
+        for i in 0..n {
+            // SplitMix64 keyed on (seed XOR salt, cell_index). The
+            // double-finalisation (`next_u64`) gives a stream that's
+            // robust to seed sparsity — single-bit-flip seeds produce
+            // uncorrelated cell patterns. Standard shape borrowed
+            // from `volcanism::next_u64` / `tectonics`'s plate sampler.
+            let mut s = seed ^ REMANENCE_SALT;
+            s = s.wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let raw = next_u64(&mut s);
+            // Map the top 16 bits to `[0, 1)` via Real::from_ratio.
+            // Using the top half avoids the well-known low-bit bias
+            // in linear congruential / SplitMix outputs. We use 16
+            // bits (denominator `2^16 = 65536`) rather than 32 bits
+            // because Q32.32's integer range tops out around `2^31`
+            // and `from_ratio(_, 2^32)` would overflow the
+            // I32F32::from_num conversion before the division.
+            let top = ((raw >> 48) & 0xFFFF) as i64;
+            let noise01 = Real::from_ratio(top, 1_i64 << 16);
+            // Per-cell crust thickness, clamped to a sensible
+            // ratio window. Empty `crust_thickness` (no tectonics
+            // installed yet) defaults to the reference thickness
+            // so the variation comes purely from the SplitMix64
+            // noise pattern.
+            let t_km = if i < thickness.len() {
+                thickness[i]
+            } else {
+                ref_thickness
+            };
+            let mut thickness_ratio = if ref_thickness == Real::ZERO {
+                Real::ONE
+            } else {
+                t_km / ref_thickness
+            };
+            if thickness_ratio < Real::ZERO {
+                thickness_ratio = Real::ZERO;
+            }
+            if thickness_ratio > two {
+                thickness_ratio = two;
+            }
+            let r_i = scale * thickness_ratio * noise01;
+            remanence[i] = r_i;
+            let combined = dipole + r_i;
+            let clamped = if combined < Real::ZERO {
+                Real::ZERO
+            } else if combined > local_max {
+                local_max
+            } else {
+                combined
+            };
+            local[i] = clamped;
+        }
+        // Install. `crustal_remanence_mut()` returns a `&mut Vec<Real>`
+        // so we can resize-by-assignment; `magnetic_field_local_mut()`
+        // is a `&mut [Real]` (already sized to `n` in `PhysicsState::new`).
+        *state.crustal_remanence_mut() = remanence;
+        state.magnetic_field_local_mut().copy_from_slice(&local);
+    }
+
+    /// Re-normalise `magnetic_field_local` against the current
+    /// `state.dipole_strength` (P3.5). Called by `integrate` so a
+    /// global magnetic reversal (Item 20) drags every cell's
+    /// local shielding down proportionally without obliterating
+    /// the per-cell remanence variation. Requires
+    /// `crustal_remanence` to be populated (no-op otherwise).
+    fn renormalize_local_field(&self, state: &mut PhysicsState) {
+        let n = state.grid().n_cells();
+        if state.crustal_remanence().len() != n {
+            // Init hasn't run yet — leave the default uniform field
+            // alone so call sites that don't yet wire init_local_field
+            // see the pre-P3.5 behaviour.
+            return;
+        }
+        let dipole = state.dipole_strength();
+        let local_max = Real::from_ratio(LOCAL_FIELD_MAX_NUM, LOCAL_FIELD_MAX_DEN);
+        let remanence = state.crustal_remanence().to_vec();
+        let local = state.magnetic_field_local_mut();
+        for i in 0..n {
+            let combined = dipole + remanence[i];
+            let clamped = if combined < Real::ZERO {
+                Real::ZERO
+            } else if combined > local_max {
+                local_max
+            } else {
+                combined
+            };
+            local[i] = clamped;
+        }
+    }
+
     /// Diurnal modulation factor at the current macro-step. Pure
     /// triangular wave: returns 1.0 at the start of each cycle,
     /// rises linearly to (1 + amplitude) at half-cycle, falls
@@ -435,6 +614,14 @@ impl Magnetism {
 impl Law for Magnetism {
     #[allow(clippy::similar_names)]
     fn integrate(&self, state: &mut PhysicsState, _dt: Real) {
+        // P3.5: re-normalise the per-cell shielding field against
+        // the current `state.dipole_strength` before the diurnal
+        // pass. A global magnetic reversal (Item 20) updates
+        // `dipole_strength` independently, and this re-renormalisation
+        // is what makes that change visible to atmospheric escape.
+        // Safe to call unconditionally — the helper no-ops when
+        // `crustal_remanence` hasn't been installed.
+        self.renormalize_local_field(state);
         if self.dipole_strength == Real::ZERO || self.diurnal_amplitude == Real::ZERO {
             return;
         }
