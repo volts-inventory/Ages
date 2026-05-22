@@ -200,7 +200,20 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // `Synchronous` (locked face); for non-synchronous regimes
     // the law ignores the value (`LockingMode::Other`).
     let (sub_lat, sub_lon) = sim_world::sub_stellar_point(planet, 0);
-    let radiation = radiation_base.with_locking(locking_mode, sub_lat, sub_lon);
+    // T5 (any-planet backlog): plumb gravity through so the
+    // per-cell cirrus-greenhouse term derives from the planet's
+    // dry-adiabatic lapse rate (`g / c_p_air`) rather than a flat
+    // 15 K constant. High-gravity super-Earths get a steeper lapse
+    // → cooler cirrus tops → stronger longwave trap; low-gravity
+    // worlds collapse cirrus forcing toward zero. Cirrus altitude
+    // stays at the default 10 km reference (per-atmosphere altitude
+    // tuning is a deferred follow-up).
+    let radiation = radiation_base
+        .with_locking(locking_mode, sub_lat, sub_lon)
+        .with_lapse_inputs(
+            planet.gravity(),
+            sim_arith::Real::from_int(sim_physics::REFERENCE_CIRRUS_ALTITUDE_M),
+        );
 
     // Atmospheric wind. Per-planet tuning lives in
     // `wind_for_atmosphere`: density scaling on all three

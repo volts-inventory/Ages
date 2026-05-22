@@ -70,7 +70,10 @@
 
 use crate::albedo::{albedo_radiation_factor, effective_albedo_slice};
 use crate::chemistry::Substance;
-use crate::clouds::{cirrus_greenhouse_k, stratus_greenhouse_k, CloudType};
+use crate::clouds::{
+    cirrus_greenhouse_strength, dry_adiabatic_lapse_rate, stratus_greenhouse_k, CloudType,
+    REFERENCE_CIRRUS_ALTITUDE_M,
+};
 use crate::laws::Law;
 use crate::state::PhysicsState;
 use sim_arith::transcendental::{cos, exp, half_pi, ln, pow, sin};
@@ -273,6 +276,20 @@ pub struct Radiation {
     /// Sub-stellar longitude in fractional turns `[0, 1)`. For
     /// `LockingMode::Other` this field is unread.
     pub substellar_lon_turns: Real,
+    /// Surface gravity (m/s²) used to derive the dry adiabatic
+    /// lapse rate for the cirrus-greenhouse calculation
+    /// (any-planet backlog T5). Earth default ≈ 9.81; high-gravity
+    /// super-Earths get steeper lapse → cooler cirrus tops → more
+    /// `T_surface − T_cloud_top` contrast → stronger cirrus
+    /// longwave trap. Set via [`Radiation::with_lapse_inputs`].
+    pub gravity_ms2: Real,
+    /// Cirrus deck altitude (m) at which the cloud-top temperature
+    /// is evaluated. Defaults to
+    /// [`REFERENCE_CIRRUS_ALTITUDE_M`] (10 km — real-Earth cirrus
+    /// top); per-planet override possible via
+    /// [`Radiation::with_lapse_inputs`] for atmospheres with a
+    /// markedly different cloud-deck altitude.
+    pub cirrus_altitude_m: Real,
 }
 
 impl Radiation {
@@ -439,6 +456,12 @@ impl Radiation {
             locking_mode: LockingMode::Other,
             substellar_lat_turns: Real::ZERO,
             substellar_lon_turns: Real::ZERO,
+            // Default to Earth gravity + 10 km cirrus altitude so
+            // existing callers (and tests) reproduce the historical
+            // 15 K cirrus forcing without a `with_lapse_inputs`
+            // chain. sim-core overrides per-planet at law build.
+            gravity_ms2: Real::from_ratio(981, 100),
+            cirrus_altitude_m: Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M),
         }
     }
 
@@ -463,6 +486,36 @@ impl Radiation {
         self.locking_mode = locking_mode;
         self.substellar_lat_turns = substellar_lat_turns;
         self.substellar_lon_turns = substellar_lon_turns;
+        self
+    }
+
+    /// Override the inputs to the per-cell cirrus-greenhouse
+    /// calculation (any-planet backlog T5). Dry-adiabatic lapse
+    /// rate is derived from `gravity_ms2` via `g / c_p_air`;
+    /// `cirrus_altitude_m` sets the cloud-top height at which the
+    /// surface-vs-cloud-top temperature contrast is evaluated.
+    /// Together they drive `cirrus_greenhouse_strength` so a
+    /// high-gravity world gets a steeper lapse → cooler cirrus
+    /// tops → stronger longwave trap.
+    ///
+    /// Defaults (Earth gravity 9.81 m/s², altitude 10 km) reproduce
+    /// the historical 15 K constant. sim-core overrides per-planet
+    /// at law build; tests that don't care about the lapse-driven
+    /// path can rely on the defaults.
+    ///
+    /// `cirrus_altitude_m ≤ 0` is clamped at the Earth reference;
+    /// `gravity_ms2 ≤ 0` falls through to
+    /// `dry_adiabatic_lapse_rate(0) = 0` which collapses cirrus
+    /// greenhouse to zero (consistent with a gravity-less world
+    /// where the lapse-rate concept doesn't apply).
+    #[must_use]
+    pub fn with_lapse_inputs(mut self, gravity_ms2: Real, cirrus_altitude_m: Real) -> Self {
+        self.gravity_ms2 = gravity_ms2;
+        self.cirrus_altitude_m = if cirrus_altitude_m > Real::ZERO {
+            cirrus_altitude_m
+        } else {
+            Real::from_int(REFERENCE_CIRRUS_ALTITUDE_M)
+        };
         self
     }
 
@@ -528,7 +581,17 @@ impl Law for Radiation {
         // decode.
         let cloud_fraction = state.cloud_fraction().to_vec();
         let cloud_type = state.cloud_type().to_vec();
-        let cirrus_gh = cirrus_greenhouse_k();
+        // Lapse-rate-driven cirrus forcing (any-planet backlog
+        // T5). Dry adiabatic lapse = g / c_p_air is invariant per
+        // tick; pre-compute it (plus the cirrus deck altitude) so
+        // the per-cell call to `cirrus_greenhouse_strength` only
+        // varies on `temps_prev[i]`. On a high-gravity world the
+        // steeper lapse drives cooler cirrus tops at the same
+        // altitude → larger `T_surface − T_cloud_top` → stronger
+        // longwave trap (the spec's `(ΔT)^4` Stefan-Boltzmann
+        // scaling).
+        let lapse_rate = dry_adiabatic_lapse_rate(self.gravity_ms2);
+        let cirrus_altitude = self.cirrus_altitude_m;
         let stratus_gh = stratus_greenhouse_k();
 
         // Per-cell diurnal modulation. Sub-solar longitude
@@ -706,8 +769,20 @@ impl Law for Radiation {
             // this term the cloud_fraction field affected only
             // albedo (shortwave shielding) — clouds in the real
             // climate also trap outgoing longwave.
+            //
+            // Cirrus magnitude is lapse-driven (any-planet backlog
+            // T5): `cirrus_greenhouse_strength` evaluates
+            // `(T_surface − T_cloud_top)^4 / ΔT_earth^4 × 15 K` per
+            // cell, so a hotter cell at the same lapse + altitude
+            // contributes more forcing — the Stefan-Boltzmann
+            // surface-vs-cloud-top emission difference. Stratus
+            // remains a constant: low-altitude clouds emit at
+            // near-surface T and the per-planet variation is
+            // dominated by composition rather than lapse.
             let cloud_gh_peak = match CloudType::from_byte(cloud_type[i]) {
-                CloudType::Cirrus => cirrus_gh,
+                CloudType::Cirrus => {
+                    cirrus_greenhouse_strength(temps_prev[i], lapse_rate, cirrus_altitude)
+                }
                 CloudType::Stratus => stratus_gh,
             };
             let cloud_gh = cloud_gh_peak * cloud_fraction[i].clamp01();
