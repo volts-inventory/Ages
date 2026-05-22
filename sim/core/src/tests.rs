@@ -1790,8 +1790,10 @@ fn hot_jupiter_extreme_params_do_not_overflow() {
     }
 
     // 3. Greenhouse cap holds — every cell's temperature must sit in
-    //    a physically plausible band. The `greenhouse_cap_k` ceiling
-    //    (250 K) bounds the per-tick T_eq inflation; the relaxation
+    //    a physically plausible band. The `greenhouse_cap_scaled`
+    //    ceiling (pressure-scaled, capped at 600 K via the upper
+    //    clamp; 250 K at Earth pressure) bounds the per-tick T_eq
+    //    inflation; the relaxation
     //    rate ensures we asymptote, not diverge. Generous upper bound
     //    (3000 K = 1500 K surface + 1000 K of greenhouse / radiative
     //    headroom + gradient room) so this is a "T isn't infinity"
