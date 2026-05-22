@@ -18,7 +18,7 @@ use protocol::{
 use sim_arith::Real;
 use sim_civ::{catastrophe, conflict, cosmology, tech, transmission, Civ};
 use sim_ecosystem::{
-    sample_ecosystem_with_substrate, step_hgt, step_speciation, LocalConditions, PlanetEcosystem,
+    step_hgt, step_speciation, LocalConditions, PlanetEcosystem,
     SpeciationTracker,
 };
 use sim_events::Emitter;
@@ -133,8 +133,21 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             cap
         }
     };
-    let mut ecosystem: PlanetEcosystem =
-        sample_ecosystem_with_substrate(planet.seed, substrate_tag, planet_capacity);
+    // F2 (xeno N2) — initialise the per-cell biomass distribution
+    // alongside the aggregate. Uniform split at worldgen
+    // (`aggregate / n_cells` per cell); the per-tick step + the
+    // catastrophe poke path keep `sum(cell_biomass) == biomass` in
+    // sync. Without per-cell biomass, heterogeneous catastrophes
+    // (e.g. a volcanic eruption on cell `c`) can only act on the
+    // planet-wide aggregate, which crashes producer biomass
+    // everywhere or nowhere — never the *local* famine that an
+    // actual eruption produces.
+    let mut ecosystem: PlanetEcosystem = sim_ecosystem::sample_ecosystem_with_substrate_for_grid(
+        planet.seed,
+        substrate_tag,
+        planet_capacity,
+        state.grid().n_cells(),
+    );
     // Speciation + HGT trackers/registries live alongside the
     // ecosystem. The species registry feeds `step_speciation` (which
     // reads a parent `Species` from the registry to derive daughters)
@@ -702,10 +715,22 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         }
 
         // Catastrophe check on every active civ.
+        // F2 (xeno N2) — thread `&mut ecosystem` through so volcanic
+        // / disease / etc. events can drain per-cell biomass at the
+        // affected cell. Without this, heterogeneous catastrophes
+        // can't produce local famines: a volcanic eruption either
+        // crashes producer biomass everywhere or nowhere.
         let mut cat_events: Vec<(u32, catastrophe::CatastropheRecord)> = Vec::new();
         for civ in civs.iter_mut().filter(|c| c.is_active()) {
             let civ_id = civ.id;
-            if let Some(rec) = catastrophe::check_and_apply(civ, &mut state, &planet, &species, tick) {
+            if let Some(rec) = catastrophe::check_and_apply(
+                civ,
+                &mut state,
+                &planet,
+                &species,
+                tick,
+                Some(&mut ecosystem),
+            ) {
                 // M7: bump the civ's selection bias from the
                 // catastrophe's per-kind weights so survivors'
                 // trait distribution shifts toward the survival-

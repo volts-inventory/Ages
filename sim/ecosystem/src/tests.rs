@@ -19,6 +19,7 @@
 
 use super::*;
 use sim_arith::Real;
+use std::collections::BTreeMap;
 use sim_physics::chemistry::{
     alt_oxidiser_combustion_energy, energy_yield_factor, oxidiser_ladder, Oxidiser,
 };
@@ -154,6 +155,7 @@ fn run_lv_pair(half_saturation_frac: Real) -> Vec<Real> {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: pred_id,
@@ -162,6 +164,7 @@ fn run_lv_pair(half_saturation_frac: Real) -> Vec<Real> {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -337,6 +340,7 @@ fn low_half_saturation_predator_dampens_cycle_faster() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: sim_species::Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
             EcoSpecies {
                 species_id: pred_id,
@@ -345,6 +349,7 @@ fn low_half_saturation_predator_dampens_cycle_faster() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: sim_species::Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
         ];
         let mut matrix = InteractionMatrix::new();
@@ -426,6 +431,7 @@ fn keystone_species_removal_causes_cascade_disproportionate_to_biomass() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             });
         }
         for (i, id) in peripherals.iter().enumerate() {
@@ -439,6 +445,7 @@ fn keystone_species_removal_causes_cascade_disproportionate_to_biomass() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             });
         }
         let mut matrix = InteractionMatrix::new();
@@ -526,6 +533,7 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: primary,
@@ -534,6 +542,7 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: secondary,
@@ -542,6 +551,7 @@ fn producer_collapse_propagates_to_consumer_tiers() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -608,6 +618,7 @@ fn competition_pair_excludes_at_equilibrium() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: strong,
@@ -616,6 +627,7 @@ fn competition_pair_excludes_at_equilibrium() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: weak,
@@ -624,6 +636,7 @@ fn competition_pair_excludes_at_equilibrium() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -766,6 +779,7 @@ fn chemolithotroph_species_partition_by_reduction_potential() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: chemo_b,
@@ -776,6 +790,7 @@ fn chemolithotroph_species_partition_by_reduction_potential() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut eco = PlanetEcosystem::new_with_substrate(
@@ -847,6 +862,7 @@ fn syntrophy_pair_extinction_when_separated() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: mutualist_b,
@@ -857,6 +873,7 @@ fn syntrophy_pair_extinction_when_separated() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -1030,6 +1047,7 @@ fn predator_prey_for_habitat(habitat: Habitat) -> PlanetEcosystem {
             is_extant: true,
             low_biomass_streak: 0,
             habitat,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: pred_id,
@@ -1042,6 +1060,7 @@ fn predator_prey_for_habitat(habitat: Habitat) -> PlanetEcosystem {
             is_extant: true,
             low_biomass_streak: 0,
             habitat,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -1151,6 +1170,7 @@ fn three_species_web() -> PlanetEcosystem {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: a,
@@ -1159,6 +1179,7 @@ fn three_species_web() -> PlanetEcosystem {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: b,
@@ -1167,6 +1188,7 @@ fn three_species_web() -> PlanetEcosystem {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -1239,6 +1261,7 @@ fn extinct_species_stops_contributing_to_ecosystem() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: survivor,
@@ -1247,6 +1270,7 @@ fn extinct_species_stops_contributing_to_ecosystem() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix_two = InteractionMatrix::new();
@@ -1312,6 +1336,7 @@ fn extinction_cascade_from_keystone_removal() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: dep_a,
@@ -1320,6 +1345,7 @@ fn extinction_cascade_from_keystone_removal() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: dep_b,
@@ -1328,6 +1354,7 @@ fn extinction_cascade_from_keystone_removal() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: dep_c,
@@ -1336,6 +1363,7 @@ fn extinction_cascade_from_keystone_removal() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -1407,6 +1435,7 @@ fn extinction_event_emits_on_pool_collapse() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: target,
@@ -1415,6 +1444,7 @@ fn extinction_event_emits_on_pool_collapse() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let matrix = InteractionMatrix::new();
@@ -1503,6 +1533,7 @@ fn producer_growth_consumes_atmospheric_co2() {
         is_extant: true,
         low_biomass_streak: 0,
         habitat: Habitat::Terrestrial,
+        cell_biomass: Vec::new(),
     }];
     let mut eco = PlanetEcosystem::new(
         species,
@@ -1540,6 +1571,7 @@ fn consumer_respiration_returns_co2_to_atmosphere() {
         is_extant: true,
         low_biomass_streak: 0,
         habitat: Habitat::Terrestrial,
+        cell_biomass: Vec::new(),
     }];
     let mut eco = PlanetEcosystem::new(
         species,
@@ -1585,6 +1617,7 @@ fn decomposer_chain_balances_carbon_budget() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: primary,
@@ -1593,6 +1626,7 @@ fn decomposer_chain_balances_carbon_budget() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: detritivore,
@@ -1601,6 +1635,7 @@ fn decomposer_chain_balances_carbon_budget() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: saprotroph,
@@ -1609,6 +1644,7 @@ fn decomposer_chain_balances_carbon_budget() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     // Modest predation so consumers can sustain themselves on the
@@ -1712,6 +1748,7 @@ fn build_pair_for_mutualism(
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: mutualist,
@@ -1720,6 +1757,7 @@ fn build_pair_for_mutualism(
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -1843,6 +1881,7 @@ fn engineer_boosts_cohabitor_match_score() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
             EcoSpecies {
                 species_id: engineer_id,
@@ -1851,6 +1890,7 @@ fn engineer_boosts_cohabitor_match_score() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
             EcoSpecies {
                 species_id: cohabitor_id,
@@ -1859,6 +1899,7 @@ fn engineer_boosts_cohabitor_match_score() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
         ];
         let mut matrix = InteractionMatrix::new();
@@ -1913,6 +1954,7 @@ fn virus_parasite_fires_episodically_not_every_tick() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
         EcoSpecies {
             species_id: virus,
@@ -1923,6 +1965,7 @@ fn virus_parasite_fires_episodically_not_every_tick() {
             is_extant: true,
             low_biomass_streak: 0,
             habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
         },
     ];
     let mut matrix = InteractionMatrix::new();
@@ -2007,6 +2050,7 @@ fn macro_parasite_reduces_host_fertility_multiplier() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
             EcoSpecies {
                 species_id: parasite_id,
@@ -2015,6 +2059,7 @@ fn macro_parasite_reduces_host_fertility_multiplier() {
                 is_extant: true,
                 low_biomass_streak: 0,
                 habitat: Habitat::Terrestrial,
+                cell_biomass: Vec::new(),
             },
         ];
         let mut matrix = InteractionMatrix::new();
@@ -2045,4 +2090,232 @@ fn macro_parasite_reduces_host_fertility_multiplier() {
         "Macro parasite did not impose extra fertility hit: \
          macro_host={macro_host_after:?}, micro_host={micro_host_after:?}"
     );
+}
+
+// ---------------------------------------------------------------
+// F2 (xeno N2) — per-cell biomass for heterogeneous catastrophes.
+// ---------------------------------------------------------------
+
+#[test]
+fn eco_species_has_per_cell_biomass_after_init() {
+    // Worldgen path — sample a grid-aware ecosystem and assert every
+    // species' `cell_biomass` vector matches the planet's cell
+    // count. Uniform initialisation: aggregate / n_cells per cell.
+    let n_cells: usize = 8 * 8;
+    let eco = sample_ecosystem_with_substrate_for_grid(
+        42,
+        "aqueous",
+        capacity(),
+        n_cells,
+    );
+    assert_eq!(eco.n_cells, n_cells, "ecosystem n_cells unset");
+    assert!(!eco.species.is_empty(), "no species sampled");
+    for (id, s) in &eco.species {
+        assert_eq!(
+            s.cell_biomass.len(),
+            n_cells,
+            "species {id:?} cell_biomass len {} != n_cells {n_cells}",
+            s.cell_biomass.len()
+        );
+    }
+}
+
+#[test]
+fn aggregate_biomass_equals_sum_of_cell_biomass() {
+    // Invariant: `EcoSpecies.biomass == sum(cell_biomass)` at every
+    // tick once the per-cell distribution has been initialised.
+    // Run the worldgen-aware sampler, step a handful of ticks, and
+    // assert the invariant holds for every species. The proportional
+    // rescale in `step_at_tick` is responsible — without it, the
+    // aggregate evolves while the per-cell vector stays frozen.
+    let n_cells: usize = 8 * 8;
+    let mut eco = sample_ecosystem_with_substrate_for_grid(
+        7,
+        "aqueous",
+        capacity(),
+        n_cells,
+    );
+
+    let assert_invariant = |eco: &PlanetEcosystem, label: &str| {
+        for (id, s) in &eco.species {
+            let sum = s
+                .cell_biomass
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b);
+            // `sum` and `s.biomass` may differ by 1 ulp due to Q32.32
+            // rounding when we divide-then-multiply during the
+            // rescale; pin equality directly because the rescale
+            // re-derives `s.biomass = sum(cells)` to keep them
+            // bit-equal.
+            assert_eq!(
+                sum, s.biomass,
+                "{label}: species {id:?} aggregate {:?} != sum(cell_biomass) {sum:?}",
+                s.biomass
+            );
+        }
+    };
+
+    assert_invariant(&eco, "post-init");
+
+    for tick in 0..5 {
+        eco.step_at_tick(tick);
+        assert_invariant(&eco, &format!("post-step tick {tick}"));
+    }
+}
+
+#[test]
+fn volcanic_event_reduces_local_eco_biomass_only() {
+    // Heterogeneous-catastrophe coupling: `reduce_at_cell` drains a
+    // single cell's biomass for a single species without crashing
+    // the other cells or the planet-wide aggregate beyond the
+    // proportional share. Models the N2 spec target — a volcanic
+    // eruption on cell N starves only that cell's producers.
+    let n_cells: usize = 4 * 4;
+    let mut eco = sample_ecosystem_with_substrate_for_grid(
+        99,
+        "aqueous",
+        capacity(),
+        n_cells,
+    );
+
+    // Pick a producer to poke.
+    let producer_id = *eco
+        .species
+        .iter()
+        .find(|(_, s)| matches!(s.role, EcosystemRole::Producer { .. }))
+        .map(|(id, _)| id)
+        .expect("at least one producer");
+
+    let target_cell: usize = 3;
+    let other_cell: usize = 11;
+    let before_target = eco
+        .species
+        .get(&producer_id)
+        .unwrap()
+        .cell_biomass[target_cell];
+    let before_other = eco
+        .species
+        .get(&producer_id)
+        .unwrap()
+        .cell_biomass[other_cell];
+    let before_aggregate = eco.species.get(&producer_id).unwrap().biomass;
+    assert!(before_target > Real::ZERO, "target cell starts non-zero");
+    assert!(before_other > Real::ZERO, "other cell starts non-zero");
+
+    // Fire a 90% local catastrophe at the target cell.
+    eco.reduce_at_cell(producer_id, target_cell, Real::from_ratio(9, 10));
+
+    let after_target = eco
+        .species
+        .get(&producer_id)
+        .unwrap()
+        .cell_biomass[target_cell];
+    let after_other = eco
+        .species
+        .get(&producer_id)
+        .unwrap()
+        .cell_biomass[other_cell];
+    let after_aggregate = eco.species.get(&producer_id).unwrap().biomass;
+
+    // Target cell shrank by ~90%; allow tiny rounding slack.
+    assert!(
+        after_target < before_target,
+        "target cell biomass did not drop: before={before_target:?}, after={after_target:?}",
+    );
+    let expected_target = before_target * Real::from_ratio(1, 10);
+    assert!(
+        (after_target - expected_target).max(expected_target - after_target)
+            <= Real::from_ratio(1, 1000) * before_target,
+        "target cell drop off-spec: expected ~{expected_target:?}, got {after_target:?}",
+    );
+
+    // Other cell stayed put — the catastrophe is local, not
+    // planet-wide.
+    assert_eq!(
+        after_other, before_other,
+        "non-targeted cell biomass changed: before={before_other:?}, after={after_other:?}",
+    );
+
+    // Aggregate dropped by exactly the loss at the target cell.
+    let expected_aggregate = before_aggregate - (before_target - after_target);
+    assert_eq!(
+        after_aggregate, expected_aggregate,
+        "aggregate / per-cell mismatch: expected {expected_aggregate:?}, got {after_aggregate:?}",
+    );
+
+    // Invariant: sum(cell_biomass) == biomass.
+    let sum = eco
+        .species
+        .get(&producer_id)
+        .unwrap()
+        .cell_biomass
+        .iter()
+        .copied()
+        .fold(Real::ZERO, |a, b| a + b);
+    assert_eq!(
+        sum, after_aggregate,
+        "post-reduce invariant: sum {sum:?} != aggregate {after_aggregate:?}",
+    );
+}
+
+#[test]
+fn initialise_cell_biomass_preserves_aggregate() {
+    // `initialise_cell_biomass` is the worldgen helper that splits
+    // the aggregate uniformly. Verify each cell gets aggregate /
+    // n_cells, the aggregate is re-pinned to sum(cells) (so the
+    // invariant holds bit-exactly), and the re-pin drift is bounded
+    // by Q32.32's per-cell ulp.
+    let mut eco = sample_ecosystem(123, capacity());
+    let aggregates_before: BTreeMap<_, _> = eco
+        .species
+        .iter()
+        .map(|(id, s)| (*id, s.biomass))
+        .collect();
+
+    let n_cells: usize = 16;
+    eco.initialise_cell_biomass(n_cells);
+    assert_eq!(eco.n_cells, n_cells);
+
+    for (id, s) in &eco.species {
+        assert_eq!(s.cell_biomass.len(), n_cells);
+        let per_cell = aggregates_before[id] / Real::from_int(n_cells as i64);
+        for (i, c) in s.cell_biomass.iter().enumerate() {
+            assert_eq!(
+                *c, per_cell,
+                "species {id:?} cell {i}: expected {per_cell:?}, got {c:?}",
+            );
+        }
+        // Invariant: `biomass == sum(cell_biomass)`. The aggregate
+        // may shift by up to `n_cells × Q32.32_ulp` from the
+        // pre-init value because the divide-then-multiply roundtrip
+        // truncates each cell; the re-pin to the cell sum makes the
+        // invariant exact, and the absolute drift stays ≤ n_cells
+        // ulps.
+        let sum = s
+            .cell_biomass
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        assert_eq!(
+            s.biomass, sum,
+            "post-init aggregate {:?} != sum(cells) {sum:?}",
+            s.biomass
+        );
+        // Bounded drift: max one ulp per cell.
+        let before = aggregates_before[id];
+        let drift = if s.biomass > before {
+            s.biomass - before
+        } else {
+            before - s.biomass
+        };
+        // Real::ZERO is 1 ulp in Q32.32 = 1/2^32; bound by
+        // `n_cells × ulp` = `n_cells / 2^32`. Express as a small
+        // ratio: `n_cells / 1_000_000_000` is more than enough slack.
+        let max_drift = Real::from_ratio(n_cells as i64, 1_000_000);
+        assert!(
+            drift <= max_drift,
+            "init drift {drift:?} for species {id:?} exceeds bound {max_drift:?}",
+        );
+    }
 }

@@ -53,6 +53,7 @@ fn eco_species(id: SpeciesId, role: EcosystemRole, biomass: Real) -> EcoSpecies 
         is_extant: true,
         low_biomass_streak: 0,
         habitat: Habitat::Terrestrial,
+        cell_biomass: Vec::new(),
     }
 }
 

@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 protocol.workspace = true
 sim-arith.workspace = true
+sim-ecosystem.workspace = true
 sim-physics.workspace = true
 sim-population.workspace = true
 sim-recognition.workspace = true
