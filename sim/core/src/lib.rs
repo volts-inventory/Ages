@@ -679,6 +679,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             tick,
             &ecosystem.species,
             &species_registry,
+            &mut ecosystem.interactions,
             &mut speciation_tracker,
             cosmic_mult,
         );

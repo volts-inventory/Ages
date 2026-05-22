@@ -45,8 +45,8 @@ use crate::EcoSpecies;
 use protocol::{SpeciationEvent, SpeciationTriggerKind};
 use sim_arith::Real;
 use sim_species::{
-    EcosystemRole, InteractionKind, InteractionMatrix, Lifecycle, ProducerMetabolism, Species,
-    SpeciesId,
+    EcosystemRole, FunctionalResponse, Interaction, InteractionKind, InteractionMatrix, Lifecycle,
+    ProducerMetabolism, Species, SpeciesId,
 };
 use std::collections::BTreeMap;
 
@@ -117,6 +117,51 @@ pub const COSMIC_RAY_MULTIPLIER_FLOOR: i64 = 1;
 /// drive instantaneous speciation cascades — at the deepest reversal
 /// the flux multiplier saturates at 10×.
 pub const COSMIC_RAY_MULTIPLIER_CEILING: i64 = 10;
+
+/// P3.2 — character-displacement strength scalar applied to every
+/// interaction the daughter inherits from her parent. Sister species
+/// don't compete with the parent's existing partners at full strength
+/// — the niche has already shifted, and the daughter's reduced overlap
+/// with the parent's predator / prey / competitor set is the
+/// mechanistic ground truth. `0.6 = 60%` mirrors the empirically-fit
+/// "sister species share ~60% of niche partners after the initial
+/// divergence."
+pub const INHERITED_INTERACTION_STRENGTH_FRAC: (i64, i64) = (6, 10);
+
+/// P3.2 — strength of the explicit parent ↔ daughter Competition
+/// edge that gets inserted on every speciation. Sister species mildly
+/// compete (shared evolutionary heritage, overlapping ranges), but
+/// the daughter's niche shift means competition is far below the
+/// canonical 0.5–1.0 range used for unrelated competitors.
+pub const SISTER_COMPETITION_STRENGTH: (i64, i64) = (3, 10);
+
+/// P3.2 — Kelvin reference midpoint used to decide the direction of
+/// daughter `temp_range` displacement. Parents whose envelope sits
+/// above this reference produce daughters that drift further up
+/// (heat-loving); parents below it produce daughters that drift
+/// further down (cold-loving). 300 K (≈27 °C) sits in the middle of
+/// the aqueous-default 273–373 K range, so a parent without
+/// substrate-specific tuning produces no displacement bias on its
+/// own — only species whose envelope has already shifted away from
+/// the aqueous default get an exaggerating push.
+pub const TEMPERATURE_DISPLACEMENT_REFERENCE_K: i64 = 300;
+
+/// P3.2 — radiation reference used to decide the direction of
+/// daughter `radiation_max` displacement. 0.5 matches the aqueous-
+/// default ceiling; parents above it (extremophiles, already
+/// radiation-tolerant) produce daughters with even higher ceilings,
+/// while radiation-sensitive parents produce more sensitive daughters.
+pub const RADIATION_DISPLACEMENT_REFERENCE: (i64, i64) = (5, 10);
+
+/// P3.2 — fractional shift applied to daughter `temp_range.lo` /
+/// `temp_range.hi` / `radiation_max` per speciation event, in the
+/// character-displacement direction (away from the reference, in the
+/// same direction the parent has already drifted). 8% is large
+/// enough that a single speciation visibly separates the daughter
+/// from the parent on the tolerance axes, while staying inside the
+/// ±20% sampling jitter so the daughter doesn't immediately leave
+/// the substrate's habitable band.
+pub const TOLERANCE_DISPLACEMENT_FRAC: (i64, i64) = (8, 100);
 
 /// Trigger kind for a speciation event. Mirrors the wire-layer
 /// `protocol::SpeciationTriggerKind` but uses the in-crate naming so
@@ -472,7 +517,130 @@ pub fn derive_daughter_species(
     let new_clutch = parent.biology.clutch_size + clutch_delta;
     daughter.biology.clutch_size = new_clutch.max(Real::from_ratio(1, 10));
 
+    // P3.2 — character displacement on the tolerance envelope. The
+    // daughter's `temp_range` and `radiation_max` get pushed *away
+    // from* the parent's offset from a substrate-neutral reference.
+    // A parent whose envelope sits above the reference (warm-tolerant,
+    // radiation-tolerant) produces a daughter that drifts even further
+    // in that direction; a parent below the reference produces a
+    // daughter that drifts further in the opposite direction. Two
+    // sister species derived from parents straddling the reference
+    // therefore diverge in opposite directions on the contested
+    // axis — the textbook character-displacement signature.
+    //
+    // Why "displacement away from reference" rather than "away from
+    // parent's own value": the daughter inherits the parent's
+    // tolerance + small allometric drift, so "away from parent" alone
+    // would produce arbitrary perturbations. Anchoring the direction
+    // to the substrate-default reference makes character displacement
+    // exaggerate the niche shift the parent has already accumulated,
+    // matching the ecological mechanism (sister species amplify the
+    // ancestral niche separation rather than picking a random new
+    // direction).
+    let temp_ref = Real::from_int(TEMPERATURE_DISPLACEMENT_REFERENCE_K);
+    let parent_temp_center =
+        (parent.tolerance.temp_range.0 + parent.tolerance.temp_range.1)
+            / Real::from_int(2);
+    let temp_displacement_dir = if parent_temp_center >= temp_ref {
+        Real::ONE
+    } else {
+        Real::ZERO - Real::ONE
+    };
+    let temp_displacement_mag =
+        Real::from(TOLERANCE_DISPLACEMENT_FRAC) * parent_temp_center.abs();
+    let temp_shift = temp_displacement_dir * temp_displacement_mag;
+    daughter.tolerance.temp_range = (
+        parent.tolerance.temp_range.0 + temp_shift,
+        parent.tolerance.temp_range.1 + temp_shift,
+    );
+
+    let rad_ref = Real::from(RADIATION_DISPLACEMENT_REFERENCE);
+    let rad_displacement_dir = if parent.tolerance.radiation_max >= rad_ref {
+        Real::ONE
+    } else {
+        Real::ZERO - Real::ONE
+    };
+    let rad_displacement_mag =
+        Real::from(TOLERANCE_DISPLACEMENT_FRAC) * parent.tolerance.radiation_max;
+    let rad_shift = rad_displacement_dir * rad_displacement_mag;
+    daughter.tolerance.radiation_max =
+        (parent.tolerance.radiation_max + rad_shift).max(Real::ZERO);
+
     daughter
+}
+
+/// P3.2 — Insert character-displacement interaction edges for a
+/// freshly-spawned daughter. Wires three classes of edge into the
+/// matrix:
+///
+/// 1. **Inherited relationships** — for every `(parent, X)` and
+///    `(X, parent)` edge already in the matrix, insert a matching
+///    `(daughter, X)` / `(X, daughter)` edge with strength scaled by
+///    [`INHERITED_INTERACTION_STRENGTH_FRAC`] (= 0.6). Daughters
+///    inherit the parent's predator / prey / competitor set but at
+///    reduced strength — the niche shift already separates them.
+/// 2. **Sister-species competition** — insert a symmetric pair of
+///    `Competition` edges with strength
+///    [`SISTER_COMPETITION_STRENGTH`] (= 0.3) between parent and
+///    daughter. Sister species mildly compete but never at the
+///    full-strength canonical 0.5–1.0 range used for unrelated
+///    competitors.
+///
+/// Determinism: edges are inserted in the order they appear in the
+/// matrix's `BTreeMap` iteration (canonical sorted order). The
+/// `BTreeMap::insert` is idempotent so re-running with the same
+/// inputs produces bit-identical state.
+///
+/// `half_saturation` on inherited edges is preserved from the
+/// source — the daughter inherits the parent's per-pair calibration,
+/// only the strength is reduced.
+pub fn apply_character_displacement(
+    matrix: &mut InteractionMatrix,
+    parent_id: SpeciesId,
+    daughter_id: SpeciesId,
+) {
+    let frac = Real::from(INHERITED_INTERACTION_STRENGTH_FRAC);
+
+    // Snapshot the parent's existing edges so we don't mutate-while-
+    // iterating. Both directions: `(parent, X)` and `(X, parent)` —
+    // the matrix is asymmetric (Predator → Prey distinct from
+    // Prey → Predator) and symmetric kinds (Competition, Mutualism)
+    // store both orderings, so we copy whatever's there.
+    let mut inherited: Vec<(SpeciesId, SpeciesId, Interaction)> = Vec::new();
+    for ((a, b), interaction) in &matrix.pairs {
+        if *a == parent_id && *b != daughter_id {
+            let scaled = Interaction {
+                kind: interaction.kind,
+                strength: interaction.strength * frac,
+                functional_response: interaction.functional_response,
+                half_saturation: interaction.half_saturation,
+            };
+            inherited.push((daughter_id, *b, scaled));
+        } else if *b == parent_id && *a != daughter_id {
+            let scaled = Interaction {
+                kind: interaction.kind,
+                strength: interaction.strength * frac,
+                functional_response: interaction.functional_response,
+                half_saturation: interaction.half_saturation,
+            };
+            inherited.push((*a, daughter_id, scaled));
+        }
+    }
+    for (a, b, interaction) in inherited {
+        matrix.insert(a, b, interaction);
+    }
+
+    // Parent ↔ daughter sister-species competition. Symmetric kind,
+    // so insert both orderings.
+    let sister_strength = Real::from(SISTER_COMPETITION_STRENGTH);
+    let sister_edge = Interaction {
+        kind: InteractionKind::Competition,
+        strength: sister_strength,
+        functional_response: FunctionalResponse::Linear,
+        half_saturation: Interaction::default_half_saturation(),
+    };
+    matrix.insert(parent_id, daughter_id, sister_edge);
+    matrix.insert(daughter_id, parent_id, sister_edge);
 }
 
 /// Clamp the raw cosmic-ray multiplier (typically
@@ -558,6 +726,7 @@ pub fn step_speciation(
     tick: u64,
     eco_species: &BTreeMap<SpeciesId, EcoSpecies>,
     species_registry: &BTreeMap<SpeciesId, Species>,
+    interactions: &mut InteractionMatrix,
     tracker: &mut SpeciationTracker,
     cosmic_ray_multiplier: Real,
 ) -> Vec<(Species, SpeciationEvent)> {
@@ -582,6 +751,7 @@ pub fn step_speciation(
                 let daughter_id = SpeciesId(next_id_counter);
                 next_id_counter += 1;
                 let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                apply_character_displacement(interactions, parent_id, daughter_id);
                 let event = SpeciationEvent {
                     tick,
                     parent_id: parent_id.0,
@@ -611,6 +781,7 @@ pub fn step_speciation(
                 let daughter_id = SpeciesId(next_id_counter);
                 next_id_counter += 1;
                 let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                apply_character_displacement(interactions, parent_id, daughter_id);
                 let event = SpeciationEvent {
                     tick,
                     parent_id: parent_id.0,
@@ -641,6 +812,7 @@ pub fn step_speciation(
                 let daughter_id = SpeciesId(next_id_counter);
                 next_id_counter += 1;
                 let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                apply_character_displacement(interactions, *parent_id, daughter_id);
                 let event = SpeciationEvent {
                     tick,
                     parent_id: parent_id.0,
@@ -672,6 +844,7 @@ pub fn step_speciation(
                     let daughter_id = SpeciesId(next_id_counter);
                     next_id_counter += 1;
                     let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                    apply_character_displacement(interactions, parent_id, daughter_id);
                     let event = SpeciationEvent {
                         tick,
                         parent_id: parent_id.0,
@@ -723,6 +896,7 @@ pub fn step_speciation(
                         let daughter_id = SpeciesId(next_id_counter);
                         next_id_counter += 1;
                         let daughter = derive_daughter_species(parent, daughter_id, trigger);
+                        apply_character_displacement(interactions, *parent_id, daughter_id);
                         let event = SpeciationEvent {
                             tick,
                             parent_id: parent_id.0,

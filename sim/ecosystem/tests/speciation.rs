@@ -15,9 +15,11 @@ use sim_ecosystem::{
     clamp_cosmic_ray_multiplier, derive_daughter_species, divergence_pull, next_species_id,
     polyploid_check, step_speciation, EcoSpecies, PlanetEcosystem, SpeciationTracker,
     SpeciationTrigger, ALLOPATRIC_ISOLATION_TICKS, COSMIC_RAY_MULTIPLIER_CEILING,
-    COSMIC_RAY_MULTIPLIER_FLOOR, FOUNDER_BIOMASS_FRAC, POLYPLOID_PER_TICK_PROB_RECIP,
-    POST_EXTINCTION_BOOST_TICKS, POST_EXTINCTION_RADIATION_MULTIPLIER,
+    COSMIC_RAY_MULTIPLIER_FLOOR, FOUNDER_BIOMASS_FRAC, INHERITED_INTERACTION_STRENGTH_FRAC,
+    POLYPLOID_PER_TICK_PROB_RECIP, POST_EXTINCTION_BOOST_TICKS,
+    POST_EXTINCTION_RADIATION_MULTIPLIER, SISTER_COMPETITION_STRENGTH,
     SYMPATRIC_COMPETITION_BIOMASS_FRAC, SYMPATRIC_PRESSURE_TICKS,
+    TEMPERATURE_DISPLACEMENT_REFERENCE_K,
 };
 use sim_recognition::RecognitionLibrary;
 use sim_species::{
@@ -76,6 +78,7 @@ fn allopatric_isolation_triggers_speciation() {
     );
 
     let mut tracker = SpeciationTracker::new();
+    let mut matrix = InteractionMatrix::new();
     // Walk forward `ALLOPATRIC_ISOLATION_TICKS` ticks of being split.
     for _ in 0..ALLOPATRIC_ISOLATION_TICKS {
         tracker.observe_allopatric_split(&[parent_id], &[parent_id]);
@@ -86,6 +89,7 @@ fn allopatric_isolation_triggers_speciation() {
         ALLOPATRIC_ISOLATION_TICKS,
         &eco,
         &registry,
+        &mut matrix,
         &mut tracker,
         Real::ONE,
     );
@@ -115,6 +119,7 @@ fn allopatric_isolation_triggers_speciation() {
 
     // Sub-threshold streak should NOT fire.
     let mut tracker2 = SpeciationTracker::new();
+    let mut matrix2 = InteractionMatrix::new();
     for _ in 0..(ALLOPATRIC_ISOLATION_TICKS - 1) {
         tracker2.observe_allopatric_split(&[parent_id], &[parent_id]);
     }
@@ -122,6 +127,7 @@ fn allopatric_isolation_triggers_speciation() {
         ALLOPATRIC_ISOLATION_TICKS - 1,
         &eco,
         &registry,
+        &mut matrix2,
         &mut tracker2,
         Real::ONE,
     );
@@ -186,6 +192,7 @@ fn niche_pressure_drives_sympatric_speciation() {
         SYMPATRIC_PRESSURE_TICKS,
         &eco,
         &registry,
+        &mut matrix,
         &mut tracker,
         Real::ONE,
     );
@@ -208,13 +215,15 @@ fn niche_pressure_drives_sympatric_speciation() {
     let mut eco2 = eco.clone();
     eco2.get_mut(&b_id).unwrap().biomass = Real::from_int(1); // way below threshold
     let mut tracker2 = SpeciationTracker::new();
+    let mut matrix2 = matrix.clone();
     for _ in 0..SYMPATRIC_PRESSURE_TICKS {
-        tracker2.observe_sympatric_pressure(&eco2, &matrix, cap);
+        tracker2.observe_sympatric_pressure(&eco2, &matrix2, cap);
     }
     let events2 = step_speciation(
         SYMPATRIC_PRESSURE_TICKS,
         &eco2,
         &registry,
+        &mut matrix2,
         &mut tracker2,
         Real::ONE,
     );
@@ -255,7 +264,9 @@ fn polyploidy_speciation_only_for_plant_lifecycle() {
         eco_species(probe_id, EcosystemRole::PrimaryConsumer, Real::from_int(100)),
     );
     let mut tracker = SpeciationTracker::new();
-    let events_vert = step_speciation(tick, &eco, &registry_vert, &mut tracker, Real::ONE);
+    let mut matrix = InteractionMatrix::new();
+    let events_vert =
+        step_speciation(tick, &eco, &registry_vert, &mut matrix, &mut tracker, Real::ONE);
     assert!(
         !events_vert
             .iter()
@@ -269,7 +280,15 @@ fn polyploidy_speciation_only_for_plant_lifecycle() {
     assert_eq!(plant.lifecycle, Lifecycle::Plant);
     registry_plant.insert(probe_id, plant.clone());
     let mut tracker2 = SpeciationTracker::new();
-    let events_plant = step_speciation(tick, &eco, &registry_plant, &mut tracker2, Real::ONE);
+    let mut matrix_plant = InteractionMatrix::new();
+    let events_plant = step_speciation(
+        tick,
+        &eco,
+        &registry_plant,
+        &mut matrix_plant,
+        &mut tracker2,
+        Real::ONE,
+    );
     let polyploid_events: Vec<_> = events_plant
         .iter()
         .filter(|(_, e)| matches!(e.trigger, SpeciationTriggerKind::Polyploid))
@@ -304,9 +323,10 @@ fn founder_effect_rapid_drift_in_bottleneck() {
     // 1% threshold.
     let seed_biomass = Real::from_int(5);
     let mut tracker = SpeciationTracker::new();
+    let mut matrix = InteractionMatrix::new();
     tracker.register_founder_seeding(parent_id, seed_biomass);
 
-    let events = step_speciation(1, &eco, &registry, &mut tracker, Real::ONE);
+    let events = step_speciation(1, &eco, &registry, &mut matrix, &mut tracker, Real::ONE);
     let founder_events: Vec<_> = events
         .iter()
         .filter(|(_, e)| matches!(e.trigger, SpeciationTriggerKind::FounderEffect))
@@ -328,8 +348,9 @@ fn founder_effect_rapid_drift_in_bottleneck() {
     // must NOT fire FounderEffect.
     let high_seed_biomass = parent_biomass * Real::from(FOUNDER_BIOMASS_FRAC) * Real::from_int(10); // 10× threshold
     let mut tracker2 = SpeciationTracker::new();
+    let mut matrix2 = InteractionMatrix::new();
     tracker2.register_founder_seeding(parent_id, high_seed_biomass);
-    let events2 = step_speciation(2, &eco, &registry, &mut tracker2, Real::ONE);
+    let events2 = step_speciation(2, &eco, &registry, &mut matrix2, &mut tracker2, Real::ONE);
     assert!(
         !events2
             .iter()
@@ -376,19 +397,35 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
     // we compare apples to apples.
     let w = POST_EXTINCTION_BOOST_TICKS;
     let mut baseline = SpeciationTracker::new();
+    let mut baseline_matrix = InteractionMatrix::new();
     let mut baseline_count: u64 = 0;
     for t in 0..w {
-        let evts = step_speciation(t, &eco, &registry, &mut baseline, Real::ONE);
+        let evts = step_speciation(
+            t,
+            &eco,
+            &registry,
+            &mut baseline_matrix,
+            &mut baseline,
+            Real::ONE,
+        );
         baseline_count += evts.len() as u64;
     }
 
     // With a window open from tick 0.
     let mut boosted = SpeciationTracker::new();
+    let mut boosted_matrix = InteractionMatrix::new();
     boosted.register_extinction_event(0);
     let mut boosted_count: u64 = 0;
     let mut radiation_count: u64 = 0;
     for t in 0..w {
-        let evts = step_speciation(t, &eco, &registry, &mut boosted, Real::ONE);
+        let evts = step_speciation(
+            t,
+            &eco,
+            &registry,
+            &mut boosted_matrix,
+            &mut boosted,
+            Real::ONE,
+        );
         boosted_count += evts.len() as u64;
         radiation_count += evts
             .iter()
@@ -413,8 +450,16 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
     // generation in [0, POST_EXTINCTION_BOOST_TICKS].
     for t in 0..w {
         let mut tracker_check = SpeciationTracker::new();
+        let mut matrix_check = InteractionMatrix::new();
         tracker_check.register_extinction_event(0);
-        let evts = step_speciation(t, &eco, &registry, &mut tracker_check, Real::ONE);
+        let evts = step_speciation(
+            t,
+            &eco,
+            &registry,
+            &mut matrix_check,
+            &mut tracker_check,
+            Real::ONE,
+        );
         for (_, e) in &evts {
             if let SpeciationTriggerKind::PostExtinctionRadiation { generation } = e.trigger {
                 assert!(
@@ -427,12 +472,14 @@ fn post_extinction_radiation_rate_5x_for_100_generations() {
 
     // Window closes after POST_EXTINCTION_BOOST_TICKS — confirm.
     let mut tracker_after = SpeciationTracker::new();
+    let mut matrix_after = InteractionMatrix::new();
     tracker_after.register_extinction_event(0);
     // Walk forward past the window.
     let evts_post = step_speciation(
         POST_EXTINCTION_BOOST_TICKS + 10,
         &eco,
         &registry,
+        &mut matrix_after,
         &mut tracker_after,
         Real::ONE,
     );
@@ -688,10 +735,18 @@ fn reversal_window_elevates_speciation_rate() {
     let n_ticks = SYMPATRIC_PRESSURE_TICKS * 2;
     let count_events = |multiplier: Real| -> usize {
         let mut tracker = SpeciationTracker::new();
+        let mut matrix_local = matrix.clone();
         let mut count = 0usize;
         for t in 0..n_ticks {
-            tracker.observe_sympatric_pressure(&eco, &matrix, cap);
-            let events = step_speciation(t, &eco, &registry, &mut tracker, multiplier);
+            tracker.observe_sympatric_pressure(&eco, &matrix_local, cap);
+            let events = step_speciation(
+                t,
+                &eco,
+                &registry,
+                &mut matrix_local,
+                &mut tracker,
+                multiplier,
+            );
             count += events
                 .iter()
                 .filter(|(_, e)| {
@@ -778,6 +833,7 @@ fn cosmic_ray_multiplier_clamps_at_ten() {
 
     let fire_with = |multiplier: Real| -> usize {
         let mut tracker = SpeciationTracker::new();
+        let mut matrix = InteractionMatrix::new();
         for _ in 0..ALLOPATRIC_ISOLATION_TICKS {
             tracker.observe_allopatric_split(&[parent_id], &[parent_id]);
         }
@@ -785,6 +841,7 @@ fn cosmic_ray_multiplier_clamps_at_ten() {
             ALLOPATRIC_ISOLATION_TICKS,
             &eco,
             &registry,
+            &mut matrix,
             &mut tracker,
             multiplier,
         );
@@ -814,5 +871,316 @@ fn cosmic_ray_multiplier_clamps_at_ten() {
         "one allopatric streak hit at multiplier=10 should spawn {} daughters \
          (got {})",
         COSMIC_RAY_MULTIPLIER_CEILING, at_ten
+    );
+}
+
+/// P3.2 — sister species (parent + her freshly-spawned daughter)
+/// compete at strictly reduced strength versus the parent's
+/// competition with an unrelated species. Two assertions:
+///
+/// 1. The parent ↔ daughter `Competition` edge inserted by
+///    `apply_character_displacement` carries strength
+///    `SISTER_COMPETITION_STRENGTH` (= 0.3).
+/// 2. That 0.3 is strictly less than the unrelated full-strength
+///    competition (0.8) between the parent and a third species `X`.
+/// 3. The daughter's inherited edge to `X` is `0.8 × 0.6 = 0.48` —
+///    less than the parent's full-strength edge to `X`, but greater
+///    than the sister-sister edge.
+#[test]
+fn sister_species_compete_at_reduced_strength() {
+    let parent_id = SpeciesId(0);
+    let x_id = SpeciesId(1);
+    let parent = base_species(700);
+    let other = base_species(701);
+    let mut registry: BTreeMap<SpeciesId, Species> = BTreeMap::new();
+    registry.insert(parent_id, parent);
+    registry.insert(x_id, other);
+
+    let mut eco: BTreeMap<SpeciesId, EcoSpecies> = BTreeMap::new();
+    eco.insert(
+        parent_id,
+        eco_species(parent_id, EcosystemRole::PrimaryConsumer, Real::from_int(100)),
+    );
+    eco.insert(
+        x_id,
+        eco_species(x_id, EcosystemRole::PrimaryConsumer, Real::from_int(100)),
+    );
+
+    // Full-strength competition between parent and X (unrelated
+    // species). Use 0.8 — well above the 0.3 sister-species reference
+    // so the inequality is unambiguous.
+    let full_strength = Real::from_ratio(8, 10);
+    let mut matrix = InteractionMatrix::new();
+    let full_edge = Interaction {
+        kind: InteractionKind::Competition,
+        strength: full_strength,
+        functional_response: FunctionalResponse::Linear,
+        half_saturation: Interaction::default_half_saturation(),
+    };
+    matrix.insert(parent_id, x_id, full_edge);
+    matrix.insert(x_id, parent_id, full_edge);
+
+    // Fire allopatric speciation on the parent. Walk the tracker to
+    // the threshold then step.
+    let mut tracker = SpeciationTracker::new();
+    for _ in 0..ALLOPATRIC_ISOLATION_TICKS {
+        tracker.observe_allopatric_split(&[parent_id], &[parent_id]);
+    }
+    let events = step_speciation(
+        ALLOPATRIC_ISOLATION_TICKS,
+        &eco,
+        &registry,
+        &mut matrix,
+        &mut tracker,
+        Real::ONE,
+    );
+    let daughter_id_u32 = events
+        .iter()
+        .find(|(_, e)| matches!(e.trigger, SpeciationTriggerKind::Allopatric { .. }))
+        .map(|(_, e)| e.daughter_id)
+        .expect("allopatric speciation must fire");
+    let daughter_id = SpeciesId(daughter_id_u32);
+
+    // Sister-species edge: parent ↔ daughter, kind Competition,
+    // strength SISTER_COMPETITION_STRENGTH (= 0.3).
+    let expected_sister_strength = Real::from(SISTER_COMPETITION_STRENGTH);
+    let sister_edge = matrix
+        .get(parent_id, daughter_id)
+        .expect("parent → daughter Competition edge must exist after speciation");
+    assert_eq!(
+        sister_edge.kind,
+        InteractionKind::Competition,
+        "parent ↔ daughter edge kind should be Competition, got {:?}",
+        sister_edge.kind
+    );
+    assert_eq!(
+        sister_edge.strength, expected_sister_strength,
+        "sister-species competition strength should be {:?}, got {:?}",
+        expected_sister_strength, sister_edge.strength
+    );
+    // Symmetric: both orderings inserted.
+    let sister_edge_reverse = matrix
+        .get(daughter_id, parent_id)
+        .expect("daughter → parent Competition edge must exist (symmetric kind)");
+    assert_eq!(sister_edge_reverse.strength, expected_sister_strength);
+
+    // Inequality (the headline assertion): sister-species competition
+    // strength is strictly less than the unrelated-pair full-strength
+    // competition between parent and X.
+    let unrelated_edge = matrix
+        .get(parent_id, x_id)
+        .expect("parent ↔ X edge must persist after speciation");
+    assert_eq!(unrelated_edge.strength, full_strength);
+    assert!(
+        sister_edge.strength < unrelated_edge.strength,
+        "sister-species competition ({:?}) is not < unrelated competition ({:?}) — \
+         character displacement is decorative",
+        sister_edge.strength,
+        unrelated_edge.strength
+    );
+
+    // Inherited edge: daughter ↔ X with strength `0.8 × 0.6 = 0.48`.
+    let inherited_frac = Real::from(INHERITED_INTERACTION_STRENGTH_FRAC);
+    let expected_inherited = full_strength * inherited_frac;
+    let inherited_edge = matrix
+        .get(daughter_id, x_id)
+        .expect("inherited daughter → X edge must exist");
+    assert_eq!(
+        inherited_edge.kind,
+        InteractionKind::Competition,
+        "inherited edge should keep parent's kind"
+    );
+    assert_eq!(
+        inherited_edge.strength, expected_inherited,
+        "inherited edge strength should be parent_strength × {:?} = {:?}, got {:?}",
+        inherited_frac, expected_inherited, inherited_edge.strength
+    );
+    // Inherited edge is less than parent's edge to X (the 0.6 scaling
+    // really is reducing strength) and greater than sister-sister.
+    assert!(
+        inherited_edge.strength < unrelated_edge.strength,
+        "inherited edge ({:?}) should be less than parent's ({:?})",
+        inherited_edge.strength,
+        unrelated_edge.strength,
+    );
+    assert!(
+        inherited_edge.strength > sister_edge.strength,
+        "inherited edge ({:?}) should be > sister-species edge ({:?})",
+        inherited_edge.strength,
+        sister_edge.strength,
+    );
+}
+
+/// P3.2 — Two parent species set up to compete in opposite niches
+/// (one warm-tolerant + radiation-tolerant, one cold-tolerant +
+/// radiation-sensitive) produce daughters that diverge in opposite
+/// directions on the temperature + radiation axes. This is the
+/// textbook character-displacement signature: sister species amplify
+/// the ancestral niche separation under shared competitive pressure.
+#[test]
+fn character_displacement_drives_apart_on_contested_axis() {
+    let warm_id = SpeciesId(0);
+    let cold_id = SpeciesId(1);
+    let mut warm_parent = base_species(800);
+    let mut cold_parent = base_species(801);
+
+    // Force one parent's tolerance well above the displacement
+    // reference (300 K), the other well below. Width preserved at
+    // 60 K so both stay biologically sensible.
+    let warm_center = Real::from_int(TEMPERATURE_DISPLACEMENT_REFERENCE_K + 60); // 360 K
+    let cold_center = Real::from_int(TEMPERATURE_DISPLACEMENT_REFERENCE_K - 60); // 240 K
+    let half_width = Real::from_int(30);
+    warm_parent.tolerance.temp_range = (warm_center - half_width, warm_center + half_width);
+    cold_parent.tolerance.temp_range = (cold_center - half_width, cold_center + half_width);
+    // Same idea for radiation: warm parent is radiation-tolerant
+    // (above the 0.5 reference), cold parent is radiation-sensitive.
+    warm_parent.tolerance.radiation_max = Real::from_ratio(80, 100);
+    cold_parent.tolerance.radiation_max = Real::from_ratio(20, 100);
+
+    let mut registry: BTreeMap<SpeciesId, Species> = BTreeMap::new();
+    registry.insert(warm_id, warm_parent.clone());
+    registry.insert(cold_id, cold_parent.clone());
+
+    let cap = capacity();
+    let threshold = Real::from(SYMPATRIC_COMPETITION_BIOMASS_FRAC) * cap;
+    let biomass = threshold + Real::from_int(50);
+    let mut eco: BTreeMap<SpeciesId, EcoSpecies> = BTreeMap::new();
+    eco.insert(
+        warm_id,
+        eco_species(warm_id, EcosystemRole::PrimaryConsumer, biomass),
+    );
+    eco.insert(
+        cold_id,
+        eco_species(cold_id, EcosystemRole::PrimaryConsumer, biomass),
+    );
+
+    // Symmetric competition pair (the sympatric trigger). Strength
+    // 0.5 — high enough that one of the two will be the sympatric
+    // lower-id parent that spawns a daughter.
+    let mut matrix = InteractionMatrix::new();
+    let comp = Interaction {
+        kind: InteractionKind::Competition,
+        strength: Real::from_ratio(5, 10),
+        functional_response: FunctionalResponse::Linear,
+        half_saturation: Interaction::default_half_saturation(),
+    };
+    matrix.insert(warm_id, cold_id, comp);
+    matrix.insert(cold_id, warm_id, comp);
+
+    // Drive sympatric speciation on the lower-id species (warm).
+    // Then run a second speciation pass via the allopatric trigger
+    // on the cold parent so we get both daughters in one test.
+    let mut tracker = SpeciationTracker::new();
+    for _ in 0..SYMPATRIC_PRESSURE_TICKS {
+        tracker.observe_sympatric_pressure(&eco, &matrix, cap);
+    }
+    let sympatric_events = step_speciation(
+        SYMPATRIC_PRESSURE_TICKS,
+        &eco,
+        &registry,
+        &mut matrix,
+        &mut tracker,
+        Real::ONE,
+    );
+    let warm_daughter = sympatric_events
+        .iter()
+        .find_map(|(daughter, e)| match e.trigger {
+            SpeciationTriggerKind::Sympatric if e.parent_id == warm_id.0 => Some(daughter.clone()),
+            _ => None,
+        })
+        .expect("sympatric speciation must fire on warm parent (lower id)");
+
+    // Now drive an allopatric event on the cold parent so we get a
+    // cold-side daughter too.
+    let mut tracker_cold = SpeciationTracker::new();
+    for _ in 0..ALLOPATRIC_ISOLATION_TICKS {
+        tracker_cold.observe_allopatric_split(&[cold_id], &[cold_id]);
+    }
+    let allopatric_events = step_speciation(
+        SYMPATRIC_PRESSURE_TICKS + ALLOPATRIC_ISOLATION_TICKS,
+        &eco,
+        &registry,
+        &mut matrix,
+        &mut tracker_cold,
+        Real::ONE,
+    );
+    let cold_daughter = allopatric_events
+        .iter()
+        .find_map(|(daughter, e)| match e.trigger {
+            SpeciationTriggerKind::Allopatric { .. } if e.parent_id == cold_id.0 => {
+                Some(daughter.clone())
+            }
+            _ => None,
+        })
+        .expect("allopatric speciation must fire on cold parent");
+
+    // Character displacement: warm-parent's daughter drifts UP on
+    // temperature (away from the 300 K reference, in the same
+    // direction the parent has already drifted); cold-parent's
+    // daughter drifts DOWN.
+    let warm_daughter_center = (warm_daughter.tolerance.temp_range.0
+        + warm_daughter.tolerance.temp_range.1)
+        / Real::from_int(2);
+    let cold_daughter_center = (cold_daughter.tolerance.temp_range.0
+        + cold_daughter.tolerance.temp_range.1)
+        / Real::from_int(2);
+    assert!(
+        warm_daughter_center > warm_center,
+        "warm parent center = {:?}, warm daughter center = {:?} — daughter did not \
+         displace UP from the parent's already-warm position",
+        warm_center,
+        warm_daughter_center
+    );
+    assert!(
+        cold_daughter_center < cold_center,
+        "cold parent center = {:?}, cold daughter center = {:?} — daughter did not \
+         displace DOWN from the parent's already-cold position",
+        cold_center,
+        cold_daughter_center
+    );
+    // And critically, the two daughters' temp centers diverge:
+    // the warm-side daughter sits well above the cold-side daughter,
+    // and the absolute separation is strictly greater than the
+    // parents' separation (character displacement *exaggerates* the
+    // niche gap).
+    assert!(
+        warm_daughter_center > cold_daughter_center,
+        "warm daughter ({:?}) should sit above cold daughter ({:?})",
+        warm_daughter_center,
+        cold_daughter_center
+    );
+    let parents_gap = warm_center - cold_center;
+    let daughters_gap = warm_daughter_center - cold_daughter_center;
+    assert!(
+        daughters_gap > parents_gap,
+        "daughters' temp gap ({:?}) should exceed parents' gap ({:?}) — character \
+         displacement should *amplify* the niche separation",
+        daughters_gap,
+        parents_gap
+    );
+
+    // Same shape on the radiation axis: warm parent was set
+    // radiation-tolerant (0.8), so daughter should be even more
+    // tolerant; cold parent was set sensitive (0.2), daughter
+    // should be even more sensitive.
+    assert!(
+        warm_daughter.tolerance.radiation_max > warm_parent.tolerance.radiation_max,
+        "warm-parent radiation_max = {:?}, daughter = {:?} — daughter did not \
+         displace UP on radiation",
+        warm_parent.tolerance.radiation_max,
+        warm_daughter.tolerance.radiation_max
+    );
+    assert!(
+        cold_daughter.tolerance.radiation_max < cold_parent.tolerance.radiation_max,
+        "cold-parent radiation_max = {:?}, daughter = {:?} — daughter did not \
+         displace DOWN on radiation",
+        cold_parent.tolerance.radiation_max,
+        cold_daughter.tolerance.radiation_max
+    );
+    assert!(
+        warm_daughter.tolerance.radiation_max > cold_daughter.tolerance.radiation_max,
+        "warm daughter rad_max ({:?}) should exceed cold daughter rad_max ({:?})",
+        warm_daughter.tolerance.radiation_max,
+        cold_daughter.tolerance.radiation_max,
     );
 }
