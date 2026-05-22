@@ -160,6 +160,10 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         lifecycle: Lifecycle::Vertebrate,
         role: EcosystemRole::PrimaryConsumer,
         dormancy_capability,
+        // Empty plasmid registry at genesis; populated by HGT
+        // trials each tick (P3.3 plasmid-sweep model).
+        plasmids: BTreeMap::new(),
+        next_plasmid_id: 0,
         // Newly-derived species are alive by default; the
         // extinction rule (Sprint 2 Item 6a) flips this off when
         // the per-species biomass collapses for the confirmation

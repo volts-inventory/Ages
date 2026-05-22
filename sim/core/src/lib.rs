@@ -18,7 +18,7 @@ use protocol::{
 use sim_arith::Real;
 use sim_civ::{catastrophe, conflict, cosmology, tech, transmission, Civ};
 use sim_ecosystem::{
-    sample_ecosystem_with_substrate, step_hgt, step_speciation, PlanetEcosystem,
+    sample_ecosystem_with_substrate, step_hgt, step_speciation, LocalConditions, PlanetEcosystem,
     SpeciationTracker,
 };
 use sim_events::Emitter;
@@ -685,7 +685,11 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
             species_registry.insert(SpeciesId(event.daughter_id), daughter);
             emitter.emit(&Event::SpeciationOccurred(event))?;
         }
-        let hgt_events = step_hgt(&mut species_registry, tick, cfg.seed, cosmic_mult);
+        // P3.3: HGT sweep evaluator reads local conditions. The
+        // planet-wide-aggregate baseline is fine here — the per-cell
+        // biota layer that would localise this is a P0.1 follow-up.
+        let hgt_local = LocalConditions::earth_surface();
+        let hgt_events = step_hgt(&mut species_registry, tick, cfg.seed, cosmic_mult, hgt_local);
         for ev in hgt_events {
             emitter.emit(&Event::HorizontalGeneTransfer(ev))?;
         }
