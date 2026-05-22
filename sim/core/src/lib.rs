@@ -24,7 +24,9 @@ use sim_ecosystem::{
 use sim_events::Emitter;
 use sim_physics::{HexGrid, OrchestratorState, PhysicsState};
 use sim_recognition::RecognitionLibrary;
-use sim_species::{EcosystemRole, Fission, Lifecycle, MutualismKind, ParasiteKind, SpeciesId};
+use sim_species::{
+    EcosystemRole, Fission, Lifecycle, MutualismKind, ParasiteKind, ProducerMetabolism, SpeciesId,
+};
 use sim_world::{init_planet, sample_planet, Atmosphere, Composition, Magnetosphere};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -240,34 +242,25 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     //     per-EcoSpecies sampling (and the divergence-pull hashes
     //     used by `derive_daughter_species`) are distinct between
     //     ecosystem members.
-    //   - `lifecycle` ← role-mapped so the speciation/HGT paths
-    //     have a non-empty pool: Producer → Plant (polyploid
-    //     speciation path); micro-Parasite / Virus / Saprotroph /
-    //     Detritivore → Microbial (HGT path); everything else
-    //     keeps the civ-bearing Vertebrate default.
+    //   - `lifecycle` ← role-mapped via `lifecycle_for_role` so the
+    //     speciation/HGT paths have a non-empty pool. The mapping is
+    //     refined per role: Producers split on metabolism
+    //     (Photo/Mixotroph → Plant; Chemoautotroph → Microbial::Binary
+    //     to model bacterial chemolithotrophs); Parasites split on
+    //     kind (Macro → Insect for worm/flea invertebrates; Micro →
+    //     Microbial::Binary; Virus → Microbial::Conjugation, closest
+    //     to viral integration); Saprotroph → Microbial::Budding
+    //     (yeast/fungi); Detritivore → Insect (decomposer arthropods);
+    //     Mutualists split on kind (Pollinator → Insect; SeedDisperser
+    //     / Engineer → Vertebrate; Generic → Modular); consumer tiers
+    //     (Primary/Secondary/Apex) all stay Vertebrate. See
+    //     `lifecycle_for_role` for the full table.
     for eco in ecosystem.species.values() {
         let mut s = species.clone();
         s.seed = planet.seed.wrapping_add(u64::from(eco.species_id.0));
         s.name = format!("{}-eco{}", species.name, eco.species_id.0);
         s.role = eco.role;
-        s.lifecycle = match eco.role {
-            EcosystemRole::Producer { .. } => Lifecycle::Plant,
-            EcosystemRole::Parasite {
-                kind: ParasiteKind::Micro | ParasiteKind::Virus,
-            } => Lifecycle::Microbial {
-                fission_strategy: Fission::Binary,
-            },
-            EcosystemRole::Saprotroph => Lifecycle::Microbial {
-                fission_strategy: Fission::Budding,
-            },
-            EcosystemRole::Detritivore => Lifecycle::Microbial {
-                fission_strategy: Fission::Conjugation,
-            },
-            EcosystemRole::Mutualist { kind: MutualismKind::Pollinator } => {
-                Lifecycle::Insect
-            }
-            _ => Lifecycle::Vertebrate,
-        };
+        s.lifecycle = lifecycle_for_role(eco.role);
         species_registry.insert(eco.species_id, s);
     }
     // Emit the species' starting cosmology pole-position
@@ -2417,6 +2410,83 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     })?;
 
     Ok(())
+}
+
+/// Map an `EcosystemRole` to the `Lifecycle` topology used when
+/// stamping the role's `EcoSpecies` into the per-species registry.
+///
+/// The mapping is the F1 refinement that replaces the original
+/// coarse "everything that isn't Producer/Microbial → Vertebrate"
+/// lookup. Each role is mapped to the topology that best matches
+/// the dominant real-world biology for that ecological niche:
+///
+/// | Role                                     | Lifecycle                       | Rationale                          |
+/// |------------------------------------------|---------------------------------|------------------------------------|
+/// | `Producer { Photoautotroph }`            | `Plant`                         | Land/aquatic plants, algae.        |
+/// | `Producer { Chemoautotroph }`            | `Microbial { Binary }`          | Bacterial chemolithotrophs.        |
+/// | `Producer { Mixotroph }`                 | `Plant`                         | Plant-dominant trait set.          |
+/// | `PrimaryConsumer`                        | `Vertebrate`                    | Herbivore tetrapods.               |
+/// | `SecondaryConsumer`                      | `Vertebrate`                    | Mid-tier carnivores.               |
+/// | `ApexConsumer`                           | `Vertebrate`                    | Top predators.                     |
+/// | `Detritivore`                            | `Insect`                        | Decomposer arthropods.             |
+/// | `Saprotroph`                             | `Microbial { Budding }`         | Yeast / fungal-like.               |
+/// | `Mutualist { Pollinator }`               | `Insect`                        | Bees, butterflies.                 |
+/// | `Mutualist { SeedDisperser }`            | `Vertebrate`                    | Birds, mammals.                    |
+/// | `Mutualist { Engineer }`                 | `Vertebrate`                    | Beavers, corals.                   |
+/// | `Mutualist { Generic }`                  | `Modular`                       | Colonial / coral-equivalent.       |
+/// | `Parasite { Macro }`                     | `Insect`                        | Worms, fleas — invertebrate.       |
+/// | `Parasite { Micro }`                     | `Microbial { Binary }`          | Protozoa, bacteria.                |
+/// | `Parasite { Virus }`                     | `Microbial { Conjugation }`     | Closest to viral integration/HGT.  |
+///
+/// Micro/Virus parasites land on `Microbial`, so they participate
+/// in the `step_hgt` pool (which is gated on `Lifecycle::Microbial`).
+/// Macro parasites + Pollinator/Detritivore land on `Insect`, which
+/// routes through the insect step function rather than the default
+/// vertebrate cohort. The non-Vertebrate routing is the refinement's
+/// main payoff: it gives ecosystem composition real lifecycle
+/// variety instead of collapsing nine of fifteen role variants onto
+/// the same `Vertebrate` default.
+#[must_use]
+pub fn lifecycle_for_role(role: EcosystemRole) -> Lifecycle {
+    match role {
+        EcosystemRole::Producer {
+            metabolism: ProducerMetabolism::Photoautotroph | ProducerMetabolism::Mixotroph,
+        } => Lifecycle::Plant,
+        EcosystemRole::Producer {
+            metabolism: ProducerMetabolism::Chemoautotroph,
+        } => Lifecycle::Microbial {
+            fission_strategy: Fission::Binary,
+        },
+        EcosystemRole::Parasite {
+            kind: ParasiteKind::Macro,
+        } => Lifecycle::Insect,
+        EcosystemRole::Parasite {
+            kind: ParasiteKind::Micro,
+        } => Lifecycle::Microbial {
+            fission_strategy: Fission::Binary,
+        },
+        EcosystemRole::Parasite {
+            kind: ParasiteKind::Virus,
+        } => Lifecycle::Microbial {
+            fission_strategy: Fission::Conjugation,
+        },
+        EcosystemRole::Saprotroph => Lifecycle::Microbial {
+            fission_strategy: Fission::Budding,
+        },
+        EcosystemRole::Detritivore => Lifecycle::Insect,
+        EcosystemRole::Mutualist {
+            kind: MutualismKind::Pollinator,
+        } => Lifecycle::Insect,
+        EcosystemRole::Mutualist {
+            kind: MutualismKind::SeedDisperser | MutualismKind::Engineer,
+        } => Lifecycle::Vertebrate,
+        EcosystemRole::Mutualist {
+            kind: MutualismKind::Generic,
+        } => Lifecycle::Modular,
+        EcosystemRole::PrimaryConsumer
+        | EcosystemRole::SecondaryConsumer
+        | EcosystemRole::ApexConsumer => Lifecycle::Vertebrate,
+    }
 }
 
 /// Stagnation threshold: how many consecutive ticks without an
