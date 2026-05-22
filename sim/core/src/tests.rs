@@ -1624,3 +1624,220 @@ fn m_dwarf_hz_locked_planet_runs_cleanly() {
          of M-dwarf flaring; extant count={extant_count}",
     );
 }
+
+#[test]
+fn hot_jupiter_extreme_params_do_not_overflow() {
+    use sim_physics::{HexGrid, OrchestratorState, PhysicsState, integrate_civ_step};
+    use sim_world::{
+        init_planet, Atmosphere, AtmosphericComposition, BiosphereClass, Composition, Crust,
+        CrustalComposition, LockingState, Magnetosphere, MetabolicSubstrate, Moon, Planet,
+        SpectralType, Star,
+    };
+
+    // Hand-constructed hot-Jupiter analog. The spec is in
+    // `Planet`-field units (Earth-relative mass / radius, K, Pa, ...).
+    let planet = Planet {
+        seed: 1_701,
+        name: "HotJupiterT17".to_string(),
+        // 300 Earth masses + 11 Earth radii → derived gravity
+        // g = 300 / 121 ≈ 2.48× Earth ≈ 24 m/s². Inside Q32.32 (max
+        // ~2.1e9) with plenty of headroom but well above the
+        // worldgen-reachable band (sample_planet caps at ~2.5×).
+        mass: Real::from_int(300),
+        radius: Real::from_int(11),
+        composition: Composition::Rocky,
+        // Silicate substrate's upper liquid-phase band (800-1500 K
+        // per `MetabolicSubstrate::temperature_range`); 1500 K
+        // pushes the radiation / chemistry / escape paths into the
+        // hot end of their respective domains.
+        mean_temperature: Real::from_int(1_500),
+        temperature_gradient: Real::from_int(50),
+        terrain_peak: Real::from_int(8_000),
+        terrain_centre_q: 0,
+        terrain_centre_r: 0,
+        sea_level: Real::from_int(2_000),
+        // Reducing == thickest enum variant (density × 100 = 6700,
+        // ~50× Earth surface, with a 15 km scale height). Pair with
+        // Silicate to land outside the worldgen-reachable cross.
+        atmosphere: Atmosphere::Reducing,
+        atmospheric_composition: AtmosphericComposition::vacuum(),
+        // ~1000× Earth surface pressure (Earth ≈ 1.01e5 Pa). Q32.32
+        // holds 1e8 directly (max ~2.1e9).
+        surface_pressure: Real::from_int(100_000_000),
+        biosphere: BiosphereClass::Sparse,
+        biosphere_density: Real::from_ratio(2, 10),
+        crustal_composition: CrustalComposition::empty(),
+        magnetosphere: Magnetosphere::Strong,
+        crust: Crust::Basaltic,
+        // 5× Earth irradiance to drive the radiation / EUV paths
+        // toward the saturation clamps without overflowing the
+        // input itself.
+        stellar_luminosity: Real::from_int(6_800),
+        orbital_distance_au: Real::from_ratio(5, 100),
+        moon_count: 1,
+        moons: vec![Moon {
+            mass_relative_x100: 100,
+            orbital_period_macros: 28,
+            inclination_deg_x10: 0,
+            eccentricity: Real::ZERO,
+        }],
+        orbital_eccentricity_x100: 5,
+        axial_tilt_deg: Real::from_int(10),
+        day_length_hours: Real::from_int(10),
+        orbital_period_months: 12,
+        // Substrate=Silicate per spec. The atmosphere::Reducing pairing
+        // is intentionally off-distribution — `atmosphere_compatible`
+        // would reject it, but the physics path doesn't gate on the
+        // compatibility table, only the worldgen sampler does.
+        metabolic_substrate: MetabolicSubstrate::Silicate,
+        substrate_perturbation: Real::ZERO,
+        locking_state: LockingState::Synchronous,
+        // Hot, EUV-rich star — the kind of host that drives hot-
+        // Jupiter atmospheric loss in the literature.
+        star: Star::with_age(
+            SpectralType::F,
+            Real::from_int(6_800),
+            Real::from_ratio(5, 10),
+            Real::from_int(5),
+        ),
+    };
+
+    let grid = HexGrid::new(12, 8);
+    let mut state = PhysicsState::new(grid);
+    init_planet(&mut state, &planet);
+    let mut orch_state = OrchestratorState::new();
+    let laws = crate::laws::build_laws(&planet, 8);
+    let cfg = RunConfig::dev(planet.seed, 500);
+
+    // Drive 500 ticks of physics integration. The full `run()` loop
+    // is overkill for the overflow canary — what we need exercised
+    // is the per-tick chain that hits the saturating-mul guards
+    // (radiation → chemistry → escape → tides → tidal heating →
+    // hadley). The civ / ecosystem / recognition layers don't host
+    // the overflow surface.
+    for _ in 0..500 {
+        integrate_civ_step(
+            &mut state,
+            &mut orch_state,
+            &cfg.orchestration,
+            &laws.fluid,
+            &laws.heat,
+            &laws.em,
+            &laws.chemistry,
+            Some(&laws.radiation),
+            Some(&laws.wind),
+            Some(&laws.hydrology),
+            Some(&laws.tides),
+            Some(&laws.magnetism),
+            Some(&laws.lorentz),
+            Some(&laws.coriolis),
+            Some(&laws.vertical),
+            Some(&laws.weathering),
+            Some(&laws.ice_albedo),
+            Some(&laws.tectonics),
+            Some(&laws.volcanism),
+            Some(&laws.magnetic_reversal),
+            Some(&laws.clouds),
+            Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
+            Some(&laws.atmospheric_escape),
+            Some(&laws.hadley),
+        );
+    }
+
+    // 1. No panic — reaching this line is the first assertion.
+
+    // 2. No Real field at the I32F32 ceiling. We sweep the per-cell
+    //    temperature + every chemistry substance field. The saturating
+    //    guards exist to keep arithmetic finite; if a single quantity
+    //    ever pins at MAX it's a sign the chain ran off the rails. The
+    //    sentinel is derived by saturating a known-overflowing product
+    //    (1e9 × 1e9 wraps Q32.32) so we don't have to import the
+    //    fixed-point ceiling constant directly. Window of 1024 LSBs
+    //    catches both exact-MAX and sub-LSB rounding floors that pin
+    //    near it.
+    let real_max =
+        Real::from_int(1_000_000_000).saturating_mul(Real::from_int(1_000_000_000));
+    let max_bits = real_max.raw().to_bits();
+    let near_max_window: i64 = 1024;
+    for (cid, _) in state.grid().cells() {
+        let t = state.temperature()[cid.0 as usize];
+        let t_bits = t.raw().to_bits();
+        assert!(
+            (max_bits - t_bits).abs() > near_max_window,
+            "cell {} temperature raw bits {} within {} of Real::MAX ({}); \
+             saturation pin indicates an unguarded overflow chain",
+            cid.0,
+            t_bits,
+            near_max_window,
+            max_bits,
+        );
+    }
+    for sub_idx in 0..sim_physics::N_SUBSTANCES {
+        for (cid, _) in state.grid().cells() {
+            let v = state.substance(sub_idx)[cid.0 as usize];
+            let v_bits = v.raw().to_bits();
+            assert!(
+                (max_bits - v_bits).abs() > near_max_window,
+                "cell {} substance idx {} raw bits {} within {} of Real::MAX ({}); \
+                 saturation pin indicates an unguarded overflow chain",
+                cid.0,
+                sub_idx,
+                v_bits,
+                near_max_window,
+                max_bits,
+            );
+        }
+    }
+
+    // 3. Greenhouse cap holds — every cell's temperature must sit in
+    //    a physically plausible band. The `greenhouse_cap_k` ceiling
+    //    (250 K) bounds the per-tick T_eq inflation; the relaxation
+    //    rate ensures we asymptote, not diverge. Generous upper bound
+    //    (3000 K = 1500 K surface + 1000 K of greenhouse / radiative
+    //    headroom + gradient room) so this is a "T isn't infinity"
+    //    check, not a calibration assertion. Lower bound at 1 K
+    //    catches the wrap-to-zero failure mode.
+    let t_upper = Real::from_int(3_000);
+    let t_lower = Real::from_int(1);
+    for (cid, _) in state.grid().cells() {
+        let t = state.temperature()[cid.0 as usize];
+        assert!(
+            t < t_upper,
+            "cell {} temperature {} exceeded greenhouse-cap upper bound {} K; \
+             radiation / greenhouse chain may be unguarded",
+            cid.0,
+            t.to_f64_for_display(),
+            t_upper.to_f64_for_display(),
+        );
+        assert!(
+            t > t_lower,
+            "cell {} temperature {} fell below lower sanity bound {} K; \
+             radiation / chemistry chain may have wrapped to zero",
+            cid.0,
+            t.to_f64_for_display(),
+            t_lower.to_f64_for_display(),
+        );
+    }
+
+    // 4. `exobase_temperature` saturates at the ratio cap under
+    //    hot-Jupiter EUV. With T_surf = 1500 K and an EUV input one
+    //    order of magnitude above Earth's, the raw ratio exceeds the
+    //    `EXOBASE_RATIO_MAX` (10) clamp, so T_exo must land at exactly
+    //    10× T_surf = 15000 K. The assertion proves the saturating
+    //    `min(ratio_cap)` clamp inside `exobase_temperature` is doing
+    //    its job — without it the linear form would land T_exo above
+    //    the Q32.32 ceiling once the downstream `m × v² / T` division
+    //    runs.
+    let t_surf = Real::from_int(1_500);
+    let euv_extreme = Real::from_int(1); // 1000× the Earth ref ≈ 1e-3.
+    let t_exo = sim_physics::atmospheric_escape::exobase_temperature(t_surf, euv_extreme);
+    let expected_max =
+        t_surf * Real::from_int(sim_physics::atmospheric_escape::EXOBASE_RATIO_MAX);
+    assert_eq!(
+        t_exo, expected_max,
+        "exobase_temperature should saturate at EXOBASE_RATIO_MAX × T_surf \
+         under hot-Jupiter-scale EUV input; got {} vs expected {}",
+        t_exo.to_f64_for_display(),
+        expected_max.to_f64_for_display(),
+    );
+}

@@ -284,15 +284,33 @@ pub fn held_hou_hadley_edge(
     }
     let five_over_three = Real::from_ratio(5, 3);
     // Numerator: (5/3) · g · H · Δθ. Each factor is bounded
-    // (g ≈ 10, H ≈ 1e4, Δθ ≈ 60), so the product fits Q32.32
-    // comfortably (~ 1e7).
-    let numerator = five_over_three * gravity_ms2 * tropopause_m * delta_theta_k;
+    // (g ≈ 10, H ≈ 1e4, Δθ ≈ 60), so the Earth-like product fits
+    // Q32.32 comfortably (~ 1e7). The saturating multiplies guard
+    // the hot-Jupiter end of the envelope (T17): on a high-gravity
+    // (g ≈ 25) thick-tropopause world the product reaches ~3e7
+    // — still inside the ±2.1e9 bound, but the saturating form
+    // keeps the result finite if a future parameter sample pushes
+    // any factor an order of magnitude further.
+    let numerator = five_over_three
+        .saturating_mul(gravity_ms2)
+        .saturating_mul(tropopause_m)
+        .saturating_mul(delta_theta_k);
     // Denominator: (Ω · R)² · T_eq. Compute `Ω · R` first so the
     // intermediate stays small (Ω · R ≈ 463 m/s for Earth);
     // squaring it gives ≈ 2.14e5, times T_eq ≈ 300 gives ≈ 6.4e7
-    // — still within Q32.32.
-    let omega_r = omega_rad_s * radius_m;
-    let denominator = omega_r * omega_r * t_eq_k;
+    // — still within Q32.32. On a hot Jupiter (R ≈ 11 R_Earth →
+    // R_m ≈ 7e7, fast rotator Ω ≈ 1.7e-4 rad/s) `Ω · R` reaches
+    // ≈ 1.2e4, squared ≈ 1.4e8, times T_eq ≈ 3000 lands at ≈ 4e11
+    // — past the Q32.32 ceiling. `saturating_mul` clamps the
+    // overflow to `Real::MAX`; the downstream `numerator /
+    // denominator` then yields a near-zero `sin_sq`, the clamp to
+    // `[0, 1]` and `arcsin` collapse to `0`, and the slow-rotator-
+    // equivalent branch in `compute_hadley_layout` handles the
+    // degenerate edge naturally. Without the guard the inner
+    // `omega_r * omega_r * t_eq_k` panics in debug, breaking the
+    // hot-Jupiter overflow canary.
+    let omega_r = omega_rad_s.saturating_mul(radius_m);
+    let denominator = omega_r.saturating_mul(omega_r).saturating_mul(t_eq_k);
     if denominator <= Real::ZERO {
         return half_pi();
     }
