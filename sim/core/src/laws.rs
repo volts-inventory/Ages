@@ -206,9 +206,12 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // `wind_for_atmosphere`: density scaling on all three
     // coefficients (advect_k ∝ ρ, wind_k ∝ 1/ρ, friction ∝ ρ) and
     // the scale-height plumb-through for the energy-conserving
-    // advection pass. Short-circuits on `Atmosphere::None` worlds
-    // via the `has_atmosphere` flag.
-    let wind = wind_for_atmosphere(planet.atmosphere);
+    // advection pass. The base `wind_k` is also gravity-scaled
+    // (T3): a low-gravity planet sees stronger winds for the same
+    // gradient. Short-circuits on `Atmosphere::None` worlds via the
+    // `has_atmosphere` flag.
+    let gravity_g = gravity_earth_units(planet);
+    let wind = wind_for_atmosphere(planet.atmosphere, gravity_g);
 
     // Hydrologic cycle. Substrate-aware Clausius-Clapeyron
     // so a methane / ammonia / silicate world cycles its solvent
@@ -249,7 +252,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
             declination_r: m.inclination_deg_x10 / 30,
         })
         .collect();
-    let tides = sim_physics::Tides::for_planet(moon_tides);
+    let tides = sim_physics::Tides::for_planet_with_gravity(moon_tides, gravity_g);
 
     // Sprint 5 Item 16 (v2): per-moon tidal-heating descriptors.
     // The lunar-bulge `tides` law moves water around; tidal heating
@@ -435,6 +438,19 @@ pub(crate) fn ignition_threshold_for(atmosphere: Atmosphere) -> Real {
     }
 }
 
+/// Convert `planet.gravity()` (m/s²) into Earth-relative units so the
+/// gravity-scaled physics-law constructors (`Tides::for_gravity`,
+/// `Wind::for_gravity`) see `1.0` for Earth, `0.38` for Mars, etc.
+/// The Earth-baseline `9.81 m/s²` denominator matches the
+/// `EARTH_GRAVITY_MS2_X100 = 981` anchor in `sim_world::planet`.
+fn gravity_earth_units(planet: &sim_world::Planet) -> Real {
+    let g_ms2 = planet.gravity();
+    if g_ms2 <= Real::ZERO {
+        return Real::ONE;
+    }
+    g_ms2 / Real::from_ratio(981, 100)
+}
+
 /// Build the per-planet `Wind` law, applying complete atmospheric-
 /// density coupling on all three of its coefficients.
 ///
@@ -460,13 +476,17 @@ pub(crate) fn ignition_threshold_for(atmosphere: Atmosphere) -> Real {
 /// Vacuum planets (`Atmosphere::None`) get `has_atmosphere = false`
 /// so the integrator short-circuits; no scaling is applied because
 /// the coefficients are unused.
-pub(crate) fn wind_for_atmosphere(atmosphere: Atmosphere) -> sim_physics::Wind {
-    let mut wind = sim_physics::Wind::earth_like();
+pub(crate) fn wind_for_atmosphere(atmosphere: Atmosphere, gravity_g: Real) -> sim_physics::Wind {
+    // Start from the gravity-scaled baseline so `wind_k` already
+    // reflects the planet's `1/g` pressure-gradient coupling (T3).
+    // The per-atmosphere density tuning below then composes on top of
+    // the gravity-scaled `wind_k`.
+    let mut wind = sim_physics::Wind::for_gravity(gravity_g, atmosphere.scale_height_m());
     wind.has_atmosphere = !matches!(atmosphere, Atmosphere::None);
-    // Thread the per-atmosphere scale height through so the
-    // energy-conserving advection pass uses the right column-mass
-    // ratios for this planet's air (Earth-like 8.4 km, Mars 11 km,
-    // Venus 15 km, Titan 21 km, vacuum 1 m sentinel).
+    // Scale-height plumb-through happens in `for_gravity` above; the
+    // assignment is retained as a no-op-equivalent doc anchor for
+    // readers tracing the per-planet wiring (Earth-like 8.4 km, Mars
+    // 11 km, Venus 15 km, Titan 21 km, vacuum 1 m sentinel).
     wind.scale_height_m = atmosphere.scale_height_m();
     let density_x100 = atmosphere.density_x100();
     if density_x100 > 0 {
@@ -500,9 +520,10 @@ mod tests {
         // Earth-baseline reference. Atmosphere::Oxidising has
         // `density_x100 = 122`, so the raw density factor is exactly
         // 1.0 — every coefficient should equal its Earth-like
-        // baseline.
+        // baseline. Earth gravity (`Real::ONE`) leaves the gravity
+        // scaling in `wind_k` at unity.
         let baseline = sim_physics::Wind::earth_like();
-        let earth = wind_for_atmosphere(Atmosphere::Oxidising);
+        let earth = wind_for_atmosphere(Atmosphere::Oxidising, Real::ONE);
         assert_eq!(earth.advect_k, baseline.advect_k);
         assert_eq!(earth.wind_k, baseline.wind_k);
         assert_eq!(earth.friction_per_tick, baseline.friction_per_tick);
@@ -514,7 +535,7 @@ mod tests {
         //   wind_k goes up (more accel per K),
         //   friction_per_tick goes down (less drag, longer-lived
         //   winds).
-        let mars = wind_for_atmosphere(Atmosphere::Thin);
+        let mars = wind_for_atmosphere(Atmosphere::Thin, Real::ONE);
         assert!(
             mars.advect_k < baseline.advect_k,
             "thin atmosphere should advect less heat per unit velocity: \
@@ -547,7 +568,7 @@ mod tests {
         // Venus-reducing: density_x100 = 6700 (~55× Earth). The
         // advect_k cap at 5× must kick in; wind_k should drop sharply
         // (1/55); friction climbs (~55×).
-        let venus = wind_for_atmosphere(Atmosphere::Reducing);
+        let venus = wind_for_atmosphere(Atmosphere::Reducing, Real::ONE);
         let advect_cap = baseline.advect_k * Real::from_int(5);
         assert_eq!(
             venus.advect_k, advect_cap,
@@ -570,7 +591,7 @@ mod tests {
 
         // Vacuum: has_atmosphere flag flips off; baseline coefficients
         // are kept (they're unused but harmless).
-        let vacuum = wind_for_atmosphere(Atmosphere::None);
+        let vacuum = wind_for_atmosphere(Atmosphere::None, Real::ONE);
         assert!(!vacuum.has_atmosphere);
     }
 }

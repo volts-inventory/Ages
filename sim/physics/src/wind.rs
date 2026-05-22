@@ -162,18 +162,47 @@ pub struct Wind {
     pub scale_height_m: i64,
 }
 
+/// Earth-baseline pressure-gradient acceleration coefficient. The
+/// `for_gravity` constructor divides this by `gravity_g` so a low-
+/// gravity planet sees stronger per-K acceleration (same gradient,
+/// less weight to overcome).
+const WIND_K_EARTH: (i64, i64) = (1, 1_000);
+
+/// Earth-like atmospheric scale height (m). Used as the default for
+/// the back-compat `earth_like` constructor.
+const EARTH_SCALE_HEIGHT_M: i64 = 8_400;
+
 impl Wind {
     /// Earth-like defaults: ideal-gas pressure scaling, moderate
     /// wind generation, light friction, advection magnitude calibrated
-    /// against `HeatConduction::alpha`'s typical value.
+    /// against `HeatConduction::alpha`'s typical value. Back-compat
+    /// alias for `Wind::for_gravity(Real::ONE, EARTH_SCALE_HEIGHT_M)`.
     #[must_use]
     pub fn earth_like() -> Self {
+        Self::for_gravity(Real::ONE, EARTH_SCALE_HEIGHT_M)
+    }
+
+    /// Build a `Wind` law tuned for a planet whose surface gravity is
+    /// `gravity_g` Earth-gravities and whose atmospheric scale height
+    /// is `atmosphere_scale_height_m` metres. The `wind_k` coefficient
+    /// scales as `1 / gravity_g` — pressure-gradient force per unit
+    /// mass (`∇P / ρ`) is gravity-invariant at the level of the
+    /// pointwise equation of motion, but the per-cell mass column the
+    /// gradient acts against scales linearly with `g` (heavier air at
+    /// the same scale height), so a fixed gradient produces a smaller
+    /// per-mass acceleration in a high-gravity atmosphere. The
+    /// `1/g` coupling is the simple physically-defensible choice: low-
+    /// gravity worlds see stronger winds for the same temperature
+    /// gradient, high-gravity worlds see weaker winds.
+    #[must_use]
+    pub fn for_gravity(gravity_g: Real, atmosphere_scale_height_m: i64) -> Self {
         Self {
             pressure_per_kelvin: Real::ONE,
             // Small absolute scale so `v` stays well under 100
             // (axial-coord units / tick). 1 K gradient over the
-            // pair → v contribution ~0.001 / tick.
-            wind_k: Real::from_ratio(1, 1_000),
+            // pair → v contribution ~0.001 / tick at Earth gravity;
+            // a 0.5g world sees ~0.002 / tick.
+            wind_k: wind_k_for_gravity(gravity_g),
             // 30%/tick friction → velocity half-life ~2 ticks.
             friction_per_tick: Real::percent(30),
             // Tuned so a typical 50 K equator-to-pole gradient
@@ -183,12 +212,22 @@ impl Wind {
             // and wind-advection all balance.
             advect_k: Real::percent(1),
             has_atmosphere: true,
-            // Earth-like 8.4 km scale height. `build_laws`
-            // overrides this per-planet from
-            // `Atmosphere::scale_height_m`.
-            scale_height_m: 8_400,
+            scale_height_m: atmosphere_scale_height_m,
         }
     }
+}
+
+/// Scale the Earth-baseline `wind_k` by `1 / gravity_g`.
+/// `gravity_g` is in Earth-gravities (1.0 for Earth, 0.38 for Mars,
+/// 2.0 for a 2g super-Earth). A non-positive input falls back to the
+/// Earth baseline rather than producing infinite or negative
+/// coefficients.
+fn wind_k_for_gravity(gravity_g: Real) -> Real {
+    let base = Real::from_ratio(WIND_K_EARTH.0, WIND_K_EARTH.1);
+    if gravity_g <= Real::ZERO {
+        return base;
+    }
+    base / gravity_g
 }
 
 impl Law for Wind {
@@ -884,5 +923,71 @@ mod tests {
             dt_max_observed, dt_max_expected,
             "dt_max_cfl must match CFL / (c_s · advect_k) at zero wind"
         );
+    }
+
+    #[test]
+    fn wind_scales_with_gravity() {
+        // T3: a low-gravity planet's `wind_k` must be larger than a
+        // high-gravity planet's (1/g coupling), so the same per-K
+        // temperature gradient produces a larger per-tick velocity
+        // change. Drive the kernel on identical states with two
+        // gravities and verify that the low-g state ends up with a
+        // measurably higher wind speed magnitude.
+        let grid = HexGrid::new(5, 1);
+        let make_state = || {
+            let mut s = PhysicsState::new(grid.clone());
+            for (i, t) in s.temperature_mut().iter_mut().enumerate() {
+                // Strong west-to-east gradient: 200 K to 360 K.
+                *t = Real::from_int(200 + i64::try_from(i).unwrap() * 40);
+            }
+            s
+        };
+        let mut low_g_state = make_state();
+        let mut high_g_state = make_state();
+        // 0.4g (Mars-like) vs 2g (super-Earth). Earth-baseline scale
+        // height (8.4 km) on both so the only difference is gravity.
+        let low_g = Wind::for_gravity(Real::from_ratio(4, 10), EARTH_SCALE_HEIGHT_M);
+        let high_g = Wind::for_gravity(Real::from_int(2), EARTH_SCALE_HEIGHT_M);
+        assert!(
+            low_g.wind_k > high_g.wind_k,
+            "low-gravity planet must have larger wind_k than high-gravity planet: \
+             low_g.wind_k={:?} high_g.wind_k={:?}",
+            low_g.wind_k,
+            high_g.wind_k
+        );
+        // Drive a handful of ticks so the per-K pressure-gradient
+        // acceleration accumulates into a real velocity. We compare
+        // the L2 wind-speed sum across the grid.
+        for _ in 0..5 {
+            low_g.integrate(&mut low_g_state, Real::ONE);
+            high_g.integrate(&mut high_g_state, Real::ONE);
+        }
+        let speed_l1 = |s: &PhysicsState| -> Real {
+            let (vq, vr) = s.fluid_velocity();
+            vq.iter()
+                .zip(vr.iter())
+                .fold(Real::ZERO, |acc, (q, r)| acc + q.abs() + r.abs())
+        };
+        let low_g_speed = speed_l1(&low_g_state);
+        let high_g_speed = speed_l1(&high_g_state);
+        assert!(
+            low_g_speed > high_g_speed,
+            "low-gravity planet must develop higher wind speeds for the same gradient: \
+             low_g_speed={low_g_speed:?} high_g_speed={high_g_speed:?}"
+        );
+        // Earth-equivalent: `for_gravity(Real::ONE, EARTH_SCALE_HEIGHT_M)`
+        // must reproduce the legacy `earth_like` coefficients
+        // bit-exactly so existing sim-physics tests stay green.
+        let earth = Wind::for_gravity(Real::ONE, EARTH_SCALE_HEIGHT_M);
+        let legacy = Wind::earth_like();
+        assert_eq!(
+            earth.wind_k, legacy.wind_k,
+            "Real::ONE gravity must reproduce earth_like wind_k exactly"
+        );
+        assert_eq!(earth.advect_k, legacy.advect_k);
+        assert_eq!(earth.friction_per_tick, legacy.friction_per_tick);
+        assert_eq!(earth.scale_height_m, legacy.scale_height_m);
+        assert_eq!(earth.has_atmosphere, legacy.has_atmosphere);
+        assert_eq!(earth.pressure_per_kelvin, legacy.pressure_per_kelvin);
     }
 }

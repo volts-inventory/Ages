@@ -62,8 +62,16 @@
 
 use crate::laws::Law;
 use crate::state::PhysicsState;
-use sim_arith::transcendental::{cos, pi, two_pi};
+use sim_arith::transcendental::{cos, pi, sqrt, two_pi};
 use sim_arith::Real;
+
+/// Earth-baseline tide-flux coefficient. The `for_gravity` constructor
+/// scales this by `sqrt(gravity_g)` — tide amplitude on an Earth-analog
+/// scales as `g^0.5` (tidal force is the gravity gradient over the
+/// planet's radius; for a fixed-radius planet the gradient scales
+/// linearly with `g` but the response of the column-integrated water
+/// is the square-root since the restoring force also scales with `g`).
+const TIDE_K_EARTH: (i64, i64) = (1, 1_000);
 
 /// Per-moon tidal configuration. Earlier the `Tides`
 /// law tracked a single `lunar_period_macros`; this struct promotes
@@ -109,11 +117,13 @@ pub struct Tides {
 
 impl Tides {
     /// Earth-like defaults: one Earth-Moon-equivalent moon with
-    /// 28-macro-step cycle.
+    /// 28-macro-step cycle. Back-compat alias for
+    /// `Tides::for_gravity(Real::ONE)` with the Earth-Moon + solar
+    /// pair pre-populated.
     #[must_use]
     pub fn earth_like() -> Self {
         Self {
-            tide_k: Real::from_ratio(1, 1_000),
+            tide_k: tide_k_for_gravity(Real::ONE),
             moons: vec![
                 MoonTide {
                     mass_relative: Real::ONE,
@@ -138,12 +148,43 @@ impl Tides {
         }
     }
 
+    /// Build an Earth-Moon + solar tide pair tuned for a planet
+    /// whose surface gravity is `gravity_g` Earth-gravities. The
+    /// `tide_k` coefficient scales with `sqrt(gravity_g)` so a 2g
+    /// planet sees measurably stronger tides and a 0.4g (Mars-like)
+    /// planet sees weaker ones. Tidal amplitude on an Earth-analog
+    /// scales as `g^0.5` — the linear-in-`g` gradient force is
+    /// balanced by the linear-in-`g` restoring weight, leaving the
+    /// column response in the square root.
+    #[must_use]
+    pub fn for_gravity(gravity_g: Real) -> Self {
+        let mut tides = Self::earth_like();
+        tides.tide_k = tide_k_for_gravity(gravity_g);
+        tides
+    }
+
     /// Build from a list of per-moon tide configs. Empty
-    /// list means moonless (integrate becomes a no-op).
+    /// list means moonless (integrate becomes a no-op). The Earth-
+    /// baseline `tide_k` is preserved for back-compat; callers that
+    /// know their planet's gravity should prefer
+    /// `Tides::for_planet_with_gravity`.
     #[must_use]
     pub fn for_planet(moons: Vec<MoonTide>) -> Self {
         Self {
-            tide_k: Real::from_ratio(1, 1_000),
+            tide_k: tide_k_for_gravity(Real::ONE),
+            moons,
+        }
+    }
+
+    /// Build from a list of per-moon tide configs with a per-planet
+    /// gravity scaling. `gravity_g` is in Earth-gravities (so 1.0 for
+    /// Earth, 0.38 for Mars, 2.0 for a 2g super-Earth). `tide_k`
+    /// scales with `sqrt(gravity_g)` — see `for_gravity` for the
+    /// rationale. Empty `moons` still makes `integrate` a no-op.
+    #[must_use]
+    pub fn for_planet_with_gravity(moons: Vec<MoonTide>, gravity_g: Real) -> Self {
+        Self {
+            tide_k: tide_k_for_gravity(gravity_g),
             moons,
         }
     }
@@ -151,6 +192,9 @@ impl Tides {
     /// Sub-lunar longitude in grid-q for the moon
     /// at `moon_idx` and the given macro-step. Public so tests
     /// can pin it without driving an integration.
+    //
+    // (the helper used by `earth_like` / `for_gravity` /
+    // `for_planet*` lives as a free function below.)
     #[must_use]
     pub fn sub_lunar_q(&self, moon_idx: usize, macro_step: u64, width: u32) -> i32 {
         let Some(moon) = self.moons.get(moon_idx) else {
@@ -160,6 +204,18 @@ impl Tides {
         let phase = macro_step.saturating_mul(u64::from(width)) / period;
         i32::try_from(phase % u64::from(width.max(1))).unwrap_or(0)
     }
+}
+
+/// Scale the Earth-baseline `tide_k` by `sqrt(gravity_g)`.
+/// `gravity_g` is in Earth-gravities (1.0 for Earth, 0.38 for Mars,
+/// 2.0 for a 2g super-Earth). A non-positive input falls back to the
+/// Earth baseline rather than producing zero or negative coefficients.
+fn tide_k_for_gravity(gravity_g: Real) -> Real {
+    let base = Real::from_ratio(TIDE_K_EARTH.0, TIDE_K_EARTH.1);
+    if gravity_g <= Real::ZERO {
+        return base;
+    }
+    base * sqrt(gravity_g)
 }
 
 impl Law for Tides {
@@ -831,5 +887,32 @@ mod tests {
             state.advance_macro_step();
         }
         assert_eq!(state.water_depth(), &initial[..]);
+    }
+
+    #[test]
+    fn tides_scale_with_gravity() {
+        // T3: a 2g planet's tide coefficient must be measurably
+        // larger than a 0.5g planet's. The `sqrt(g)` coupling means
+        // ratio = sqrt(2 / 0.5) = 2, so high-g `tide_k` is exactly
+        // 2× low-g `tide_k`.
+        let high_g = Tides::for_gravity(Real::from_int(2));
+        let low_g = Tides::for_gravity(Real::from_ratio(1, 2));
+        assert!(
+            high_g.tide_k > low_g.tide_k,
+            "2g planet must have larger tide_k than 0.5g planet: \
+             high_g.tide_k={:?} low_g.tide_k={:?}",
+            high_g.tide_k,
+            low_g.tide_k
+        );
+        // Earth-equivalent reference: gravity = 1 must reproduce the
+        // legacy `earth_like` `tide_k` bit-exactly, so the existing
+        // sim-physics tests (and the Earth-analog reference run) are
+        // unaffected by the new scaling path.
+        let earth = Tides::for_gravity(Real::ONE);
+        let legacy = Tides::earth_like();
+        assert_eq!(
+            earth.tide_k, legacy.tide_k,
+            "Real::ONE gravity must reproduce earth_like tide_k exactly"
+        );
     }
 }
