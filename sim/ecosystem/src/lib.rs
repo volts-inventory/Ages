@@ -285,11 +285,32 @@ pub struct LindemanViolation {
 /// One species' per-planet record. `species_id` is the dense per-
 /// planet index; `biomass` is the live pool (always ≥ 0); the
 /// other fields are configuration carried for the step.
-#[derive(Debug, Clone, Copy)]
+///
+/// **F2 (xeno N2) — per-cell biomass:** `cell_biomass` carries the
+/// per-cell distribution of this species' standing biomass. Length
+/// is `n_cells` when the ecosystem has been initialised against a
+/// concrete planet grid (via [`PlanetEcosystem::initialise_cell_biomass`]
+/// or [`sample_ecosystem_with_substrate_for_grid`]); empty for the
+/// legacy aggregate-only construction path used by hand-built test
+/// fixtures. The invariant `sum(cell_biomass) == biomass` is
+/// maintained by the step loop and the per-cell catastrophe poke
+/// helper [`PlanetEcosystem::reduce_at_cell`] — `biomass` is the
+/// cached aggregate, `cell_biomass` is the truth-source once
+/// populated. Catastrophes that hit a single cell drain only that
+/// cell's slice, enabling heterogeneous local famines (a volcanic
+/// eruption no longer crashes producer biomass planet-wide).
+///
+/// Dropped `Copy` (P0.1 F2): the `Vec` field is heap-owned and
+/// can't be bit-copied; `Clone` covers the path through species
+/// snapshots and the per-step deep-copy.
+#[derive(Debug, Clone)]
 pub struct EcoSpecies {
     pub species_id: SpeciesId,
     pub role: EcosystemRole,
-    /// Live biomass pool. Same units as `producer_capacity`.
+    /// Live biomass pool — *aggregate* across all cells. Same units
+    /// as `producer_capacity`. Equal to `sum(cell_biomass)` once
+    /// `cell_biomass` has been initialised (F2); a cached derived
+    /// value the step loop maintains in sync.
     pub biomass: Real,
     /// True iff the species can still participate in the per-tick
     /// step. Extinction (Item 6a) flips this off without removing
@@ -311,6 +332,17 @@ pub struct EcoSpecies {
     /// fixtures that don't set it preserve the canonical Lindeman
     /// 10:1 behaviour.
     pub habitat: Habitat,
+    /// Per-cell biomass distribution (F2). Length equals the
+    /// planet's `n_cells` once initialised, empty otherwise (legacy
+    /// hand-built fixtures that don't pin a grid keep the
+    /// aggregate-only behaviour). Initialised uniformly at worldgen
+    /// (`biomass / n_cells` per cell) by
+    /// [`PlanetEcosystem::initialise_cell_biomass`]; the per-tick
+    /// step preserves the proportional distribution as the aggregate
+    /// evolves. Catastrophe paths (e.g. a volcanic eruption on cell
+    /// `c`) reduce only `cell_biomass[c]` — see
+    /// [`PlanetEcosystem::reduce_at_cell`].
+    pub cell_biomass: Vec<Real>,
 }
 
 /// Per-planet ecosystem state. Owned by the higher-level world
@@ -334,6 +366,16 @@ pub struct PlanetEcosystem {
     /// Exposed for tests that need to introspect the ladder
     /// pre/post-tick.
     pub current_oxidisers: Vec<Oxidiser>,
+    /// F2 — planet grid cell count. Populated by
+    /// [`PlanetEcosystem::initialise_cell_biomass`] /
+    /// [`sample_ecosystem_with_substrate_for_grid`]; left at `0` for
+    /// the legacy aggregate-only construction path so existing
+    /// fixtures keep their bit-for-bit numerics. When `> 0`, every
+    /// `EcoSpecies.cell_biomass` Vec inside `species` has this
+    /// length and the per-cell biomass invariant
+    /// (`sum(cell_biomass) == biomass`) is maintained by the step
+    /// loop.
+    pub n_cells: usize,
 }
 
 impl PlanetEcosystem {
@@ -369,7 +411,163 @@ impl PlanetEcosystem {
             producer_capacity,
             substrate_tag,
             current_oxidisers,
+            n_cells: 0,
         }
+    }
+
+    /// F2 (xeno N2) — install the per-cell biomass distribution. For
+    /// each species, split its aggregate `biomass` evenly across the
+    /// `n_cells` cells (uniform initialisation; a future polish pass
+    /// can do biome-class-weighted distribution). Sets
+    /// `self.n_cells = n_cells` so the per-tick step + catastrophe
+    /// path know the planet has a grid attached. Idempotent: calling
+    /// twice with the same `n_cells` rebuilds the uniform
+    /// distribution from the *current* aggregate. Pass `0` to
+    /// disable (clears every species' `cell_biomass`).
+    ///
+    /// The aggregate `biomass` stays the truth-source for the
+    /// initial uniform split; once per-cell evolution kicks in the
+    /// step loop maintains the invariant `sum(cell_biomass) ==
+    /// biomass` by proportional redistribution. Catastrophes drain
+    /// a single cell via [`PlanetEcosystem::reduce_at_cell`], which
+    /// also keeps the aggregate in sync.
+    pub fn initialise_cell_biomass(&mut self, n_cells: usize) {
+        self.n_cells = n_cells;
+        if n_cells == 0 {
+            for s in self.species.values_mut() {
+                s.cell_biomass.clear();
+            }
+            return;
+        }
+        let n_real = Real::from_int(n_cells as i64);
+        for s in self.species.values_mut() {
+            let per_cell = if n_real > Real::ZERO {
+                s.biomass / n_real
+            } else {
+                Real::ZERO
+            };
+            s.cell_biomass = vec![per_cell; n_cells];
+            // Pin the aggregate to the actual cell sum so the
+            // invariant `sum(cell_biomass) == biomass` is exact from
+            // tick 0. Q32.32 division-then-multiplication loses up
+            // to 1 ulp per cell; recomputing from the cells anchors
+            // the truth-source to the per-cell slice.
+            s.biomass = s
+                .cell_biomass
+                .iter()
+                .copied()
+                .fold(Real::ZERO, |a, b| a + b);
+        }
+    }
+
+    /// F2 — reduce a single species' biomass at one specific cell by
+    /// `fraction ∈ [0, 1]`. Used by the catastrophe path: a volcanic
+    /// eruption on cell `c` drains the local producer pool *only*,
+    /// without crashing the planet-wide aggregate. Updates both
+    /// `cell_biomass[cell]` and the aggregate `biomass` so the
+    /// invariant `sum(cell_biomass) == biomass` is preserved.
+    ///
+    /// No-op if `n_cells == 0` (legacy aggregate-only fixtures), if
+    /// the species id is missing, if the species is already extinct,
+    /// or if the cell index is out of range. Fraction is clamped to
+    /// `[0, 1]` so a buggy caller can't increase biomass via a
+    /// negative fraction or eat past zero.
+    pub fn reduce_at_cell(&mut self, species_id: SpeciesId, cell: usize, fraction: Real) {
+        if self.n_cells == 0 {
+            return;
+        }
+        let frac = if fraction < Real::ZERO {
+            Real::ZERO
+        } else if fraction > Real::ONE {
+            Real::ONE
+        } else {
+            fraction
+        };
+        let Some(s) = self.species.get_mut(&species_id) else {
+            return;
+        };
+        if !s.is_extant {
+            return;
+        }
+        if cell >= s.cell_biomass.len() {
+            return;
+        }
+        let before = s.cell_biomass[cell];
+        if before <= Real::ZERO {
+            return;
+        }
+        let loss = before * frac;
+        let after = before - loss;
+        s.cell_biomass[cell] = if after < Real::ZERO { Real::ZERO } else { after };
+        // Recompute the aggregate from cells so rounding drift stays
+        // bounded. `biomass` is a cached value; the cell slice is the
+        // truth-source once `n_cells > 0`.
+        s.biomass = s
+            .cell_biomass
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+    }
+
+    /// F2 — internal: redistribute the post-step aggregate delta
+    /// proportionally back to each cell so the invariant
+    /// `sum(cell_biomass) == biomass` holds. Called at the end of
+    /// every step pass that mutated `biomass`. Skips species whose
+    /// `cell_biomass` is empty (legacy fixtures); skips when the
+    /// pre-step aggregate was zero (no proportional reference —
+    /// fall back to uniform reseed of the new total).
+    fn rescale_cell_biomass(&mut self, prev_biomass: &BTreeMap<SpeciesId, Real>) {
+        if self.n_cells == 0 {
+            return;
+        }
+        let n_real = Real::from_int(self.n_cells as i64);
+        for (id, s) in self.species.iter_mut() {
+            if s.cell_biomass.is_empty() {
+                continue;
+            }
+            let before = prev_biomass.get(id).copied().unwrap_or(Real::ZERO);
+            let after = s.biomass;
+            if before > Real::ZERO {
+                // Proportional rescale: every cell scales by
+                // `after / before`. Preserves heterogeneity introduced
+                // by per-cell catastrophe pokes — a cell already
+                // drained by a volcanic event stays proportionally
+                // depressed after the planet-wide aggregate evolves.
+                let scale = after / before;
+                let mut total = Real::ZERO;
+                for c in s.cell_biomass.iter_mut() {
+                    *c = *c * scale;
+                    if *c < Real::ZERO {
+                        *c = Real::ZERO;
+                    }
+                    total = total + *c;
+                }
+                // Pin the aggregate to the actual cell sum so any
+                // rounding drift is reflected back into `biomass`
+                // (truth-source = cells).
+                s.biomass = total;
+            } else if after > Real::ZERO && n_real > Real::ZERO {
+                // Reviving from zero — uniform reseed of the new
+                // total.
+                let per_cell = after / n_real;
+                for c in s.cell_biomass.iter_mut() {
+                    *c = per_cell;
+                }
+            } else {
+                // Both zero — already in sync.
+                for c in s.cell_biomass.iter_mut() {
+                    *c = Real::ZERO;
+                }
+            }
+        }
+    }
+
+    /// F2 — snapshot every species' aggregate biomass before a step
+    /// pass mutates it. Used by [`Self::rescale_cell_biomass`] to
+    /// proportionally redistribute the per-species delta back to
+    /// the per-cell vectors.
+    fn snapshot_biomass(&self) -> BTreeMap<SpeciesId, Real> {
+        self.species.iter().map(|(id, s)| (*id, s.biomass)).collect()
     }
 
     /// Run one ecosystem tick without atmospheric coupling.
@@ -416,6 +614,10 @@ impl PlanetEcosystem {
     /// Returned in `SpeciesId` order (the underlying `BTreeMap`
     /// iteration) so the event sequence is deterministic.
     pub fn step_at_tick(&mut self, tick: u64) -> Vec<SpeciesExtinct> {
+        // F2 — snapshot the pre-step aggregate so we can
+        // proportionally redistribute the post-step delta back to
+        // each species' per-cell biomass at the end of the tick.
+        let prev_biomass = self.snapshot_biomass();
         self.grow_producers();
         self.partition_chemoautotrophs();
         self.apply_interactions(tick);
@@ -430,6 +632,10 @@ impl PlanetEcosystem {
         // the per-tick step (a hand-built fixture that starts with an
         // inverted pyramid shouldn't trip it).
         self.clamp_biomasses();
+        // F2 — keep the per-cell distribution in sync with the new
+        // aggregate. Proportional rescale preserves heterogeneity
+        // introduced by per-cell catastrophe pokes.
+        self.rescale_cell_biomass(&prev_biomass);
         self.detect_extinctions(tick)
     }
 
@@ -471,6 +677,9 @@ impl PlanetEcosystem {
         solar_irradiance: Real,
         tick: u64,
     ) -> Vec<SpeciesExtinct> {
+        // F2 — snapshot pre-step aggregates for the per-cell rescale
+        // pass below.
+        let prev_biomass = self.snapshot_biomass();
         let co2_consumed = self.grow_producers_with_co2(state, solar_irradiance);
         // Item 9 paths: Chemoautotroph oxidiser-ladder partition and
         // syntrophy enforcement still run alongside the biogeochem
@@ -484,6 +693,13 @@ impl PlanetEcosystem {
         // P2.5: no post-step Lindeman cap; per-habitat assimilation
         // is the physical mechanism.
         self.clamp_biomasses();
+        // F2 — proportionally redistribute the per-species aggregate
+        // delta back to each cell. Catastrophe pokes inside the same
+        // tick (which run *before* this step in the orchestrator)
+        // have already been folded into the aggregate via
+        // `reduce_at_cell`, so the rescale preserves their per-cell
+        // heterogeneity.
+        self.rescale_cell_biomass(&prev_biomass);
         let co2_returned = respired + decomposed;
         apply_co2_delta(state, co2_returned - co2_consumed);
         self.detect_extinctions(tick)
@@ -1618,6 +1834,11 @@ pub fn sample_ecosystem(planet_seed: u64, producer_capacity: Real) -> PlanetEcos
             // (`sample_ecosystem_with_substrate`) can override
             // habitat to match the planet's solvent chemistry.
             habitat: Habitat::Terrestrial,
+            // F2 — no grid attached at the legacy aggregate-only
+            // construction path. `sample_ecosystem_with_substrate_for_grid`
+            // calls `initialise_cell_biomass` after sampling to
+            // populate the per-cell distribution.
+            cell_biomass: Vec::new(),
         });
         *next_id += 1;
     };
@@ -1743,6 +1964,30 @@ pub fn sample_ecosystem_with_substrate(
     for s in eco.species.values_mut() {
         s.habitat = habitat;
     }
+    eco
+}
+
+/// F2 — same as [`sample_ecosystem_with_substrate`] but pins the
+/// per-cell biomass distribution against the planet's grid cell
+/// count. Initialises every species' `cell_biomass` as a uniform
+/// split (`aggregate / n_cells` per cell). The aggregate stays
+/// identical to the non-grid path — only the per-cell decomposition
+/// is added, so existing aggregate-only tests stay bit-for-bit
+/// stable.
+///
+/// A more sophisticated initialiser (biome-class-weighted: deserts
+/// get less producer biomass than rainforests, etc.) is a follow-up
+/// polish pass; the uniform start unblocks the heterogeneous
+/// catastrophe path the N2 spec requires.
+#[must_use]
+pub fn sample_ecosystem_with_substrate_for_grid(
+    planet_seed: u64,
+    substrate_tag: &'static str,
+    producer_capacity: Real,
+    n_cells: usize,
+) -> PlanetEcosystem {
+    let mut eco = sample_ecosystem_with_substrate(planet_seed, substrate_tag, producer_capacity);
+    eco.initialise_cell_biomass(n_cells);
     eco
 }
 

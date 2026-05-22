@@ -15,8 +15,9 @@ pub use factors::{disease_severity_factor, ice_age_severity_factor, volcanic_coo
 use crate::cosmology::Cosmology;
 use crate::Civ;
 use sim_arith::{Pop, Real};
+use sim_ecosystem::PlanetEcosystem;
 use sim_physics::{PhysicsState, Substance};
-use sim_species::{apply_catastrophe_with_dormancy, Species};
+use sim_species::{apply_catastrophe_with_dormancy, EcosystemRole, Species};
 use sim_world::Planet;
 
 use triggers::{asteroid_fires, disease_fires, ice_age_fires, solar_flare_fires, volcanic_fires};
@@ -255,9 +256,22 @@ fn apply_resistance_and_dormancy(
 }
 
 /// Per-tick catastrophe check. Mutates the civ (cohort + last_*
-/// timestamps) and the physics state (volcanic resets a cell).
+/// timestamps), the physics state (volcanic resets a cell), and
+/// — F2 (xeno N2) — the planet ecosystem's per-cell biomass for
+/// the species directly tied to the cell (producers on a volcanic
+/// eruption cell, the densest-claimed cell for disease, etc.).
+/// Per-cell coupling makes heterogeneous catastrophes possible:
+/// a volcanic eruption on one cell starves only that cell's
+/// producers, not the planet-wide aggregate.
 /// Returns the record so the caller can emit `CatastropheFired`
 /// and update `last_catastrophe_tick`.
+///
+/// `ecosystem` is `Option` so legacy callers (older fixtures, tests
+/// that don't care about the ecosystem coupling) keep working. The
+/// production callsite in `sim-core::run` passes `Some(&mut
+/// ecosystem)` so the per-cell biomass tracks heterogeneous
+/// catastrophe damage; tests that want to assert "the catastrophe
+/// reduces eco biomass at cell N only" pass `Some` too.
 #[allow(clippy::too_many_lines)]
 pub fn check_and_apply(
     civ: &mut Civ,
@@ -265,10 +279,14 @@ pub fn check_and_apply(
     planet: &Planet,
     species: &Species,
     tick: u64,
+    ecosystem: Option<&mut PlanetEcosystem>,
 ) -> Option<CatastropheRecord> {
     if !civ.is_active() {
         return None;
     }
+    // F2 — hold ecosystem behind `Option<&mut>` so each branch can
+    // reborrow as needed without moving out.
+    let mut ecosystem = ecosystem;
     // Volcanic — check first since its physical signature is
     // explicit; disease is the demographic backstop.
     // volcanic cooldown scales with crust — Basaltic
@@ -311,6 +329,35 @@ pub fn check_and_apply(
             if lost_in_region == Pop::ZERO {
                 let target = (civ.cohort.total() * (Real::ONE - frac)).max(Pop::ZERO);
                 civ.cohort.shrink_to(target);
+            }
+            // F2 (xeno N2) — drain producer biomass at the
+            // eruption cell. Volcanic ejecta + 50K cell-temp drop
+            // sterilises the local primary-production layer, so
+            // every Producer-tier ecosystem species takes a
+            // proportional hit at *this cell only*. The aggregate
+            // pool stays mostly intact (a single cell out of
+            // hundreds), but heterogeneity-aware downstream code
+            // (e.g. cell-local famine triggers) now sees the
+            // local crash. Calibrated to the same `frac` the civ
+            // population took so the eco / pop responses move in
+            // lockstep on the affected cell.
+            if let Some(eco) = ecosystem.as_deref_mut() {
+                let producer_ids: Vec<sim_species::SpeciesId> = eco
+                    .species
+                    .iter()
+                    .filter_map(|(id, s)| {
+                        if !s.is_extant {
+                            return None;
+                        }
+                        match s.role {
+                            EcosystemRole::Producer { .. } => Some(*id),
+                            _ => None,
+                        }
+                    })
+                    .collect();
+                for id in producer_ids {
+                    eco.reduce_at_cell(id, cell, frac);
+                }
             }
             civ.last_volcanic_tick = Some(tick);
             civ.last_catastrophe_tick = Some(tick);
@@ -647,7 +694,8 @@ mod tests {
             &earth_like_planet(),
             &test_species(),
             100,
-        );
+            None,
+            );
         assert!(r.is_none());
     }
 
@@ -663,7 +711,8 @@ mod tests {
             &earth_like_planet(),
             &test_species(),
             50,
-        );
+            None,
+            );
         let rec = r.expect("volcanic should fire");
         assert_eq!(rec.kind, CatastropheKind::Volcanic);
         // Cell 0 fuel reset, temperature dropped, civ pop dropped.
@@ -683,7 +732,7 @@ mod tests {
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
         let sp = test_species();
-        check_and_apply(&mut civ, &mut state, &earth_like_planet(), &sp, 0);
+        check_and_apply(&mut civ, &mut state, &earth_like_planet(), &sp, 0, None);
         // Re-set the trigger (in case the apply zeroed something).
         state.charge_mut()[0] = Real::from_int(120);
         state.temperature_mut()[0] = Real::from_int(700);
@@ -694,7 +743,8 @@ mod tests {
             &earth_like_planet(),
             &sp,
             VOLCANIC_COOLDOWN_TICKS / 2,
-        );
+            None,
+            );
         assert!(r.is_none());
         // Past cooldown.
         state.charge_mut()[0] = Real::from_int(120);
@@ -705,7 +755,8 @@ mod tests {
             &earth_like_planet(),
             &sp,
             VOLCANIC_COOLDOWN_TICKS + 50,
-        );
+            None,
+            );
         assert!(r.is_some());
     }
 
@@ -726,7 +777,8 @@ mod tests {
             &earth_like_planet(),
             &test_species(),
             DISEASE_AGE_FLOOR_TICKS,
-        );
+            None,
+            );
         let rec = r.expect("disease should fire");
         assert_eq!(rec.kind, CatastropheKind::Disease);
         assert!(civ.cohort.total() < Pop::from_int(50));
@@ -746,7 +798,8 @@ mod tests {
             &earth_like_planet(),
             &test_species(),
             DISEASE_AGE_FLOOR_TICKS - 1,
-        );
+            None,
+            );
         assert!(r.is_none());
     }
 
@@ -776,7 +829,8 @@ mod tests {
             &earth_like_planet(),
             &species_with_dormancy(Real::ZERO),
             DISEASE_AGE_FLOOR_TICKS,
-        )
+            None,
+            )
         .expect("baseline disease should fire");
 
         // Dormant run — dormancy = 0.9, otherwise identical.
@@ -790,7 +844,8 @@ mod tests {
             &earth_like_planet(),
             &species_with_dormancy(dormancy_high),
             DISEASE_AGE_FLOOR_TICKS,
-        )
+            None,
+            )
         .expect("dormant disease should fire");
 
         // Both should be the same `kind` (disease) — the dormancy
@@ -873,7 +928,7 @@ mod tests {
         // aqueous species's match_score below the radiation gate.
         state_aq.temperature_mut()[0] = Real::from_int(300);
         state_aq.pressure_mut()[0] = Real::from_int(101_325);
-        let rec_aq = check_and_apply(&mut civ_aq, &mut state_aq, &planet, &aqueous, flare_tick)
+        let rec_aq = check_and_apply(&mut civ_aq, &mut state_aq, &planet, &aqueous, flare_tick, None)
             .expect("flare must fire on weak-magnetosphere planet at tick=18804");
         assert_eq!(rec_aq.kind, CatastropheKind::SolarFlare);
 
@@ -897,7 +952,8 @@ mod tests {
             &planet,
             &extremophile,
             flare_tick,
-        )
+            None,
+            )
         .expect("flare must fire for extremophile under same conditions");
         assert_eq!(rec_ex.kind, CatastropheKind::SolarFlare);
 
@@ -1019,7 +1075,8 @@ mod tests {
             &earth_like_planet(),
             &species,
             DISEASE_AGE_FLOOR_TICKS,
-        )
+            None,
+            )
         .expect("disease must fire for tardigrade species");
         assert_eq!(rec.kind, CatastropheKind::Disease);
         // Headline P1.3 assertion: the dormant pool now holds
