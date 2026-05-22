@@ -105,10 +105,14 @@ pub const POST_EXTINCTION_BOOST_TICKS: u64 = 100;
 const DIVERGENCE_AXIS_RANGE: (i64, i64) = (5, 100);
 
 /// Lower bound applied to `cosmic_ray_multiplier` inside
-/// `step_speciation` / `step_hgt`. A multiplier ≤ 1.0 means "no
-/// reversal-window amplification" — fall back to the baseline rate
-/// (one daughter per fire) rather than zero out speciation.
-pub const COSMIC_RAY_MULTIPLIER_FLOOR: i64 = 1;
+/// `step_speciation` / `step_hgt`. T8: lowered from `1` to `0` so a
+/// strong magnetosphere can *suppress* the mutation/HGT pump (not
+/// just fail to amplify it). At dipole strengths above ~`1.0` the
+/// surface-flux multiplier truncates below 1, and the bidirectional
+/// clamp lets that suppression propagate — no daughters spawn, no
+/// HGT trials fire — matching the catastrophe-side bidirectional
+/// cosmic-amp clamp on the civ side.
+pub const COSMIC_RAY_MULTIPLIER_FLOOR: i64 = 0;
 
 /// Upper bound applied to `cosmic_ray_multiplier` inside
 /// `step_speciation` / `step_hgt`. Caps the worst-case reversal
@@ -645,22 +649,27 @@ pub fn apply_character_displacement(
 
 /// Clamp the raw cosmic-ray multiplier (typically
 /// `state.cosmic_ray_ground_flux()` ≈ `1 / (dipole_strength + 0.1)`)
-/// into a small positive integer in `[COSMIC_RAY_MULTIPLIER_FLOOR,
+/// into a small non-negative integer in `[COSMIC_RAY_MULTIPLIER_FLOOR,
 /// COSMIC_RAY_MULTIPLIER_CEILING]`. The returned value is how many
 /// daughters get spawned per triggered speciation event this tick.
 ///
-/// The clamp does two things at once:
-///   1. Floor at `1` — at full dipole strength the flux multiplier
-///      sits at ≈ 0.91; rounding-down would zero-out speciation. The
-///      floor preserves the baseline rate when the field is healthy.
+/// T8: the clamp is bidirectional —
+///   1. Floor at `0` — a strong stable dipole (e.g.
+///      `dipole_strength = 2.0` → flux ≈ 0.48; `dipole_strength = 5.0`
+///      → flux ≈ 0.20) shields the surface enough that the truncated
+///      multiplier drops to zero, suppressing the per-tick speciation
+///      / HGT pulse. At `dipole_strength ≈ 1.0` the flux sits at
+///      ≈ 0.91, which still truncates to zero — Earth-like worlds see
+///      the mutation pump as a *reversal-window* effect, not a
+///      continuous baseline.
 ///   2. Ceiling at `10` — caps the worst-case reversal window so a
-///      pathological `dipole_strength → 0` (flux → ∞) doesn't
+///      pathological `dipole_strength → 0` (flux → 10) doesn't
 ///      collapse the whole speciation budget into a single tick.
 ///
 /// The conversion is `Real → i64` via `raw().to_num::<i64>()`, which
 /// truncates toward zero — `1.5 → 1`, `5.7 → 5`, etc. Truncation
-/// (rather than rounding) keeps multiplier=1.0 mapping to a single
-/// daughter, the documented baseline.
+/// (rather than rounding) keeps multiplier=0.99 mapping to zero — the
+/// suppression side of the bidirectional clamp.
 #[must_use]
 pub fn clamp_cosmic_ray_multiplier(raw_multiplier: Real) -> u64 {
     let lo = Real::from_int(COSMIC_RAY_MULTIPLIER_FLOOR);
@@ -668,7 +677,7 @@ pub fn clamp_cosmic_ray_multiplier(raw_multiplier: Real) -> u64 {
     let clamped = raw_multiplier.max(lo).min(hi);
     let as_int: i64 = clamped.raw().to_num::<i64>();
     // `as_int` is guaranteed in [FLOOR, CEILING] by the clamp above.
-    // Cast to u64 is therefore safe — FLOOR ≥ 1 > 0.
+    // Cast to u64 is safe — FLOOR ≥ 0.
     as_int.max(COSMIC_RAY_MULTIPLIER_FLOOR) as u64
 }
 
@@ -717,11 +726,12 @@ pub fn polyploid_check(tick: u64, parent: SpeciesId) -> bool {
 /// and used as a daughter-count multiplier: every triggered
 /// speciation event (Allopatric, Sympatric, Polyploid, FounderEffect,
 /// or PostExtinctionRadiation) spawns `clamped` daughters instead of
-/// one. At full dipole strength (`flux ≈ 0.91`) the clamp floors to
-/// `1` and the baseline rate is preserved; during a deep reversal
-/// (`dipole_strength → 0`, `flux → 10` after clamp) every fire
-/// spawns ten daughters — the wide-spectrum mutation burst that
-/// magnetic-reversal windows model.
+/// one. T8 — the clamp is bidirectional: at full dipole strength
+/// (`flux ≈ 0.91`) the truncated multiplier is `0`, so the per-tick
+/// pulse is suppressed (no daughters spawn for this trigger); during
+/// a deep reversal (`dipole_strength → 0`, `flux → 10` after clamp)
+/// every fire spawns ten daughters — the wide-spectrum mutation
+/// burst that magnetic-reversal windows model.
 pub fn step_speciation(
     tick: u64,
     eco_species: &BTreeMap<SpeciesId, EcoSpecies>,

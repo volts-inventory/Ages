@@ -741,12 +741,14 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // the tracker observers (`observe_allopatric_split` /
         // `observe_sympatric_pressure`).
         //
-        // P1.2: surface cosmic-ray ground flux (Item 20:
+        // P1.2 / T8: surface cosmic-ray ground flux (Item 20:
         // `1 / (dipole_strength + 0.1)`) into the speciation + HGT
         // rates. During magnetic-reversal windows the dipole weakens
-        // → flux climbs → mutation / divergence rates climb. The
-        // multiplier is clamped to `[1, 10]` inside the ecosystem
-        // layer so a pathological dipole near zero doesn't cascade.
+        // → flux climbs → mutation / divergence rates climb. A strong
+        // stable dipole pushes the flux below 1.0 → the clamp inside
+        // the ecosystem layer (`[0, 10]`) truncates to zero,
+        // suppressing the per-tick mutation pulse outside reversal
+        // windows.
         let cosmic_mult = state.cosmic_ray_ground_flux();
         let speciation_results = step_speciation(
             tick,
