@@ -61,6 +61,20 @@ pub(super) fn asteroid_fires(tick: u64) -> bool {
 /// stellar luminosity is high (above ~Earth's 1361 W/m²). Such
 /// planets are EM-vulnerable; flare disrupts atmosphere + tools.
 /// Probabilistic firing window keyed off tick (deterministic).
+///
+/// T18: the firing period is scaled by the host star's spectral-
+/// class flare-rate multiplier (`Star::flare_rate_per_tick`).
+/// M dwarfs (rate 100×) collapse the period to `base / 100`
+/// (~188 ticks), K dwarfs (10×) to ~1880, G dwarfs (1×) keep the
+/// base ~18804, F dwarfs (0.3×) stretch to ~62680, and A dwarfs
+/// (0.1×) to ~188040. The per-flare cooldown
+/// (`SOLAR_FLARE_COOLDOWN_TICKS = 9600`) caps the realised
+/// frequency for the highly active classes, but the cadence
+/// between cooldown windows is now spectral-aware: an M dwarf
+/// hits every cooldown, a G dwarf hits roughly every other,
+/// and an A dwarf rarely fires at all. This is the wiring
+/// that lets a habitable-zone M-dwarf planet feel the "100×
+/// flares" of Item 18 in the civ catastrophe stream.
 pub(super) fn solar_flare_fires(planet: &Planet, tick: u64) -> bool {
     if !matches!(
         planet.magnetosphere,
@@ -71,7 +85,25 @@ pub(super) fn solar_flare_fires(planet: &Planet, tick: u64) -> bool {
     if planet.stellar_luminosity < Real::from_int(1500) {
         return false;
     }
-    tick > 0 && tick.is_multiple_of(1567 * protocol::MONTHS_PER_YEAR)
+    // Base period (G-dwarf calibration): 1567 years × MONTHS_PER_YEAR.
+    let base_period = 1567 * protocol::MONTHS_PER_YEAR;
+    // Per-spectral rate divides the period — higher rate ⇒ shorter
+    // period ⇒ more frequent firings. The per-class rates
+    // (`SpectralType::flare_rate_per_tick`) are rationals (100, 10,
+    // 1, 0.3, 0.1); reading the class directly here keeps the
+    // arithmetic in `u64` and avoids Q32.32 round-trips that would
+    // truncate the sub-1× F/A dwarfs.
+    use sim_world::SpectralType;
+    let period = match planet.star.spectral_type {
+        SpectralType::M => base_period / 100,
+        SpectralType::K => base_period / 10,
+        SpectralType::G => base_period,
+        // F dwarf: 0.3× rate → 1/0.3 ≈ 3.33× the base period.
+        SpectralType::F => (base_period * 10) / 3,
+        // A dwarf: 0.1× rate → 10× the base period.
+        SpectralType::A => base_period * 10,
+    };
+    tick > 0 && tick.is_multiple_of(period.max(1))
 }
 
 /// Ice age trigger: planet's mean temperature is below 260 K AND
