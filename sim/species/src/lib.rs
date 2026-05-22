@@ -26,7 +26,9 @@ mod types;
 pub use derive::derive;
 pub use habitat_glyph::habitat_glyph_multiplier;
 pub use sampling::{
-    apply_catastrophe, modality_supported, species_name_from_seed, template_channels,
+    apply_catastrophe, derive_tolerance_envelope, modality_supported,
+    sample_tolerance_for_substrate, species_name_from_seed, substrate_default_envelope,
+    substrate_from_tag, template_channels,
 };
 pub use species::Species;
 pub use types::{

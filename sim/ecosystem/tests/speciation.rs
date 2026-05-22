@@ -24,7 +24,7 @@ use sim_ecosystem::{
 use sim_recognition::RecognitionLibrary;
 use sim_species::{
     EcosystemRole, FunctionalResponse, Habitat, Interaction, InteractionKind, InteractionMatrix,
-    Lifecycle, ProducerMetabolism, Species, SpeciesId,
+    Lifecycle, ProducerMetabolism, Species, SpeciesId, ToleranceEnvelope,
 };
 use sim_world::sample_planet;
 use std::collections::BTreeMap;
@@ -54,6 +54,7 @@ fn eco_species(id: SpeciesId, role: EcosystemRole, biomass: Real) -> EcoSpecies 
         low_biomass_streak: 0,
         habitat: Habitat::Terrestrial,
         cell_biomass: Vec::new(),
+        tolerance: ToleranceEnvelope::aqueous_default(),
     }
 }
 

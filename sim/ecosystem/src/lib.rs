@@ -50,8 +50,9 @@ use sim_arith::Real;
 use sim_physics::chemistry::{oxidiser_ladder, partition_chemoautotroph_growth, Oxidiser};
 use sim_physics::{PhysicsState, Substance};
 use sim_species::{
-    EcosystemRole, FunctionalResponse, Habitat, Interaction, InteractionKind, InteractionMatrix,
-    MutualismKind, ParasiteKind, ProducerMetabolism, SpeciesId,
+    sample_tolerance_for_substrate, EcosystemRole, FunctionalResponse, Habitat, Interaction,
+    InteractionKind, InteractionMatrix, MutualismKind, ParasiteKind, ProducerMetabolism,
+    SpeciesId, ToleranceEnvelope,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -333,16 +334,13 @@ pub struct EcoSpecies {
     /// 10:1 behaviour.
     pub habitat: Habitat,
     /// Per-cell biomass distribution (F2). Length equals the
-    /// planet's `n_cells` once initialised, empty otherwise (legacy
-    /// hand-built fixtures that don't pin a grid keep the
-    /// aggregate-only behaviour). Initialised uniformly at worldgen
-    /// (`biomass / n_cells` per cell) by
-    /// [`PlanetEcosystem::initialise_cell_biomass`]; the per-tick
-    /// step preserves the proportional distribution as the aggregate
-    /// evolves. Catastrophe paths (e.g. a volcanic eruption on cell
-    /// `c`) reduce only `cell_biomass[c]` — see
-    /// [`PlanetEcosystem::reduce_at_cell`].
+    /// planet's `n_cells` once initialised, empty otherwise.
     pub cell_biomass: Vec<Real>,
+    /// Environmental tolerance envelope (F3). Derived from the planet's
+    /// metabolic substrate at worldgen with ±20% per-axis jitter from
+    /// the species seed. Catastrophe path multiplies biomass loss by
+    /// `(1 - tolerance.match_score(local conditions))`.
+    pub tolerance: ToleranceEnvelope,
 }
 
 /// Per-planet ecosystem state. Owned by the higher-level world
@@ -1504,6 +1502,59 @@ impl PlanetEcosystem {
         events
     }
 
+    /// F3 — apply a catastrophe to every extant species in the
+    /// ecosystem, scaling per-species biomass loss by
+    /// `(1 - tolerance.match_score(cell_T, cell_pH, cell_sal,
+    /// cell_rad, cell_p))`. Mirrors the P0.4 pattern used by
+    /// `sim_civ::catastrophe::apply_resistance_and_dormancy` on the
+    /// civ-bearing `Species`, extended into the trophic web so
+    /// extremophile producers + consumers survive radiation bursts /
+    /// thermal pulses that would otherwise wipe out narrow-envelope
+    /// peers uniformly.
+    ///
+    /// `raw_loss_frac` is the headline severity in `[0, 1]` (the same
+    /// fraction the civ-side path receives from its catastrophe
+    /// pipeline); the tolerance term softens it to `raw_loss_frac ×
+    /// (1 - match_score)` so:
+    /// - `match_score = 1` (cell sits at envelope centre) ⇒ zero
+    ///   biomass loss.
+    /// - `match_score = 0` (cell outside envelope) ⇒ full
+    ///   `raw_loss_frac` biomass loss.
+    ///
+    /// Cell conditions are passed as the local conditions during the
+    /// catastrophe — for instance a radiation burst supplies `rad`
+    /// near or above the typical species' `radiation_max`. The
+    /// ecosystem currently runs as a single planet-wide aggregate
+    /// (per-cell biota is a deferred refactor — see the post-fix
+    /// xeno review N2), so the cell conditions are treated as the
+    /// planet-wide event signature.
+    pub fn apply_catastrophe_at_cell(
+        &mut self,
+        raw_loss_frac: Real,
+        cell_t: Real,
+        cell_ph: Real,
+        cell_sal: Real,
+        cell_rad: Real,
+        cell_p: Real,
+    ) {
+        if raw_loss_frac <= Real::ZERO {
+            return;
+        }
+        for s in self.species.values_mut() {
+            if !s.is_extant {
+                continue;
+            }
+            let survival_match =
+                s.tolerance.match_score(cell_t, cell_ph, cell_sal, cell_rad, cell_p);
+            let loss_frac = raw_loss_frac * (Real::ONE - survival_match);
+            if loss_frac <= Real::ZERO {
+                continue;
+            }
+            let loss = s.biomass * loss_frac;
+            s.biomass = (s.biomass - loss).max(Real::ZERO);
+        }
+    }
+
     /// Sum of biomasses for all extant species whose role tier
     /// matches `tier`.
     #[must_use]
@@ -1821,6 +1872,19 @@ pub fn sample_ecosystem(planet_seed: u64, producer_capacity: Real) -> PlanetEcos
                     next_id: &mut u32,
                     role: EcosystemRole,
                     biomass: Real| {
+        // F3: derive a per-species tolerance envelope from the planet
+        // seed mixed with the dense species index. Legacy callsites
+        // default to the Aqueous substrate (matching the legacy
+        // habitat = Terrestrial / substrate_tag = "aqueous"
+        // back-compat); `sample_ecosystem_with_substrate` rewrites
+        // these per-species envelopes against the real substrate
+        // after the species list is built. Per-species seed mixing
+        // keeps extremophiles + generalists distinguishable within
+        // a substrate (same ±20% jitter the civ-side draw uses).
+        let species_seed = planet_seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(u64::from(*next_id));
+        let tolerance = sample_tolerance_for_substrate(species_seed, "aqueous");
         species.push(EcoSpecies {
             species_id: SpeciesId(*next_id),
             role,
@@ -1834,11 +1898,8 @@ pub fn sample_ecosystem(planet_seed: u64, producer_capacity: Real) -> PlanetEcos
             // (`sample_ecosystem_with_substrate`) can override
             // habitat to match the planet's solvent chemistry.
             habitat: Habitat::Terrestrial,
-            // F2 — no grid attached at the legacy aggregate-only
-            // construction path. `sample_ecosystem_with_substrate_for_grid`
-            // calls `initialise_cell_biomass` after sampling to
-            // populate the per-cell distribution.
             cell_biomass: Vec::new(),
+            tolerance,
         });
         *next_id += 1;
     };
@@ -1950,7 +2011,8 @@ pub fn sample_ecosystem_with_substrate(
     substrate_tag: &'static str,
     producer_capacity: Real,
 ) -> PlanetEcosystem {
-    let mut eco = sample_ecosystem(planet_seed ^ 0xEC05_0001_5751_1F00, producer_capacity);
+    let inner_seed = planet_seed ^ 0xEC05_0001_5751_1F00;
+    let mut eco = sample_ecosystem(inner_seed, producer_capacity);
     eco.substrate_tag = substrate_tag;
     eco.current_oxidisers = oxidiser_ladder(substrate_tag);
     // P2.5: substrate-derived habitat. An aqueous (water-solvent)
@@ -1963,6 +2025,18 @@ pub fn sample_ecosystem_with_substrate(
     let habitat = habitat_for_substrate(substrate_tag);
     for s in eco.species.values_mut() {
         s.habitat = habitat;
+        // F3: re-derive per-species tolerance against the actual
+        // substrate (the inner `sample_ecosystem` defaulted them to
+        // Aqueous). Same per-species seed mixing — the `push`
+        // closure inside `sample_ecosystem` used
+        // `inner_seed.wrapping_mul(GOLDEN) + species_id`; reproduce
+        // that here so the substrate-aware path produces the same
+        // (seed, species_id) → envelope mapping the legacy path
+        // would have produced if it had the substrate at push time.
+        let species_seed = inner_seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(u64::from(s.species_id.0));
+        s.tolerance = sample_tolerance_for_substrate(species_seed, substrate_tag);
     }
     eco
 }
