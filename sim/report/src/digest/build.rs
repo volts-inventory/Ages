@@ -3,9 +3,9 @@
 
 use super::types::{
     CatastropheRecord, CivChapter, CollapseRecord, ConflictRecord, Contact, CosmologyRecord,
-    Digest, DiscoveredTemplateRecord, DiscoveryRecord, FigureRecord, InventedToolRecord,
-    RefinementOutcome, RefinementRecord, RelationLabel, RunEnd, SurplusSnapshot, TechRecord,
-    TerritorySnapshot, TradeRouteRecord, TransferRecord,
+    Digest, DiscoveredTemplateRecord, DiscoveryRecord, EcosystemSummary, FigureRecord,
+    InventedToolRecord, RefinementOutcome, RefinementRecord, RelationLabel, RunEnd,
+    SurplusSnapshot, TechRecord, TerritorySnapshot, TradeRouteRecord, TransferRecord,
 };
 use protocol::Event;
 use std::collections::BTreeMap;
@@ -132,6 +132,7 @@ impl Digest {
             firing_counts: BTreeMap::new(),
             template_names: BTreeMap::new(),
             events: events.to_vec(),
+            ecosystem: EcosystemSummary::default(),
         };
 
         // Pass 1: relation_id → label, plus template name index.
@@ -166,7 +167,75 @@ impl Digest {
             digest.absorb(ev);
         }
 
+        // Pass 3: ecosystem aggregates. Walked here (rather than
+        // inside `absorb`) so the running mean / set unions don't
+        // pollute the per-civ chapter path. Picks up the host
+        // species' id from the `Species` event so the extant-vs-
+        // extinct count includes it.
+        digest.aggregate_ecosystem();
+
         digest
+    }
+
+    /// Walk the cloned event stream once more, folding ecosystem-
+    /// level aggregates (speciation count, HGT count,
+    /// catastrophe-kind histogram, mean civ resilience, known /
+    /// extinct species ids) into `self.ecosystem`. Idempotent over
+    /// the same event stream.
+    fn aggregate_ecosystem(&mut self) {
+        let mut resilience_sum_q32: i128 = 0;
+        let mut resilience_n: u32 = 0;
+        // Host species id from the `Species` event lands in
+        // `known_species_ids` so the extant-vs-extinct denominator
+        // doesn't read as zero on runs with no speciation.
+        if self.species.is_some() {
+            // Host species has dense id 0 in the per-planet registry
+            // (`SpeciesId(0)` is the inaugural species sampled at
+            // run start). Speciation events allocate ids growing from
+            // there. Drop the assumption if the protocol ever carries
+            // the inaugural id explicitly.
+            self.ecosystem.known_species_ids.insert(0);
+        }
+        for ev in &self.events {
+            match ev {
+                Event::SpeciesExtinct(e) => {
+                    self.ecosystem.extinct_species_ids.insert(e.species_id);
+                    self.ecosystem.known_species_ids.insert(e.species_id);
+                }
+                Event::SpeciationOccurred(e) => {
+                    self.ecosystem.speciation_count =
+                        self.ecosystem.speciation_count.saturating_add(1);
+                    self.ecosystem.known_species_ids.insert(e.parent_id);
+                    self.ecosystem.known_species_ids.insert(e.daughter_id);
+                }
+                Event::HorizontalGeneTransfer(e) => {
+                    self.ecosystem.hgt_count = self.ecosystem.hgt_count.saturating_add(1);
+                    self.ecosystem.known_species_ids.insert(e.donor_id);
+                    self.ecosystem.known_species_ids.insert(e.recipient_id);
+                }
+                Event::CatastropheFired(c) => {
+                    *self
+                        .ecosystem
+                        .catastrophes_by_kind
+                        .entry(c.catastrophe_kind.clone())
+                        .or_insert(0) += 1;
+                }
+                Event::CivResilienceTick(t) => {
+                    resilience_sum_q32 += i128::from(t.resilience_q32);
+                    resilience_n = resilience_n.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+        if resilience_n > 0 {
+            // `resilience_q32` is Q32.32 in `[0, 2]`. Integer
+            // average of i64 values stays inside i64 even after
+            // `u32::MAX` ticks (peak sum ≈ 2^32 * 2 * 2^32 ≈ 2^65;
+            // i128 handles it), and the divided result fits i64
+            // because each individual sample did.
+            let mean = (resilience_sum_q32 / i128::from(resilience_n)) as i64;
+            self.ecosystem.mean_resilience_q32 = Some(mean);
+        }
     }
 
     fn absorb(&mut self, ev: &Event) {
