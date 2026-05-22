@@ -984,13 +984,29 @@ mod tests {
         }
     }
 
-    /// Acceptance test (P0.2): an Earth-like planet integrated for
-    /// 1000 ticks under uniform initial conditions must produce a
-    /// steady-state zonal jet whose magnitude at the subtropical-jet
-    /// latitude (~30°) sits in `[10, 60]` (centred on the real-world
-    /// ~30 m/s target with ±50% slack to absorb the dimensionless-
-    /// scaling simplification in `apply_hadley_circulation`'s
-    /// `kick_fraction · dt` lump-sum).
+    /// Acceptance test (P0.2, tightened by T14): an Earth-like
+    /// planet integrated for 1000 ticks under uniform initial
+    /// conditions must produce a steady-state zonal jet whose
+    /// magnitude at the subtropical-jet latitude (~45° Ferrel
+    /// interior probe) sits in `[24, 36]` m/s — i.e. the real-world
+    /// ~30 m/s target with ±20% slack.
+    ///
+    /// **Calibration note.** The integrator parameters were chosen
+    /// to land exactly on the canonical 30 m/s target:
+    ///   per-tick = dt · kick_fraction · dir_sign · (cos²(lat_start)
+    ///              − cos²(lat_end)) · hemisphere_sign / cos(lat_end)
+    /// With `dt = 3`, `kick_fraction = 1%` (1/100 — see
+    /// `apply_hadley_circulation`), the Held-Hou Hadley/Ferrel edge
+    /// at ~25–26°, and the 45° probe row inside the Ferrel band,
+    /// the closed form predicts |v_q| ≈ 30 m/s after 1000 ticks.
+    /// The implementation matches to within ~1% (measured 29.77
+    /// m/s at the time of T14), well inside the tightened window.
+    ///
+    /// F7 derived the Hadley cell count from the same Held-Hou
+    /// closure that drives the edge geometry consumed here, so the
+    /// jet magnitude is now a structural prediction of the model
+    /// rather than a tunable knob — hence the ±20% tightening from
+    /// the original ±50% slack window.
     ///
     /// The probe row is the one whose absolute latitude sits in the
     /// upper half of the Hadley/Ferrel band — that's where the
@@ -1067,12 +1083,17 @@ mod tests {
             .0 as usize;
         let v_q = state.fluid_velocity().0[probe_id];
         let v_abs = v_q.abs();
-        let lower = Real::from_int(10);
-        let upper = Real::from_int(60);
+        // 30 m/s ±20% → [24, 36]. Tightened from the original
+        // [10, 60] now that F7 has anchored the cell count to the
+        // same Held-Hou closure driving the edge geometry, so the
+        // jet magnitude is a structural prediction. Measured
+        // value at the time of T14: ~29.77 m/s.
+        let lower = Real::from_int(24);
+        let upper = Real::from_int(36);
         assert!(
             v_abs >= lower && v_abs <= upper,
-            "subtropical-band zonal velocity outside [10, 60] m/s \
-             slack window: |v_q|={v_abs:?} (raw v_q={v_q:?}); \
+            "subtropical-band zonal velocity outside [24, 36] m/s \
+             window (30 m/s ±20%): |v_q|={v_abs:?} (raw v_q={v_q:?}); \
              expected the angular-momentum jet integrator to land \
              near the ~30 m/s real-Earth target after 1000 ticks"
         );
