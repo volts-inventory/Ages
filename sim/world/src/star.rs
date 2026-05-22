@@ -241,24 +241,48 @@ pub struct Star {
 
 impl Star {
     /// Construct a fresh main-sequence star of the given
-    /// spectral type at zero age. Flux channels are derived
-    /// from `bolometric_at_planet` and the per-class SED
-    /// fractions; `main_sequence_lifetime_gyr` comes from the
-    /// per-class nominal value.
+    /// spectral type at zero age (ZAMS). Flux channels are
+    /// derived from `bolometric_at_planet` and the per-class
+    /// SED fractions; `main_sequence_lifetime_gyr` comes from
+    /// the per-class nominal value.
     ///
-    /// `bolometric_at_planet` is the planet-orbit irradiance in
-    /// W/m² (Sun-on-Earth ≈ 1361). The four SED channels are
-    /// derived from this baseline by per-class fractions.
+    /// `bolometric_at_planet` is the ZAMS-reference irradiance
+    /// at the planet's orbit, in W/m² — i.e. the irradiance
+    /// **before** the faint-young-sun scaling is applied.
+    /// `Star::new` sits at ZAMS (`age = 0`), so per the P2.4
+    /// faint-young-sun correction the actual
+    /// `bolometric_luminosity` field is `0.70 ×
+    /// bolometric_at_planet`. Callers that want the modern-Sun
+    /// (mid-MS) irradiance should construct via
+    /// `Star::with_age(spectral_type, irradiance, 0.45 ×
+    /// lifetime, lifetime)` instead — that lands the scale
+    /// factor at ~1.0× and matches present-day observation.
+    ///
+    /// The four SED channels are derived from the *post-scale*
+    /// bolometric so the energy split stays consistent (UV +
+    /// visible + IR sum to the scaled bolometric, modulo
+    /// rounding). EUV uses the ZAMS bolometric × SED fraction
+    /// directly — see `Star::with_age` for why the EUV channel
+    /// is decoupled from the bolometric MS drift.
     #[must_use]
     pub fn new(spectral_type: SpectralType, bolometric_at_planet: Real) -> Self {
         let sed = spectral_type.sed_fractions();
+        // ZAMS scale = 0.70 (faint-young-sun anchor).
+        let zams_scale = bolometric_scale_at_age(Real::ZERO, Real::ONE);
+        let bol = bolometric_at_planet.saturating_mul(zams_scale);
         Self {
             spectral_type,
-            bolometric_luminosity: bolometric_at_planet,
+            bolometric_luminosity: bol,
+            // EUV is dominated by chromospheric / coronal activity
+            // and does *not* share the bolometric MS drift; it
+            // follows its own `t^(-1.5)` power law from the ZAMS
+            // SED base (see `euv_decay_factor`). At `Star::new`'s
+            // `age = 0`, the decay factor is 1.0, so EUV at the
+            // planet equals `bolometric_at_planet × sed.euv`.
             euv_flux: bolometric_at_planet.saturating_mul(sed.euv),
-            uv_flux: bolometric_at_planet.saturating_mul(sed.uv),
-            visible_flux: bolometric_at_planet.saturating_mul(sed.visible),
-            ir_flux: bolometric_at_planet.saturating_mul(sed.ir),
+            uv_flux: bol.saturating_mul(sed.uv),
+            visible_flux: bol.saturating_mul(sed.visible),
+            ir_flux: bol.saturating_mul(sed.ir),
             main_sequence_age_gyr: Real::ZERO,
             main_sequence_lifetime_gyr: spectral_type.nominal_lifetime_gyr(),
         }
@@ -367,29 +391,47 @@ impl Star {
 /// Bolometric luminosity scale at a given main-sequence age,
 /// expressed as a multiplier of the ZAMS (zero-age) value.
 ///
-/// - During MS (`age < 0.95 × lifetime`): linear drift from
-///   1.0× to ~1.4× over the full MS lifetime. Captures the
-///   faint-young-sun → bright-old-sun trend.
-/// - During red-giant ramp (`0.95 × lifetime ≤ age < lifetime`):
-///   ramps from ~1.4× toward 1000× over the final 5% of lifetime.
-/// - Beyond MS: capped at 1000× (the star has left the MS).
+/// - **ZAMS** (`age = 0`): factor = `0.70`. The faint-young-sun
+///   anchor: a freshly-ignited G dwarf emits ~70% of its
+///   present-day bolometric luminosity. Without this, the
+///   "faint half" of the main-sequence evolution is missing
+///   and habitable-zone migration only captures the late-MS
+///   brightening (P2.4 — astro review).
+/// - **During MS** (`age < 0.95 × lifetime`): linear drift from
+///   `0.70×` at ZAMS to `1.40×` at MS-end. Captures the
+///   faint-young-sun → bright-old-sun trend across the full
+///   MS lifetime.
+/// - **During red-giant ramp** (`0.95 × lifetime ≤ age < lifetime`):
+///   ramps from `1.40×` toward `1000×` over the final 5% of
+///   lifetime (existing logic).
+/// - **Beyond MS**: capped at `1000×` (the star has left the MS).
+///
+/// Calibration anchor: at `age_gyr = 4.5, lifetime_gyr = 10`
+/// (modern Sun analog), the factor is
+/// `0.70 + (4.5 / 9.5) × 0.70 ≈ 1.03` — within ±5% of the
+/// present-day Sun's bolometric output, matching observation.
 #[must_use]
 pub fn bolometric_scale_at_age(age_gyr: Real, lifetime_gyr: Real) -> Real {
     if lifetime_gyr <= Real::ZERO {
-        return Real::ONE;
+        return Real::from_ratio(7, 10);
     }
     let frac = age_gyr / lifetime_gyr;
     let ms_end = Real::from_ratio(95, 100);
+    // ZAMS scale = 0.70 (faint-young-sun); MS-end scale = 1.40.
+    // Span across the MS phase = 1.40 - 0.70 = 0.70.
+    let zams_scale = Real::from_ratio(7, 10);
+    let ms_end_scale = Real::from_ratio(14, 10);
     if frac < ms_end {
-        // MS drift: 1.0 at frac=0 → 1.4 at frac=0.95.
-        // scale = 1 + (0.4 / 0.95) × frac.
-        // Computed as 1 + (40 × frac) / 95 in integer-fraction.
+        // MS drift: 0.70 at frac=0 → 1.40 at frac=0.95.
+        // scale = 0.70 + (0.70 / 0.95) × frac.
+        // Computed as 0.70 + (70 × frac) / 95 in integer-fraction
+        // to keep the path Q32.32-only.
         let drift = frac
-            .saturating_mul(Real::from_int(40))
+            .saturating_mul(Real::from_int(70))
             .saturating_div(Real::from_int(95));
-        Real::ONE.saturating_add(drift)
+        zams_scale.saturating_add(drift)
     } else if frac < Real::ONE {
-        // Red-giant ramp: at frac=0.95 → 1.4×;
+        // Red-giant ramp: at frac=0.95 → 1.40×;
         // at frac=1.0 → 1000×.
         // Linear in (frac - 0.95) / 0.05.
         let into_ramp = frac.saturating_sub(ms_end);
@@ -398,12 +440,18 @@ pub fn bolometric_scale_at_age(age_gyr: Real, lifetime_gyr: Real) -> Real {
         let t = into_ramp.saturating_div(ramp_width);
         // scale = 1.4 + (1000 - 1.4) × t.
         let span = Real::from_ratio(9_986, 10);
-        let base = Real::from_ratio(14, 10);
-        base.saturating_add(t.saturating_mul(span))
+        base_ms_end_scale_for_red_giant(ms_end_scale, t, span)
     } else {
         // Past MS end — cap at 1000×.
         Real::from_int(1_000)
     }
+}
+
+/// Helper: linearly interpolate the red-giant ramp scale from
+/// the MS-end base scale toward the 1000× cap. Extracted only
+/// to keep the `bolometric_scale_at_age` body short.
+fn base_ms_end_scale_for_red_giant(base: Real, t: Real, span: Real) -> Real {
+    base.saturating_add(t.saturating_mul(span))
 }
 
 /// EUV decay timescale in Gyr — sets the knee of the EUV

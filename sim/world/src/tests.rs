@@ -188,7 +188,17 @@ fn synthetic_planet(
         metabolic_substrate: MetabolicSubstrate::Aqueous,
         substrate_perturbation: Real::ZERO,
         locking_state: LockingState::FreeRotator,
-        star: Star::new(SpectralType::G, Real::from_int(1_361)),
+        // Modern-Sun analog: G dwarf at ~45% through its 10 Gyr MS
+        // lifetime. `Star::with_age` puts the bolometric scale at
+        // ~1.0×, so the planet sees ~1361 W/m² (Sun-on-Earth) —
+        // matches the pre-P2.4 `Star::new(...)` semantics that this
+        // fixture was written against.
+        star: Star::with_age(
+            SpectralType::G,
+            Real::from_int(1_361),
+            Real::from_ratio(45, 10),
+            Real::from_int(10),
+        ),
     }
 }
 
@@ -498,7 +508,17 @@ fn mr_planet(mass: Real, radius: Real, substrate: MetabolicSubstrate) -> Planet 
         metabolic_substrate: substrate,
         substrate_perturbation: Real::ZERO,
         locking_state: crate::LockingState::FreeRotator,
-        star: crate::Star::new(crate::SpectralType::G, Real::from_int(1_361)),
+        // Modern-Sun analog: G dwarf at ~45% through its 10 Gyr MS
+        // lifetime — see the comparable `synthetic_planet` fixture
+        // above for the rationale behind `Star::with_age` instead
+        // of `Star::new`. Keeps the bolometric scale at ~1.0× so
+        // the planet sees ~1361 W/m² of irradiance.
+        star: crate::Star::with_age(
+            crate::SpectralType::G,
+            Real::from_int(1_361),
+            Real::from_ratio(45, 10),
+            Real::from_int(10),
+        ),
     }
 }
 
@@ -664,6 +684,51 @@ fn m_dwarf_flare_rate_100x_g_dwarf() {
     assert!(SpectralType::K.flare_rate_per_tick() > SpectralType::G.flare_rate_per_tick());
     assert!(SpectralType::G.flare_rate_per_tick() > SpectralType::F.flare_rate_per_tick());
     assert!(SpectralType::F.flare_rate_per_tick() > SpectralType::A.flare_rate_per_tick());
+}
+
+#[test]
+fn zams_g_dwarf_is_70_percent_of_modern() {
+    // P2.4 — faint-young-sun anchor. At ZAMS (age = 0), a G dwarf
+    // with `bolometric_at_planet_zams = 1361 W/m²` (modern-Sun
+    // baseline) emits ~70% of the present-day bolometric, so the
+    // planet sees ~953 W/m². This is the faint-young-sun
+    // observational anchor: 4 Gyr ago the Sun was ~70% as bright
+    // and Earth needed enhanced greenhouse forcing to avoid a
+    // snowball.
+    let zams = Real::from_int(1_361);
+    let lifetime = SpectralType::G.nominal_lifetime_gyr();
+    let young = Star::with_age(SpectralType::G, zams, Real::ZERO, lifetime);
+    // 0.70 × 1361 = 952.7 W/m². Tolerate ±2% for Q32.32 rounding.
+    let target = 0.70 * 1_361.0;
+    let actual = young.bolometric_luminosity.to_f64_for_display();
+    assert!(
+        (actual - target).abs() / target < 0.02,
+        "ZAMS G-dwarf bolometric must be ~0.70 × ZAMS irradiance \
+         (expected ≈ {target:.1} W/m², got {actual:.1} W/m²)",
+    );
+}
+
+#[test]
+fn four_point_five_gyr_g_dwarf_approximates_modern_sun() {
+    // P2.4 — calibration anchor: at age = 4.5 Gyr, lifetime = 10 Gyr
+    // (modern-Sun analog: ~45% through the MS lifetime), the
+    // linear faint-young-sun ramp puts the bolometric scale at
+    // `0.70 + (4.5 / 9.5) × 0.70 ≈ 1.032×`, so the planet sees
+    // roughly the present-day Sun-on-Earth irradiance. Match
+    // within ±10% — the linear interp doesn't claim modern-Sun
+    // exactness, just "close enough that mid-MS habitability
+    // calculations don't have to special-case the age."
+    let zams = Real::from_int(1_361);
+    let lifetime = Real::from_int(10);
+    let age = Real::from_ratio(45, 10);
+    let star = Star::with_age(SpectralType::G, zams, age, lifetime);
+    let target = 1_361.0;
+    let actual = star.bolometric_luminosity.to_f64_for_display();
+    assert!(
+        (actual - target).abs() / target < 0.10,
+        "4.5-Gyr G-dwarf bolometric must approximate modern Sun \
+         within ±10% (expected ≈ {target:.1} W/m², got {actual:.1} W/m²)",
+    );
 }
 
 #[test]
@@ -887,11 +952,21 @@ fn euv_decay_follows_t_to_minus_1_5() {
 // P1.4 — habitable-zone migration drives per-cell habitability and
 // one-shot biome class drift.
 
-/// Build an Earth-analog G-dwarf star at ZAMS. Bolometric irradiance
-/// at the planet = 1361 W/m² (Sun-on-Earth baseline) so the HZ inner
-/// edge = 0.95 AU and the outer edge = 1.37 AU.
+/// Build an Earth-analog G-dwarf star at mid-MS (~modern Sun).
+/// Bolometric irradiance at the planet ≈ 1361 W/m² (Sun-on-Earth
+/// baseline) so the HZ inner edge ≈ 0.95 AU and the outer edge ≈
+/// 1.37 AU. After P2.4, ZAMS is the *faint* configuration (0.70×);
+/// "Earth analog" means **modern** Sun, which sits at ~45% through
+/// the 10 Gyr MS lifetime — the linear faint-young-sun ramp puts
+/// that point at scale ≈ 1.03×, giving ~1400 W/m². Close enough
+/// to the 1361 reference for the HZ-edge tests' tolerance.
 fn earth_analog_star() -> Star {
-    Star::new(SpectralType::G, Real::from_int(1_361))
+    Star::with_age(
+        SpectralType::G,
+        Real::from_int(1_361),
+        Real::from_ratio(45, 10),
+        Real::from_int(10),
+    )
 }
 
 #[test]

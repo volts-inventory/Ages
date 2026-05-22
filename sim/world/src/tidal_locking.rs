@@ -215,7 +215,17 @@ mod tests {
             metabolic_substrate: MetabolicSubstrate::Aqueous,
             substrate_perturbation: Real::ZERO,
             locking_state,
-            star: crate::Star::new(crate::SpectralType::G, Real::from_int(1_361)),
+            // Modern-Sun analog: G dwarf at ~45% through its 10 Gyr
+            // MS lifetime. After P2.4's faint-young-sun correction,
+            // `Star::new` lands at the *faint* ZAMS (0.70× = 953
+            // W/m²); construct via `with_age` so the fixture keeps
+            // its present-day Sun-on-Earth ~1361 W/m² semantics.
+            star: crate::Star::with_age(
+                crate::SpectralType::G,
+                Real::from_int(1_361),
+                Real::from_ratio(45, 10),
+                Real::from_int(10),
+            ),
         }
     }
 
