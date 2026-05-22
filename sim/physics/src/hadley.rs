@@ -7,14 +7,17 @@
 //! belts on every world. That was cosmetic; the cell count couldn't
 //! emerge from rotation rate × planet radius and a slow rotator
 //! still got the Earth-like three-cell pattern. v2 derives the cell
-//! count from the planet's Rossby deformation radius, then enforces
-//! the per-cell circulation via angular-momentum conservation on
-//! poleward-moving parcels and shear-driven subsidence at the
-//! emergent cell boundaries.
+//! count from the Rhines-length closure (see §1 below) — itself
+//! tied to the Held-Hou Hadley-edge angular-momentum balance — and
+//! enforces the per-cell circulation via angular-momentum
+//! conservation on poleward-moving parcels and shear-driven
+//! subsidence at the emergent cell boundaries. (F7 replaces an
+//! earlier empirical `R_p/R_rossby` ladder with this closure.)
 //!
 //! ## Physical scaffolding
 //!
-//! 1. **Rossby deformation radius**:
+//! 1. **Rossby deformation radius** (diagnostic, kept on the layout
+//!    for downstream consumers):
 //!    ```text
 //!       R_rossby = sqrt(g · H) / Ω
 //!    ```
@@ -22,8 +25,25 @@
 //!    surface gravity, and `H` is the atmospheric scale height.
 //!    `sqrt(g · H)` is the gravity-wave phase speed for shallow
 //!    water — divided by Ω it's the latitudinal scale at which
-//!    Coriolis catches up with pressure-gradient flow. Cells per
-//!    hemisphere ≈ `planet_radius / R_rossby` (with a floor of 1).
+//!    Coriolis catches up with pressure-gradient flow.
+//!
+//!    **Cell-count closure (F7 — Rhines length)**: the number of
+//!    cells per hemisphere is not `R_p / R_rossby` directly but
+//!    derived from the Rhines length, the latitudinal scale at
+//!    which turbulent eddies are arrested by the planetary
+//!    vorticity gradient β:
+//!    ```text
+//!       L_rhines = π · sqrt(U / β)
+//!       β        = 2Ω / R           (equatorial)
+//!       U        = ΩR · sin²(lat_h) (Held-Hou implied thermal wind)
+//!    ```
+//!    `lat_h` is the Held-Hou Hadley edge (`held_hou_hadley_edge`).
+//!    Cells per hemisphere ≈ `(π·R) / L_rhines = √2 / sin(lat_h)`,
+//!    quantised by `cell_count_from_hadley_edge`. This replaces
+//!    the prior empirical Rossby-ratio ladder
+//!    (`[1.0, 2.3, 4.0]` → 1/3/4/5/6 cells) with a closure that
+//!    derives from the same `(Ω, R, g, H, Δθ, T_eq)` parameters as
+//!    the Hadley edge itself.
 //!
 //! 2. **Angular-momentum conservation** on meridionally-moving
 //!    parcels:
@@ -43,12 +63,14 @@
 //!    where the shear-instability check triggers; the boundary set
 //!    feeds back into the cell count of step 1.
 //!
-//! 4. **Number of cells emerges** rather than being prescribed:
-//!    - Slow rotator (long day, small radius) → `R_rossby >> R_p`
-//!      → 1 cell pole-to-pole per hemisphere (Hadley-only).
-//!    - Earth-like (24 h, 6371 km) → `R_p / R_rossby ≈ 1.6` → 3
-//!      cells per hemisphere (Hadley + Ferrel + polar).
-//!    - Rapid rotator (8 h) → `R_p / R_rossby` larger → ≥ 4 cells.
+//! 4. **Number of cells emerges** rather than being prescribed (via
+//!    the Rhines-length closure of step 1):
+//!    - Slow rotator (long day, small radius) → `lat_h → π/2`
+//!      → `N ≈ √2 ≈ 1.41 → 1 cell` pole-to-pole per hemisphere.
+//!    - Earth-like (24 h, 6371 km) → `lat_h ≈ 25°`
+//!      → `N ≈ √2 / 0.423 ≈ 3.34 → 3 cells` (Hadley + Ferrel + polar).
+//!    - Rapid rotator (8 h) → `lat_h ≈ 11°`
+//!      → `N ≈ √2 / 0.19 ≈ 7.4 → MAX_CELLS_PER_HEMISPHERE` (capped).
 //!
 //! ## Layout vs. application
 //!
@@ -335,10 +357,11 @@ fn arcsin_unit(x: Real) -> Real {
 /// the southern is the mirror image.
 ///
 /// `day_length_hours` is the sidereal day; very long days collapse
-/// to the slow-rotator limit (`Ω → 0`, `R_rossby → ∞`, 1 cell per
+/// to the slow-rotator limit (`Ω → 0`, `lat_h → π/2`, 1 cell per
 /// hemisphere). `radius_earth = 1` is Earth-equivalent; the
-/// function scales internally to metres for the dimensionful
-/// comparison `R_p / R_rossby`.
+/// function scales internally to metres for the Held-Hou
+/// `sin²(lat_h) ∝ 1/(ΩR)²` and Rhines-length `N ∝ √2/sin(lat_h)`
+/// closures.
 #[must_use]
 pub fn compute_hadley_layout(
     day_length_hours: Real,
@@ -399,31 +422,11 @@ pub fn compute_hadley_layout(
     };
     let radius_m = radius_earth_clamped * Real::from_int(EARTH_RADIUS_M);
 
-    // Step 4: cells per hemisphere ≈ R_p / R_rossby, with hemispheric
-    // structure:
-    //   - ratio <  ~1.0  → 1 cell  (Hadley-only)
-    //   - ratio in [1.0, 2.3]  → 3 cells (Hadley + Ferrel + polar)
-    //   - ratio >  ~2.3  → ≥ 4 cells per hemisphere
-    //
-    // The exact thresholds aren't free parameters — they're tuned so
-    // that Earth (`radius_m / R_rossby ≈ 1.6`) lands inside the
-    // three-cell window, a 1000-hour-day slow rotator lands in the
-    // one-cell window, and an 8-hour rapid-rotator lands in the
-    // four-or-more window. The lower threshold `1.0` is the textbook
-    // dividing line between the single-Hadley regime (Held-Hou) and
-    // the multi-cell regime (baroclinic-instability dominated). The
-    // upper threshold `2.3` is the calibration anchor for the
-    // four-cell transition.
-    let ratio = radius_m / rossby;
-    let cells_per_hem = cell_count_from_ratio(ratio);
-
     // Held-Hou Hadley-edge closure: derive the equator-to-Hadley
     // boundary latitude from baroclinic-instability angular-momentum
-    // balance rather than hard-coding 30°. Only the 3-cell layout
-    // consults this edge — the 1-cell (slow rotator) case is
-    // pole-to-pole by construction, and the 4+-cell (rapid rotator)
-    // case sits at sub-Earth Rossby radius where the Held-Hou
-    // single-Hadley-cell closure no longer applies.
+    // balance rather than hard-coding 30°. Used both as the 3-cell
+    // band split and as the thermal-wind velocity scale that feeds the
+    // Rhines-length cell-count closure below.
     //
     // P3.6: this replaces the previous hard-coded `π/6` (= 30°)
     // edge with `arcsin(sqrt((5/3) g H Δθ / ((ΩR)² T_eq)))`.
@@ -435,6 +438,27 @@ pub fn compute_hadley_layout(
         Real::from_int(DEFAULT_DELTA_THETA_K),
         Real::from_int(DEFAULT_T_EQ_K),
     );
+
+    // Step 4: cells per hemisphere from the Rhines-length closure
+    // (F7). Replaces the empirical `radius_m / R_rossby` ladder
+    // (`[1.0, 2.3, 4.0]` thresholds → 1/3/4/5/6 cells) with the
+    // physics-derived count:
+    //
+    //   L_rhines = π · sqrt(U / β)
+    //   β       = 2Ω / R          (equatorial planetary vorticity gradient)
+    //   U       = ΩR · sin²(lat_h) (Held-Hou implied thermal wind)
+    //   N_per_hem ≈ (π·R) / L_rhines = √(2 · ΩR / U)
+    //             = √(2 / sin²(lat_h))
+    //             = √2 / sin(lat_h)
+    //
+    // The U scale ties to `lat_h` from the Held-Hou closure above,
+    // so the cell count is fully consistent with the Hadley-edge
+    // derivation rather than an independent empirical ladder. Earth
+    // (lat_h ≈ 25°) gives `N ≈ √2 / 0.423 ≈ 3.34 → 3 cells`. A slow
+    // rotator (lat_h → π/2) gives `N → √2 ≈ 1.41 → 1 cell`. An 8-hour
+    // rapid rotator (lat_h ≈ 11°) gives `N ≈ √2 / 0.19 ≈ 7.4 →
+    // capped at MAX_CELLS_PER_HEMISPHERE`.
+    let cells_per_hem = cell_count_from_hadley_edge(hadley_edge);
 
     let cells = lay_out_cells(cells_per_hem, hadley_edge);
 
@@ -452,34 +476,70 @@ pub fn compute_hadley_layout(
 /// slow rotator gets 1.
 const MAX_CELLS_PER_HEMISPHERE: u32 = 6;
 
-/// Translate the dimensionless `radius / R_rossby` ratio into a
-/// cells-per-hemisphere count. The thresholds are calibration
-/// anchors picked so Earth lands at 3, a slow rotator at 1, and a
-/// rapid rotator at 4+. See `compute_hadley_layout` for rationale.
-fn cell_count_from_ratio(ratio: Real) -> u32 {
-    // Threshold table: `(threshold, cells)`. The first entry with
-    // `ratio < threshold` wins. The final 1_000_000 sentinel
-    // catches every ratio above the 4-cell threshold and would
-    // grow the count further on hypothetical-future planets.
-    //
-    //   ratio <  1.0  → 1 cell  (Held-Hou slow-rotator limit)
-    //   ratio <  2.3  → 3 cells (Earth-like, baroclinic onset)
-    //   ratio <  4.0  → 4 cells
-    //   ratio <  6.0  → 5 cells
-    //   ratio >= 6.0  → 6 cells (cap)
-    let thresholds: [(Real, u32); 5] = [
-        (Real::ONE, 1),
-        (Real::from_ratio(23, 10), 3),
-        (Real::from_int(4), 4),
-        (Real::from_int(6), 5),
-        (Real::from_int(1_000_000), MAX_CELLS_PER_HEMISPHERE),
-    ];
-    for (cutoff, n) in thresholds {
-        if ratio < cutoff {
-            return n;
-        }
+/// Translate the Held-Hou Hadley-edge latitude into a
+/// cells-per-hemisphere count via the Rhines-length closure (F7).
+///
+/// Derivation (see `compute_hadley_layout` for the inline summary):
+///
+/// ```text
+///     L_rhines = π · sqrt(U / β)
+///     β        = 2Ω / R           (equatorial)
+///     U        = ΩR · sin²(lat_h) (Held-Hou implied thermal wind)
+/// ```
+///
+/// Cells per hemisphere ≈ `(π·R) / L_rhines = √2 / sin(lat_h)`. The
+/// `(π·R)` numerator uses the full meridional half-circumference
+/// (equator-to-equator over the pole = `π·R`), consistent with the
+/// Rhines mode-count convention.
+///
+/// Quantisation rule:
+/// - `N_continuous < 2` → 1 cell (single pole-to-pole Hadley, slow-
+///   rotator regime — Held-Hou pole-to-pole limit).
+/// - `2 ≤ N_continuous < 3` → 3 cells (the 2-cell partition would
+///   place an equatorward cell at the pole, which is unphysical;
+///   the next stable configuration above Hadley-only is the
+///   Hadley + Ferrel + polar triplet).
+/// - otherwise `floor(N_continuous)`, clamped to
+///   `[3, MAX_CELLS_PER_HEMISPHERE]`.
+///
+/// Replaces the previous empirical `[1.0, 2.3, 4.0]` Rossby-ratio
+/// ladder (`cell_count_from_ratio`). Self-consistent with the
+/// Held-Hou Hadley-edge closure that already derives `lat_h` from
+/// `(Ω, R, g, H, Δθ, T_eq)`.
+fn cell_count_from_hadley_edge(hadley_edge: Real) -> u32 {
+    // Floor on sin(lat_h) to keep the divide stable. A genuine slow
+    // rotator saturates lat_h to π/2 → sin = 1, so the floor only
+    // fires for pathologically rapid rotators where lat_h → 0 and
+    // the count would diverge; in that regime we cap to
+    // MAX_CELLS_PER_HEMISPHERE.
+    let sin_floor = Real::from_ratio(1, 1_000);
+    let sin_lat = sin(hadley_edge).max(sin_floor);
+    // N_continuous = √2 / sin(lat_h). Compute as
+    // `sqrt(2) / sin_lat` directly; both operands fit comfortably
+    // in Q32.32 (sqrt(2) ≈ 1.414, sin_lat ∈ [1/1000, 1]).
+    let sqrt_two = sqrt(Real::from_int(2));
+    let n_continuous = sqrt_two / sin_lat;
+
+    // Quantise. The boundary `n_continuous < 2` keeps the
+    // Hadley-only regime intact; the next-up jump skips 2 cells
+    // (the partition `[P, E]` would land an equatorward cell at
+    // the pole, contradicting the thermally-direct polar-cell
+    // expectation) and lands directly at 3 (Hadley + Ferrel +
+    // polar).
+    if n_continuous < Real::from_int(2) {
+        return 1;
     }
-    MAX_CELLS_PER_HEMISPHERE
+    if n_continuous < Real::from_int(3) {
+        return 3;
+    }
+    // Integer floor, then clamp to [3, MAX_CELLS_PER_HEMISPHERE].
+    // `raw().to_num::<i64>()` truncates toward zero on the Q32.32
+    // fixed-point representation; `n_continuous` is strictly
+    // positive here (sin_lat ≥ 1/1000 > 0), so truncation equals
+    // floor.
+    let floored_i: i64 = n_continuous.raw().to_num::<i64>().max(3);
+    let floored_u = u32::try_from(floored_i).unwrap_or(MAX_CELLS_PER_HEMISPHERE);
+    floored_u.min(MAX_CELLS_PER_HEMISPHERE)
 }
 
 /// Build the per-hemisphere band list given a cell count. Bands
@@ -816,13 +876,16 @@ mod tests {
         );
     }
 
-    /// Rapid rotator (e.g. 8-hour day) must produce four-or-more
-    /// cells per hemisphere — Rossby radius shrinks below the
-    /// Earth-like one and additional jet-shear cell boundaries
-    /// appear. Sanity check that the spec's "rapid rotator: more
-    /// cells" branch fires.
+    /// Rapid rotator (e.g. 8-hour day) must produce more cells per
+    /// hemisphere than the Earth-like 3-cell structure. Under the F7
+    /// Rhines-length closure (`N ≈ √2 / sin(lat_h)`), the 8-hour
+    /// rotator's Hadley edge contracts to `lat_h ≈ 11°`, giving
+    /// `N ≈ 7.4` which clamps to MAX_CELLS_PER_HEMISPHERE. The
+    /// expectation is just `> 3` — the closure floors the count
+    /// down (via `.raw().to_num::<i64>()`), so the exact integer
+    /// depends on the cap but must exceed Earth's three.
     #[test]
-    fn rapid_rotator_produces_more_than_three_cells() {
+    fn rapid_rotator_has_more_cells_than_earth() {
         let layout = compute_hadley_layout(
             Real::from_int(8),
             Real::ONE,
@@ -830,9 +893,9 @@ mod tests {
             DEFAULT_SCALE_HEIGHT_M,
         );
         assert!(
-            layout.cells_per_hemisphere() >= 4,
-            "rapid rotator should produce at least four cells per \
-             hemisphere: layout={layout:?}"
+            layout.cells_per_hemisphere() > 3,
+            "rapid rotator should produce more cells per hemisphere \
+             than Earth's three: layout={layout:?}"
         );
     }
 
