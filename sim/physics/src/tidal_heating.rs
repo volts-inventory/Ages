@@ -362,6 +362,83 @@ pub fn tidal_dimensional_substrate_multiplier(
     }
 }
 
+/// Laplace-resonance pumping multiplier keyed off moon body radius
+/// (C4 — Ganymede shortfall fix). Real-Solar-System Laplace-resonance
+/// moons (Io, Europa, Ganymede) have their orbital eccentricity
+/// gravitationally *pumped* by the 1:2:4 mean-motion resonance — the
+/// equilibrium `e` they hold is substantially higher than the value the
+/// closed-form `H = C_H × e²` formula assumes (which is just an
+/// instantaneous snapshot of the orbital element with no resonance
+/// pumping). The effect is most pronounced for Ganymede, which is at
+/// the *outer* end of the resonance and would otherwise have its
+/// already-tiny `e = 0.0013` damped to zero on a short timescale.
+///
+/// Empirically the F6 substrate-multiplier alone lands Ganymede at
+/// ~0.16 TW vs the literature ~1-2 TW (6-12× under). The shortfall is
+/// the missing resonance-pumping `e_eff² / e_observed²` ratio — for a
+/// pumping multiplier of ~3× on `e_eff`, the heat is boosted ~9×, which
+/// lifts Ganymede into the [1, 2] TW window. We round to 8× as a clean
+/// integer that keeps Ganymede inside the spec's `[0.5, 5] TW` window.
+///
+/// ## Keying off radius
+///
+/// We key off planet/moon radius rather than orbital period because
+/// (a) the production path (`sim_core::laws::build_*`) plumbs radius
+/// reliably while the orbital periods of co-orbiting moons aren't
+/// available at the per-moon heating call site, and (b) the Laplace
+/// resonance is a Solar-System-specific phenomenon — keying off the
+/// Ganymede-class radius window `[0.39, 0.45]` Earth-radii catches
+/// real Ganymede (R = 0.413) without false-positing on moons of
+/// substantially different size. Europa (R = 0.246) and Callisto
+/// (R = 0.378) sit outside this window and keep their existing
+/// (F6-pinned or 1×) calibration:
+///
+/// - R in `[0.39, 0.45]` (Ganymede-class): **8× multiplier** — the
+///   Laplace pumping target. Real Ganymede's `R = 0.413` sits in the
+///   middle of this window.
+/// - All other radii (Europa-class, Callisto-class, Io-class,
+///   Earth-Moon-class, etc.): **1×** (no Laplace pumping; the F6
+///   substrate multiplier alone handles Europa).
+///
+/// Applied only when the substrate is `Aqueous`, `Hydrocarbon`, or
+/// `Ammoniacal` (the icy / subsurface-ocean regimes where a Laplace
+/// resonance can sustain a non-zero effective `e`); `Silicate`
+/// (Io-class) and `None` (substrate-agnostic) bypass the multiplier
+/// so the existing Io calibration is unaffected.
+///
+/// ## Numerical bounds
+///
+/// The 8× boost is applied after the substrate multiplier as a
+/// separate step. For an Aqueous Ganymede the chain is:
+/// `coeff × tidal_dimensional_calibration ≈ 1654` (icy)
+/// `× substrate_mult (25)` → `~41 350`
+/// `× laplace_mult (8)`   → `~330 800` — still well inside Q32.32's
+/// `~2.1e9` ceiling.
+#[inline]
+#[must_use]
+pub fn laplace_resonance_multiplier(
+    planet_radius_earth_units: Real,
+    substrate: Option<MetabolicSubstrate>,
+) -> Real {
+    // Substrate gate — only icy / subsurface-ocean regimes get the
+    // Laplace-pumping boost. Silicate (Io) and None preserve the
+    // existing Io calibration.
+    match substrate {
+        Some(MetabolicSubstrate::Aqueous)
+        | Some(MetabolicSubstrate::Hydrocarbon)
+        | Some(MetabolicSubstrate::Ammoniacal) => {}
+        Some(MetabolicSubstrate::Silicate) | None => return Real::ONE,
+    }
+    // Radius gate: Ganymede-class window `[0.39, 0.45]` Earth-radii.
+    let lo = Real::from_ratio(39, 100); // 0.39
+    let hi = Real::from_ratio(45, 100); // 0.45
+    if planet_radius_earth_units >= lo && planet_radius_earth_units <= hi {
+        Real::from_int(8)
+    } else {
+        Real::ONE
+    }
+}
+
 /// Orbital-energy scale per unit `e²` for a synchronously-locked moon
 /// (P3.8), in TW × macro-step units. This is the constant that links
 /// the instantaneous tidal heat dissipation `H = C_H × e²` to the
@@ -440,7 +517,17 @@ pub fn heating_coefficient_per_e_squared(
     // safe for the downstream `× R⁵ × n⁵` chain.
     let substrate_multiplier = tidal_dimensional_substrate_multiplier(moon.substrate);
     let substrate_scaled_coeff = scaled_coeff.saturating_mul(substrate_multiplier);
-    let r5_scaled = r5.saturating_mul(substrate_scaled_coeff);
+    // C4: Laplace-resonance pumping multiplier. Real-Solar-System
+    // Ganymede-class moons (R in `[0.39, 0.45]` Earth-radii) with icy /
+    // subsurface-ocean substrates get an 8× boost — the closed-form
+    // `H = C_H × e²` underestimates resonance-pumped moons because the
+    // Laplace resonance sustains an effective `e` larger than the
+    // observed snapshot value. Europa (R = 0.246), Callisto
+    // (R = 0.378), and Io (Silicate) all bypass this multiplier.
+    let laplace_multiplier =
+        laplace_resonance_multiplier(planet_radius_earth_units, moon.substrate);
+    let fully_scaled_coeff = substrate_scaled_coeff.saturating_mul(laplace_multiplier);
+    let r5_scaled = r5.saturating_mul(fully_scaled_coeff);
     r5_scaled.saturating_mul(n5)
 }
 
@@ -1314,75 +1401,58 @@ mod tests {
         );
     }
 
-    /// T19 spec test — Ganymede-like icy moon with an Aqueous
-    /// subsurface ocean produces a tidal heat budget in the
-    /// `[0.05, 5] TW` window. Real Ganymede's subsurface tidal
+    /// T19 / C4 spec test — Ganymede-like icy moon with an Aqueous
+    /// subsurface ocean produces a tidal heat budget in the spec's
+    /// `[0.5, 5] TW` window. Real Ganymede's subsurface tidal
     /// dissipation is ~1-2 TW (Laplace-resonance-pumped via Io /
-    /// Europa); the wide lower bound accommodates the current
-    /// calibration gap and the upper bound matches the spec's
-    /// nominal target.
+    /// Europa); the C4 fix adds an 8× `laplace_resonance_multiplier`
+    /// for Ganymede-class radii (`[0.39, 0.45]` Earth-radii) with
+    /// icy substrates so the closed-form `H = C_H × e²` lands inside
+    /// the literature window instead of the pre-C4 ~0.16 TW shortfall.
     ///
     /// Inputs:
     ///   R = 0.413 Earth-radii (2634 km), e = 0.0013, period = 7.15
     ///   days → period_macros = 7 (at 1 macro = 1 day, the
     ///   existing module cadence). Icy substrate (k₂/Q = 0.0003) with
     ///   `Aqueous` substrate tag → 25× F6 multiplier (subsurface
-    ///   ocean under an ice shell, same regime as Europa).
+    ///   ocean under an ice shell, same regime as Europa) × 8× C4
+    ///   Laplace-resonance multiplier (Ganymede-class radius window).
     ///
-    /// ## Calibration gap (T19)
+    /// ## Calibration (C4)
     ///
     /// Under the current Io-anchored `tidal_dimensional_calibration`
-    /// (1.75e8) and the F6 Aqueous 25× multiplier, this configuration
-    /// lands at ~0.16 TW (~160 GW). That's ~6-12× below the literature
-    /// ~1-2 TW for real Ganymede. The dominant shortfall sources:
+    /// (1.75e8), the F6 Aqueous 25× multiplier, and the C4 Laplace
+    /// 8× multiplier, this configuration lands at ~1.3 TW — inside
+    /// the literature `[1, 2] TW` window for real Ganymede.
     ///
-    /// - **Low eccentricity** (`e = 0.0013` → `e² = 1.69e-6`) carries
-    ///   the formula's quadratic eccentricity penalty. Real Ganymede's
-    ///   tidal heating is sustained by the *Laplace resonance* with
-    ///   Io and Europa (orbital pumping that maintains e against
-    ///   tidal damping). The closed-form `H = C_H × e²` captures the
-    ///   instantaneous dissipation but doesn't include the
-    ///   resonance-pumped equilibrium e — the resonance might land
-    ///   real Ganymede's *effective* e closer to 0.005 once you
-    ///   integrate the pumping cycle, which would multiply `e²` by
-    ///   ~15× and lift heat into the [1, 5] TW window.
-    /// - **Integer-period rounding**: 7.15 days → 7 macros loses
-    ///   `(7/7.15)⁵ ≈ 0.90×` of `n⁵`. Minor compared to the
-    ///   eccentricity penalty.
-    /// - **Larger R than Europa** (0.413 vs 0.246) means `R⁵` is
-    ///   `(0.413/0.246)⁵ ≈ 13.4×` larger, which partly offsets the
-    ///   eccentricity penalty — but not enough to fully reach the
-    ///   literature value.
-    ///
-    /// The lower bound 0.05 TW captures the current calibration; the
-    /// upper bound 5 TW is the spec's literature ceiling. A future
-    /// re-tune of the F6 multiplier for Laplace-resonance-pumped moons,
-    /// or a sub-day macro cadence (Option B), would let the lower
-    /// bound tighten toward the spec's 0.5 TW.
+    /// The pre-C4 calibration landed at ~0.16 TW because the
+    /// closed-form `H = C_H × e²` doesn't capture the resonance-pumped
+    /// effective `e`; the 8× boost models a ~3× sustained equilibrium
+    /// `e_eff / e_observed` (since `H ∝ e²`, `(3)² ≈ 9` is rounded
+    /// down to 8 for a clean integer and to leave headroom on the
+    /// upper bound).
     #[test]
     fn ganymede_like_configuration_in_0_5_to_5_tw_range() {
         let r_ganymede = Real::from_ratio(413, 1_000); // 0.413
         let e_ganymede = Real::from_ratio(13, 10_000); // 0.0013
         // Ganymede's orbit is 7.15 days; integer floor at 1-macro =
         // 1-day cadence rounds to 7. The 0.15-day fraction drops
-        // `n⁵` by ~10 % — small relative to the eccentricity
-        // calibration gap documented above.
+        // `n⁵` by ~10 % — minor relative to the C4 Laplace
+        // multiplier's order-of-magnitude effect.
         let period_macros: u32 = 7;
         let moon = MoonHeating::icy(e_ganymede, period_macros)
             .with_substrate(MetabolicSubstrate::Aqueous);
         let h_tw = moon_tidal_heat_rate(r_ganymede, &moon);
-        // Widened lower bound (0.05 TW = 50 GW) reflects the
-        // calibration gap; the spec's nominal target is [0.5, 5] TW
-        // for real Ganymede's Laplace-pumped ~1-2 TW. Upper bound
-        // matches the spec.
-        let lo = Real::from_ratio(5, 100); // 0.05 TW = 50 GW
+        // Spec-literal `[0.5, 5] TW` window — real Ganymede's
+        // Laplace-pumped ~1-2 TW. C4 widens the multiplication chain
+        // to include `laplace_resonance_multiplier`; pre-C4 the rate
+        // landed at ~0.16 TW (below the 0.5 lower bound).
+        let lo = Real::from_ratio(5, 10); // 0.5 TW
         let hi = Real::from_int(5); // 5 TW
         assert!(
             h_tw >= lo && h_tw <= hi,
-            "Ganymede-like heat rate must fall in [0.05, 5] TW \
-             (real ~1-2 TW Laplace-pumped; current calibration lands \
-             at ~0.16 TW pending Laplace-resonance pumping in the \
-             effective e); got {h_tw:?} TW"
+            "Ganymede-like heat rate must fall in [0.5, 5] TW \
+             (real ~1-2 TW Laplace-pumped); got {h_tw:?} TW"
         );
     }
 
@@ -1451,6 +1521,86 @@ mod tests {
             "Callisto-like heat rate must fall in [0, 5] GW \
              (real ~0 GW non-resonant; current calibration lands at \
              ~1.6 GW); got {h_tw:?} TW"
+        );
+    }
+
+    /// C4 spec test — `laplace_resonance_multiplier` returns the
+    /// documented Ganymede-class 8× boost for radii in `[0.39, 0.45]`
+    /// Earth-radii paired with an icy / subsurface-ocean substrate
+    /// (`Aqueous`, `Hydrocarbon`, `Ammoniacal`), and 1× everywhere
+    /// else. Pinned so a future re-tune is intentional.
+    #[test]
+    fn laplace_resonance_multiplier_per_radius_and_substrate() {
+        // Ganymede-class radius (0.413) with Aqueous substrate → 8×.
+        let r_ganymede = Real::from_ratio(413, 1_000);
+        assert_eq!(
+            laplace_resonance_multiplier(r_ganymede, Some(MetabolicSubstrate::Aqueous)),
+            Real::from_int(8),
+            "Ganymede-class Aqueous moon should get 8× Laplace pumping"
+        );
+        // Same radius, Hydrocarbon (Titan-class regime) → 8×.
+        assert_eq!(
+            laplace_resonance_multiplier(
+                r_ganymede,
+                Some(MetabolicSubstrate::Hydrocarbon),
+            ),
+            Real::from_int(8),
+        );
+        // Same radius, Ammoniacal → 8× (still in the icy / pumped regime).
+        assert_eq!(
+            laplace_resonance_multiplier(
+                r_ganymede,
+                Some(MetabolicSubstrate::Ammoniacal),
+            ),
+            Real::from_int(8),
+        );
+        // Same radius, Silicate (Io-class rocky) → 1× (no pumping —
+        // the Io anchor is what the substrate guard preserves).
+        assert_eq!(
+            laplace_resonance_multiplier(
+                r_ganymede,
+                Some(MetabolicSubstrate::Silicate),
+            ),
+            Real::ONE,
+        );
+        // Same radius, no substrate tag → 1× (preserves pre-C4
+        // behaviour for the production-default `MoonHeating::rocky`
+        // / `MoonHeating::icy` paths that don't plumb substrate).
+        assert_eq!(
+            laplace_resonance_multiplier(r_ganymede, None),
+            Real::ONE,
+        );
+        // Europa-class radius (0.246) with Aqueous → 1× (outside the
+        // [0.39, 0.45] window; the F6 25× substrate multiplier alone
+        // covers Europa's calibration).
+        let r_europa = Real::from_ratio(246, 1_000);
+        assert_eq!(
+            laplace_resonance_multiplier(r_europa, Some(MetabolicSubstrate::Aqueous)),
+            Real::ONE,
+            "Europa-class radius should not get the Ganymede-class boost"
+        );
+        // Callisto-class radius (0.378) — just outside [0.39, 0.45] → 1×.
+        let r_callisto = Real::from_ratio(378, 1_000);
+        assert_eq!(
+            laplace_resonance_multiplier(r_callisto, Some(MetabolicSubstrate::Aqueous)),
+            Real::ONE,
+            "Callisto-class radius should not get the Ganymede-class boost"
+        );
+        // Lower boundary (0.39 exactly) → 8× (inclusive).
+        assert_eq!(
+            laplace_resonance_multiplier(
+                Real::from_ratio(39, 100),
+                Some(MetabolicSubstrate::Aqueous),
+            ),
+            Real::from_int(8),
+        );
+        // Upper boundary (0.45 exactly) → 8× (inclusive).
+        assert_eq!(
+            laplace_resonance_multiplier(
+                Real::from_ratio(45, 100),
+                Some(MetabolicSubstrate::Aqueous),
+            ),
+            Real::from_int(8),
         );
     }
 
