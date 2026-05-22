@@ -17,7 +17,7 @@ use crate::Civ;
 use sim_arith::{Pop, Real};
 use sim_ecosystem::PlanetEcosystem;
 use sim_physics::{PhysicsState, Substance};
-use sim_species::{apply_catastrophe_with_dormancy, EcosystemRole, Species};
+use sim_species::{apply_catastrophe_with_dormancy, Species};
 use sim_world::Planet;
 
 use triggers::{asteroid_fires, disease_fires, ice_age_fires, solar_flare_fires, volcanic_fires};
@@ -98,6 +98,17 @@ fn baseline_radiation_flux() -> Real {
 /// `radiation_max ≥ 5` still has plenty of envelope headroom.
 fn solar_flare_radiation_boost() -> Real {
     Real::ONE
+}
+
+/// Post-impact radiation magnitude added on top of the baseline
+/// for the ecosystem signature of an asteroid strike (T2). Set
+/// well above the aqueous-default `radiation_max = 0.5` so a
+/// narrow-envelope eco species takes the full hit while an
+/// extremophile with high `radiation_max` retains envelope
+/// headroom. Models the impactor's prompt gamma + activation
+/// products at the strike site.
+fn asteroid_radiation_boost() -> Real {
+    Real::from_int(5)
 }
 
 /// Drop in cell temperature applied when an ice age fires, in K.
@@ -330,34 +341,22 @@ pub fn check_and_apply(
                 let target = (civ.cohort.total() * (Real::ONE - frac)).max(Pop::ZERO);
                 civ.cohort.shrink_to(target);
             }
-            // F2 (xeno N2) — drain producer biomass at the
-            // eruption cell. Volcanic ejecta + 50K cell-temp drop
-            // sterilises the local primary-production layer, so
-            // every Producer-tier ecosystem species takes a
-            // proportional hit at *this cell only*. The aggregate
-            // pool stays mostly intact (a single cell out of
-            // hundreds), but heterogeneity-aware downstream code
-            // (e.g. cell-local famine triggers) now sees the
-            // local crash. Calibrated to the same `frac` the civ
-            // population took so the eco / pop responses move in
-            // lockstep on the affected cell.
+            // F2 (xeno N2) / T2 — drain ecosystem biomass for
+            // every extant species, tolerance-gated by the
+            // eruption cell's post-event conditions. Volcanic
+            // ejecta + 50K cell-temp drop sterilises the local
+            // primary-production layer; species whose envelopes
+            // contain the post-event cell (e.g. thermophiles)
+            // shrug off the burst, while narrow-envelope species
+            // take the headline volcanic loss. Calibrated to the
+            // raw volcanic loss fraction (not the post-resistance
+            // civ frac) so the eco signature reflects the headline
+            // catastrophe severity; each eco species' own
+            // tolerance envelope (not the civ species') gates the
+            // realised loss.
             if let Some(eco) = ecosystem.as_deref_mut() {
-                let producer_ids: Vec<sim_species::SpeciesId> = eco
-                    .species
-                    .iter()
-                    .filter_map(|(id, s)| {
-                        if !s.is_extant {
-                            return None;
-                        }
-                        match s.role {
-                            EcosystemRole::Producer { .. } => Some(*id),
-                            _ => None,
-                        }
-                    })
-                    .collect();
-                for id in producer_ids {
-                    eco.reduce_at_cell(id, cell, frac);
-                }
+                let (t, ph, sal, rad, p) = cell_conds;
+                eco.apply_catastrophe_at_cell(raw_frac, t, ph, sal, rad, p);
             }
             civ.last_volcanic_tick = Some(tick);
             civ.last_catastrophe_tick = Some(tick);
@@ -481,6 +480,25 @@ pub fn check_and_apply(
             civ.cohort.shrink_to(target)
         };
         let _ = lost;
+        // T2 — drain ecosystem biomass for every extant species,
+        // tolerance-gated by the impact cell's conditions plus the
+        // asteroid-specific radiation boost (prompt gamma +
+        // activation products). Calibrated to the raw asteroid
+        // loss fraction so the eco signature matches the headline
+        // catastrophe severity; each eco species' own tolerance
+        // envelope gates the realised loss (extremophiles with
+        // wide radiation envelopes shrug it off).
+        if let Some(eco) = ecosystem.as_deref_mut() {
+            let eco_cell_conds = catastrophe_cell_conditions(
+                state,
+                planet,
+                asteroid_cell,
+                Real::ZERO,
+                asteroid_radiation_boost(),
+            );
+            let (t, ph, sal, rad, p) = eco_cell_conds;
+            eco.apply_catastrophe_at_cell(raw_frac, t, ph, sal, rad, p);
+        }
         civ.last_asteroid_tick = Some(tick);
         civ.last_catastrophe_tick = Some(tick);
         // Asteroid pushes mystical strongly + reformist (rebuild
@@ -528,6 +546,18 @@ pub fn check_and_apply(
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
+        // T2 — drain ecosystem biomass for every extant species,
+        // tolerance-gated by the cell's post-flare radiation flux
+        // (already cosmic-ray-amplified above). Calibrated to the
+        // raw flare loss fraction so the eco signature matches the
+        // headline catastrophe severity; each eco species' own
+        // tolerance envelope gates the realised loss (extremophiles
+        // with `radiation_max ≥ 5` shrug it off, narrow-envelope
+        // species take the full hit).
+        if let Some(eco) = ecosystem.as_deref_mut() {
+            let (t, ph, sal, rad, p) = cell_conds;
+            eco.apply_catastrophe_at_cell(raw_frac, t, ph, sal, rad, p);
+        }
         civ.last_solar_flare_tick = Some(tick);
         civ.last_catastrophe_tick = Some(tick);
         // Empirical + reformist (the species sees the sky's
@@ -571,6 +601,18 @@ pub fn check_and_apply(
         let before = civ.cohort.total();
         let target = (before * (Real::ONE - frac)).max(Pop::from_int(10));
         let _lost = civ.cohort.shrink_to(target);
+        // T2 — drain ecosystem biomass for every extant species,
+        // tolerance-gated by the post-cold-snap cell temperature.
+        // Calibrated to the climate-scaled severity (not the raw
+        // ice-age constant) so the eco signature tracks how cold
+        // the planet already runs — colder baseline ⇒ harsher
+        // catastrophe. Each eco species' own tolerance envelope
+        // gates the realised loss (cold-adapted species with wide
+        // lower temp bounds survive; tropical species crash).
+        if let Some(eco) = ecosystem.as_deref_mut() {
+            let (t, ph, sal, rad, p) = cell_conds;
+            eco.apply_catastrophe_at_cell(severity_frac, t, ph, sal, rad, p);
+        }
         civ.last_ice_age_tick = Some(tick);
         civ.last_catastrophe_tick = Some(tick);
         let push = Cosmology {
@@ -1154,6 +1196,203 @@ mod tests {
         assert!(
             active_now >= bound,
             "seed-bank recovery failed: active={active_now:?} bound={bound:?}",
+        );
+    }
+
+    /// T2 acceptance test #1: non-volcanic catastrophes now strip
+    /// the ecosystem's trophic-web biomass too. Pre-T2, only
+    /// volcanic touched the ecosystem; asteroid / solar flare /
+    /// ice age / disease left the eco pool untouched. T2 wires
+    /// asteroid / solar flare / ice age into
+    /// `apply_catastrophe_at_cell` (disease stays biology-internal
+    /// per spec). This test fires an asteroid and asserts every
+    /// extant eco species' biomass drops.
+    #[test]
+    fn non_volcanic_catastrophes_now_affect_ecosystem() {
+        // Asteroid tick must satisfy `tick.is_multiple_of(4733 *
+        // MONTHS_PER_YEAR)` AND tick > 0.
+        let asteroid_tick = 4733 * protocol::MONTHS_PER_YEAR;
+        let initial_pop = Pop::from_int(1_000_000);
+        let mut civ = Civ::new(1, 0, initial_pop);
+        // P0.5 — keep crowding low enough that disease doesn't
+        // preempt the asteroid path. With no claimed cells the
+        // claimed_cell_fraction defaults to 1.0; producer_biomass
+        // = 100 × per_unit (50_000) = 5M capacity ≫ 1M civ pop, so
+        // crowding ≈ 0.2 and disease stays dormant. Asteroid's
+        // deterministic_cell_pick returns None on an empty-claim
+        // civ and falls back to cell 0 for the conditions read,
+        // so the eco call still fires.
+        civ.producer_biomass = Real::from_int(100);
+        let mut state = well_fed_state();
+        // Pin cell 0 at centre-of-aqueous-envelope conditions so
+        // tolerance reads from a real cell state.
+        state.temperature_mut()[0] = Real::from_int(300);
+        state.pressure_mut()[0] = Real::from_int(101_325);
+
+        // Build a small eco fixture with a single producer at
+        // narrow aqueous tolerance — the asteroid's
+        // `rad += asteroid_radiation_boost (= 5.0)` blows past the
+        // aqueous `radiation_max = 0.5`, driving match_score to 0
+        // and exposing the species to the full headline loss.
+        let mut eco = sim_ecosystem::sample_ecosystem_with_substrate_for_grid(
+            42,
+            "aqueous",
+            Real::from_int(10_000),
+            state.grid().n_cells(),
+        );
+        // Baseline biomass for all extant species pre-catastrophe.
+        let before: std::collections::BTreeMap<sim_species::SpeciesId, Real> = eco
+            .species
+            .iter()
+            .filter_map(|(id, s)| if s.is_extant { Some((*id, s.biomass)) } else { None })
+            .collect();
+        assert!(
+            !before.is_empty(),
+            "eco fixture must seed at least one extant species",
+        );
+
+        let rec = check_and_apply(
+            &mut civ,
+            &mut state,
+            &earth_like_planet(),
+            &test_species(),
+            asteroid_tick,
+            Some(&mut eco),
+        )
+        .expect("asteroid must fire at tick = 4733 * MONTHS_PER_YEAR");
+        assert_eq!(rec.kind, CatastropheKind::Asteroid);
+
+        // At least one extant species must show a strict biomass
+        // drop — the headline T2 observable. We expect *every*
+        // species at narrow aqueous tolerance to lose biomass since
+        // rad = baseline (0.1) + 5.0 = 5.1 >> radiation_max = 0.5.
+        let mut any_dropped = false;
+        for (id, b0) in &before {
+            let b1 = eco.species.get(id).map(|s| s.biomass).unwrap_or(Real::ZERO);
+            if b1 < *b0 {
+                any_dropped = true;
+            }
+            // No species should *gain* biomass from the catastrophe.
+            assert!(
+                b1 <= *b0,
+                "species {:?} biomass increased through asteroid: \
+                 before={:?}, after={:?}",
+                id,
+                b0,
+                b1,
+            );
+        }
+        assert!(
+            any_dropped,
+            "no eco species lost biomass through asteroid — T2 wiring missing?",
+        );
+    }
+
+    /// T2 acceptance test #2: ecosystem analog of the civ-side P0.4
+    /// flare test. Two eco species, identical except for their
+    /// `ToleranceEnvelope`. The extremophile (wide radiation
+    /// envelope) survives the same flare with strictly more
+    /// biomass than the aqueous-default narrow-envelope species.
+    /// Mirrors `extremophile_species_survives_solar_flare_better_than_aqueous`
+    /// on the eco side now that solar flare is wired into
+    /// `apply_catastrophe_at_cell`.
+    #[test]
+    fn extremophile_eco_species_survives_solar_flare_better() {
+        use sim_ecosystem::EcoSpecies;
+        use sim_species::{
+            EcosystemRole, Habitat, InteractionMatrix, ProducerMetabolism, SpeciesId,
+            ToleranceEnvelope,
+        };
+
+        let planet = flare_planet();
+        let flare_tick = 1567 * protocol::MONTHS_PER_YEAR;
+
+        let initial_pop = Pop::from_int(1_000_000);
+        let mut civ = Civ::new(1, 0, initial_pop);
+        // P0.5 — bump producer biomass so the disease trigger
+        // doesn't preempt the flare path.
+        civ.producer_biomass = Real::from_int(100);
+        let mut state = well_fed_state();
+        // Pin cell 0 at centre-of-aqueous-envelope T/p so non-rad
+        // axes are non-binding (only the radiation axis differs
+        // between the two eco species).
+        state.temperature_mut()[0] = Real::from_int(300);
+        state.pressure_mut()[0] = Real::from_int(101_325);
+
+        let starting_biomass = Real::from_int(1_000);
+        let aqueous_id = SpeciesId(101);
+        let extremo_id = SpeciesId(102);
+        let aqueous = EcoSpecies {
+            species_id: aqueous_id,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: starting_biomass,
+            is_extant: true,
+            low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
+            tolerance: ToleranceEnvelope::aqueous_default(),
+        };
+        let extremophile_tol = ToleranceEnvelope {
+            temp_range: (Real::from_int(200), Real::from_int(400)),
+            ph_range: (Real::from_int(5), Real::from_int(9)),
+            salinity_range: (Real::from_int(10), Real::from_int(30)),
+            radiation_max: Real::from_int(20),
+            pressure_range: (Real::from_ratio(5, 10), Real::from_ratio(15, 10)),
+        };
+        let extremophile = EcoSpecies {
+            species_id: extremo_id,
+            role: EcosystemRole::Producer {
+                metabolism: ProducerMetabolism::Photoautotroph,
+            },
+            biomass: starting_biomass,
+            is_extant: true,
+            low_biomass_streak: 0,
+            habitat: Habitat::Terrestrial,
+            cell_biomass: Vec::new(),
+            tolerance: extremophile_tol,
+        };
+        let mut eco = sim_ecosystem::PlanetEcosystem::new(
+            vec![aqueous, extremophile],
+            InteractionMatrix::new(),
+            Real::from_int(10_000),
+        );
+
+        let rec = check_and_apply(
+            &mut civ,
+            &mut state,
+            &planet,
+            &test_species(),
+            flare_tick,
+            Some(&mut eco),
+        )
+        .expect("flare must fire on weak-magnetosphere planet at tick = 1567 * MONTHS_PER_YEAR");
+        assert_eq!(rec.kind, CatastropheKind::SolarFlare);
+
+        let aq_after = eco.species.get(&aqueous_id).unwrap().biomass;
+        let ex_after = eco.species.get(&extremo_id).unwrap().biomass;
+        let aq_loss = starting_biomass - aq_after;
+        let ex_loss = starting_biomass - ex_after;
+        // Aqueous species must take real damage (rad = 0.1 + 1.0
+        // = 1.1 > radiation_max = 0.5 ⇒ match_score = 0).
+        assert!(
+            aq_loss > Real::ZERO,
+            "aqueous eco species took no damage: after={aq_after:?}",
+        );
+        // The extremophile's biomass loss must be at least 3×
+        // smaller than the aqueous species' — mirrors the civ-side
+        // P0.4 acceptance bound. In practice it's ~18× smaller.
+        assert!(
+            aq_loss >= ex_loss * Real::from_int(3),
+            "expected aqueous loss >= 3× extremophile loss; \
+             aqueous_loss={aq_loss:?}, extremo_loss={ex_loss:?}",
+        );
+        // Headline observable: more extremophile biomass survives.
+        assert!(
+            ex_after > aq_after,
+            "extremophile survivors must exceed aqueous survivors; \
+             ex_after={ex_after:?}, aq_after={aq_after:?}",
         );
     }
 }
