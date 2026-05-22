@@ -425,17 +425,41 @@ pub enum ParasiteKind {
     Virus,
 }
 
-/// Typed pairwise ecological interaction. The half-saturation
-/// constant for Type-II / Type-III responses is hard-coded inside the
-/// step (see `sim_ecosystem`) at `0.1 × planet capacity` rather than
-/// carried per-pair: the spec asks for a `FunctionalResponse` tag
-/// only, and a per-pair `k` field would invite per-call tuning that
-/// the determinism story doesn't need.
+/// Typed pairwise ecological interaction.
+///
+/// `half_saturation` is the per-pair Holling Type-II / Type-III
+/// half-saturation constant, expressed as a *fraction of the planet's
+/// producer carrying capacity*. Consumers in `sim_ecosystem` multiply
+/// this by `producer_capacity` to get the absolute `k` fed into the
+/// functional-response formulas. Realistic values vary 0.1× – 0.4× by
+/// pair (apex predators saturate fast → low k; small specialists
+/// saturate slowly → high k). The back-compat default `0.5` matches
+/// the legacy global `K_HALF_SAT = 0.5 × producer_capacity` so existing
+/// fixtures continue to step identically without a per-pair override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Interaction {
     pub kind: InteractionKind,
     pub strength: Real,
     pub functional_response: FunctionalResponse,
+    /// Half-saturation fraction of producer capacity (Sprint 2 Item
+    /// P2.6). The downstream step computes
+    /// `k = half_saturation × producer_capacity` before invoking the
+    /// Type-II / Type-III functional response. Use
+    /// `Interaction::default_half_saturation()` (0.5) for the legacy
+    /// back-compat value; canonical pairs are calibrated lower (apex
+    /// predators, habitat engineers) or kept at 0.5 for symmetric
+    /// mutualisms / generic competition.
+    pub half_saturation: Real,
+}
+
+impl Interaction {
+    /// Legacy back-compat half-saturation fraction (0.5). Matches the
+    /// pre-P2.6 global `K_HALF_SAT = 0.5 × producer_capacity` so
+    /// untouched test fixtures keep their numerics bit-for-bit.
+    #[must_use]
+    pub fn default_half_saturation() -> Real {
+        Real::from_ratio(5, 10)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

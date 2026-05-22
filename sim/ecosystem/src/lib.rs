@@ -29,9 +29,14 @@
 //!    centrality exceeds the configured threshold.
 //!
 //! **Determinism**: every collection iterated by the step is a
-//! `BTreeMap` or `BTreeSet`, never `HashMap`. The half-saturation
-//! constant `K_HALF_SAT` is shared across all pairs so per-pair
-//! tuning can't introduce floating fudge.
+//! `BTreeMap` or `BTreeSet`, never `HashMap`. Half-saturation
+//! is per-pair (Sprint 2 Item P2.6) — each `Interaction` carries
+//! its calibrated fraction of producer capacity (wolf-deer apex
+//! 0.10, lynx-hare specialist 0.30, habitat engineers 0.20,
+//! generic mutualism 0.50) so the canonical Lotka-Volterra cycle
+//! periods match published values across pair types. Back-compat
+//! literals with `half_saturation = Real::ZERO` fall through to
+//! the legacy 0.5× default via `K_HALF_SAT_DEFAULT`.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -74,27 +79,7 @@ pub use speciation::{
 /// the per-habitat assimilation ratio carries the whole load.
 pub const LINDEMAN_RATIO: (i64, i64) = (1, 10);
 
-/// Per-habitat assimilation efficiency (P2.5). The Lindeman 10:1 ratio
-/// is the *terrestrial* canonical value but is not universal:
-///
-/// - **Aquatic** — ~30:1 (3.3%). Cold-blooded fish skip the
-///   homeotherm thermal-regulation tax, so the gross flux that
-///   reaches their tissue per unit of prey eaten is much lower.
-/// - **Terrestrial / Subterranean / Endolithic** — 10:1 (10%). The
-///   canonical Lindeman ratio. Subterranean burrowers and endolithic
-///   substrate-dwellers share the warm-blooded surface-trophic
-///   metabolism profile closely enough to use the same value.
-/// - **Amphibious / Airborne** — ~6.7:1 (15%). Flight (and the
-///   ectotherm-but-active amphibian niche) is *expensive*: the
-///   metabolic substrate budget per consumed prey unit is the
-///   smallest of the three groups, so a smaller fraction of the flux
-///   gets converted to predator biomass.
-///
-/// The ratios are calibrated against the broader trophic-efficiency
-/// literature (Lindeman 1942 + post-1990 marine-vs-terrestrial
-/// reviews). The shape is what matters: aquatic ecosystems are far
-/// more producer-heavy than the canonical 10:1 pyramid suggests, and
-/// flight-cohort food webs run even sparser at the top.
+/// Per-habitat assimilation efficiency (P2.5).
 #[must_use]
 pub fn lindeman_assimilation_for_habitat(habitat: Habitat) -> Real {
     match habitat {
@@ -106,22 +91,18 @@ pub fn lindeman_assimilation_for_habitat(habitat: Habitat) -> Real {
     }
 }
 
-/// Maximum multiple of the per-habitat assimilation ratio that a
-/// consumer tier may transiently overshoot its producer tier before
-/// the debug-mode invariant trips. Short-term overshoot is biologically
-/// realistic — a Lotka-Volterra cycle can swing the predator population
-/// 3-4× above the steady-state ratio during the peak of an oscillation
-/// before predation pulls it back. The 5× slack accommodates strongly-
-/// coupled LV dynamics (the canonical predator-prey-cycles test runs
-/// with predation strength = 0.5 and peaks at ~3×) while still catching
-/// pathological runaway growth — a 10:1 → 1:1 inversion would trip.
 pub const LINDEMAN_OVERSHOOT_DEBUG_MAX: i64 = 5;
 
-/// Half-saturation constant for Type-II / Type-III functional
-/// responses, expressed as a fraction of starting producer biomass.
-/// `K_HALF_SAT = 0.5` → predator hits half its max consumption rate
-/// when prey biomass equals half the starting producer pool.
-pub const K_HALF_SAT: (i64, i64) = (1, 2);
+/// Half-saturation default (P2.6 — was K_HALF_SAT; renamed _DEFAULT
+/// since per-pair `Interaction::half_saturation` is now the production
+/// path). Consumers only reach this when `half_saturation = ZERO`.
+pub const K_HALF_SAT_DEFAULT: (i64, i64) = (1, 2);
+
+/// Canonical per-pair half-saturation fractions (P2.6).
+pub const HALF_SAT_APEX_PREDATOR: (i64, i64) = (1, 10);
+pub const HALF_SAT_SPECIALIST_PREDATOR: (i64, i64) = (3, 10);
+pub const HALF_SAT_MUTUALISM: (i64, i64) = (5, 10);
+pub const HALF_SAT_HABITAT_MOD: (i64, i64) = (2, 10);
 
 /// Per-tick base growth rate for producers (fraction of carrying
 /// capacity). The producer pool drifts toward
@@ -735,7 +716,6 @@ impl PlanetEcosystem {
             .iter()
             .map(|(id, s)| (*id, s.habitat))
             .collect();
-        let k = Real::from(K_HALF_SAT) * self.producer_capacity;
         let mut deltas: BTreeMap<SpeciesId, Real> = BTreeMap::new();
 
         // Iterate pairs in sorted order — BTreeMap iterator is
@@ -752,6 +732,20 @@ impl PlanetEcosystem {
             if prey <= Real::ZERO || pred <= Real::ZERO {
                 continue;
             }
+
+            // Per-pair half-saturation (Sprint 2 Item P2.6). The
+            // pair carries its calibrated fraction of producer
+            // capacity; a back-compat literal with `half_saturation
+            // = 0` falls through to the legacy 0.5 default so old
+            // fixtures keep their numerics. Fraction × capacity
+            // converts to the absolute `k` the functional response
+            // expects.
+            let half_sat_frac = if interaction.half_saturation > Real::ZERO {
+                interaction.half_saturation
+            } else {
+                Real::from(K_HALF_SAT_DEFAULT)
+            };
+            let k = half_sat_frac * self.producer_capacity;
 
             // Functional-response: per-capita consumption per
             // predator unit, multiplied by predator biomass to get
@@ -1427,6 +1421,10 @@ pub fn habitat_for_substrate(substrate_tag: &str) -> Habitat {
 /// - Detritivore + Saprotroph have HabitatModification edges to all
 ///   producers (they enable the recycling loop).
 fn insert_competition(matrix: &mut InteractionMatrix, ids: &[SpeciesId], strength: Real) {
+    // Competition uses a Linear functional response so the
+    // half-saturation value never enters the per-tick math; carry the
+    // neutral default (0.5) for forward compatibility.
+    let half_saturation = Real::from(HALF_SAT_MUTUALISM);
     for (i, a) in ids.iter().enumerate() {
         for b in &ids[i + 1..] {
             matrix.insert(
@@ -1436,6 +1434,7 @@ fn insert_competition(matrix: &mut InteractionMatrix, ids: &[SpeciesId], strengt
                     kind: InteractionKind::Competition,
                     strength,
                     functional_response: FunctionalResponse::Linear,
+                    half_saturation,
                 },
             );
             matrix.insert(
@@ -1445,6 +1444,7 @@ fn insert_competition(matrix: &mut InteractionMatrix, ids: &[SpeciesId], strengt
                     kind: InteractionKind::Competition,
                     strength,
                     functional_response: FunctionalResponse::Linear,
+                    half_saturation,
                 },
             );
         }
@@ -1501,6 +1501,19 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
     let parasite_strength = Real::from((1, 100));
     let habmod_strength = Real::from((1, 100));
 
+    // Per-pair half-saturation calibration (Sprint 2 Item P2.6).
+    // Specialist predators (primary → producer, secondary → primary)
+    // get the lynx-hare 0.30 — small predators saturate slowly. Apex
+    // predators get the wolf-deer 0.10 — large apex predators
+    // saturate fast on big prey items. Parasites inherit the
+    // specialist baseline because micro-/macro-parasites depend on
+    // host availability rather than apex-style satiation. Mutualism +
+    // engineering effects get their own per-kind calibration.
+    let half_sat_specialist = Real::from(HALF_SAT_SPECIALIST_PREDATOR);
+    let half_sat_apex = Real::from(HALF_SAT_APEX_PREDATOR);
+    let half_sat_mutualism = Real::from(HALF_SAT_MUTUALISM);
+    let half_sat_habmod = Real::from(HALF_SAT_HABITAT_MOD);
+
     // Predation up the tier ladder.
     for c in &primary {
         for p in &producers {
@@ -1511,6 +1524,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::Predation,
                     strength: predation_strength,
                     functional_response: FunctionalResponse::Saturating,
+                    half_saturation: half_sat_specialist,
                 },
             );
         }
@@ -1524,6 +1538,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::Predation,
                     strength: predation_strength,
                     functional_response: FunctionalResponse::Saturating,
+                    half_saturation: half_sat_specialist,
                 },
             );
         }
@@ -1537,6 +1552,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::Predation,
                     strength: predation_strength,
                     functional_response: FunctionalResponse::Saturating,
+                    half_saturation: half_sat_apex,
                 },
             );
         }
@@ -1557,6 +1573,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::Mutualism,
                     strength: mutualism_strength,
                     functional_response: FunctionalResponse::Saturating,
+                    half_saturation: half_sat_mutualism,
                 },
             );
             matrix.insert(
@@ -1566,6 +1583,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::Mutualism,
                     strength: mutualism_strength,
                     functional_response: FunctionalResponse::Saturating,
+                    half_saturation: half_sat_mutualism,
                 },
             );
         }
@@ -1581,6 +1599,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::Parasitism,
                     strength: parasite_strength,
                     functional_response: FunctionalResponse::Saturating,
+                    half_saturation: half_sat_specialist,
                 },
             );
         }
@@ -1596,6 +1615,7 @@ fn build_interaction_matrix(species: &[EcoSpecies]) -> InteractionMatrix {
                     kind: InteractionKind::HabitatModification,
                     strength: habmod_strength,
                     functional_response: FunctionalResponse::Linear,
+                    half_saturation: half_sat_habmod,
                 },
             );
         }
