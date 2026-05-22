@@ -135,26 +135,92 @@ pub fn sigmoid_real(x: Real) -> Real {
     Real::ONE / denom
 }
 
+/// Petrological crust class consumed by [`base_albedo_for`] (P3.7).
+///
+/// Distinct from `sim_world::Crust` (which describes developmental
+/// biases — fossil fuels, piezoelectrics, rare-earth abundance, etc.):
+/// this enum keys *reflectivity* off the dominant surface mineralogy
+/// or ice cover. Basalt is dark (~0.10), granite somewhat brighter
+/// (~0.20), sedimentary surfaces lighter still (~0.25), bare-ice
+/// worlds very reflective (~0.50), and tholin-rich hydrocarbon
+/// worlds dark (~0.15).
+///
+/// The world-side `Crust` mapping lives in `sim-world` (it owns the
+/// dependency edge); other variants without a dedicated petrology
+/// hint fall to the [`Crust::Default`] catch-all with a 0.20
+/// baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Crust {
+    /// Basaltic / mafic — dark mineralogy. Maps from
+    /// `sim_world::Crust::Basaltic`.
+    Basaltic,
+    /// Granitic / felsic — lighter, weathered continental crust.
+    Granitic,
+    /// Sedimentary cover — lightest bare-rock channel.
+    Sedimentary,
+    /// Bare-ice surface (icy moons, snowball-stripped substrate).
+    /// Independent of the per-cell `snow_fraction` channel so this
+    /// variant returns a high base albedo even with no snow on top.
+    Icy,
+    /// Hydrocarbon / tholin organic cover (Titan-style). Maps from
+    /// `sim_world::Crust::Hydrocarbon`.
+    Hydrocarbon,
+    /// Catch-all for crust archetypes without a dedicated
+    /// petrological hint (`Piezoelectric`, `Ferrous`, `RareEarth`).
+    /// Baseline 0.20 albedo — the bare-rock middle of the road.
+    Default,
+}
+
+/// Base albedo of a bare cell of the given crust class (P3.7).
+/// Numbers tuned at the centre of published per-surface
+/// reflectivity ranges:
+///
+/// - `Basaltic`   — 0.10 (fresh basalt is dark)
+/// - `Granitic`   — 0.20 (weathered continental surface)
+/// - `Sedimentary` — 0.25 (lightest bare-rock channel)
+/// - `Icy`        — 0.50 (bare ice; snow channel layers on top)
+/// - `Hydrocarbon` — 0.15 (tholin / dark organic deposits)
+/// - `Default`    — 0.20 (other archetypes; bare-rock baseline)
+#[must_use]
+pub fn crust_base_albedo(crust: Crust) -> Real {
+    match crust {
+        Crust::Basaltic => Real::percent(10),
+        Crust::Granitic => Real::percent(20),
+        Crust::Sedimentary => Real::percent(25),
+        Crust::Icy => Real::percent(50),
+        Crust::Hydrocarbon => Real::percent(15),
+        Crust::Default => Real::percent(20),
+    }
+}
+
 /// Surface base albedo for a cell, before any ice / snow / cloud
 /// modulation. Discriminates on the per-cell substance signals
-/// already present in `PhysicsState`:
+/// already present in `PhysicsState` *and* the planet-wide crust
+/// archetype (P3.7):
 ///
 /// - water cells (`water_depth > 0`) → dark ocean (~0.06)
 /// - vegetated cells (`biofuel_ceiling > 0`) → forest / canopy
 ///   (~0.15)
-/// - bare rocky cells (otherwise) → ~0.20
+/// - bare rocky / icy cells (otherwise) → [`crust_base_albedo`]
 ///
 /// Real-world numbers are picked at the centre of published
 /// per-surface-type albedo ranges (ocean 0.06, vegetation 0.10-
-/// 0.20, bare rock / soil 0.15-0.25).
+/// 0.20, bare rock / soil 0.10-0.50 depending on petrology).
+///
+/// `Icy` crust is the one variant whose base albedo can compete
+/// with snow without the snow channel firing: bare ice on a
+/// frozen moon's surface (no precipitation, no atmospheric snow
+/// source) still reflects ~0.50 of incoming shortwave. The
+/// `icy_crust_has_high_base_albedo_even_without_snow` test
+/// guards this property.
 #[must_use]
-pub fn base_albedo_for(water_depth: Real, biofuel_ceiling: Real) -> Real {
+pub fn base_albedo_for(water_depth: Real, biofuel_ceiling: Real, crust: Crust) -> Real {
     if water_depth > Real::ZERO {
         Real::percent(6)
     } else if biofuel_ceiling > Real::ZERO {
         Real::percent(15)
     } else {
-        Real::percent(20)
+        crust_base_albedo(crust)
     }
 }
 
@@ -207,7 +273,9 @@ pub fn effective_albedo_for(
 /// Helper for laws that need the full per-cell albedo slice
 /// (`Radiation` consumes it to scale per-cell absorbed
 /// insolation) without each callsite re-deriving the channel
-/// combination.
+/// combination. Reads the planet-wide crust archetype from
+/// `state.planet_crust()` so basalt worlds bake in a darker
+/// surface than granitic / sedimentary / icy worlds (P3.7).
 #[must_use]
 pub fn effective_albedo_slice(state: &PhysicsState) -> Vec<Real> {
     let n = state.grid().n_cells();
@@ -217,9 +285,10 @@ pub fn effective_albedo_slice(state: &PhysicsState) -> Vec<Real> {
     let sea_ice = state.sea_ice_fraction();
     let cloud = state.cloud_fraction();
     let cloud_type = state.cloud_type();
+    let crust = state.planet_crust();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let base = base_albedo_for(water[i], bio[i]);
+        let base = base_albedo_for(water[i], bio[i], crust);
         let ct = crate::clouds::CloudType::from_byte(cloud_type[i]);
         out.push(effective_albedo_for(base, snow[i], sea_ice[i], cloud[i], ct));
     }
@@ -391,12 +460,69 @@ mod tests {
 
     #[test]
     fn base_albedo_dispatches_on_surface_type() {
-        let water = base_albedo_for(Real::from_int(5), Real::ZERO);
-        let veg = base_albedo_for(Real::ZERO, Real::from_int(100));
-        let rock = base_albedo_for(Real::ZERO, Real::ZERO);
+        // Default crust → bare-rock baseline 0.20 matches the
+        // pre-P3.7 value, so the surface-type branches preserve
+        // their previous albedo for the catch-all archetype.
+        let water = base_albedo_for(Real::from_int(5), Real::ZERO, Crust::Default);
+        let veg = base_albedo_for(Real::ZERO, Real::from_int(100), Crust::Default);
+        let rock = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Default);
         assert_eq!(water, Real::percent(6));
         assert_eq!(veg, Real::percent(15));
         assert_eq!(rock, Real::percent(20));
+    }
+
+    /// P3.7: per-crust ordering. Basalt is darker than granite,
+    /// which is darker than sedimentary cover. Hydrocarbon
+    /// (tholin) sits between basalt and granite. Icy is the
+    /// brightest bare-surface channel.
+    #[test]
+    fn basaltic_crust_has_lower_base_albedo_than_granitic() {
+        let basalt = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Basaltic);
+        let granite = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Granitic);
+        let sediment = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Sedimentary);
+        let hydrocarbon = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Hydrocarbon);
+        let icy = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Icy);
+
+        // Spec-required ordering.
+        assert!(
+            basalt < granite,
+            "basalt should be darker than granite: \
+             basalt={basalt:?} granite={granite:?}"
+        );
+        // Full petrological ordering: basalt < hydrocarbon <
+        // granite < sediment < icy.
+        assert!(basalt < hydrocarbon);
+        assert!(hydrocarbon < granite);
+        assert!(granite < sediment);
+        assert!(sediment < icy);
+    }
+
+    /// P3.7: icy crust must read bright even with no snow on top.
+    /// Bare ice (e.g. on an Enceladus-style moon with no
+    /// precipitation source) still reflects ~0.50 of incoming
+    /// shortwave; the snow channel layers on top of that but
+    /// shouldn't be a prerequisite for the high baseline.
+    #[test]
+    fn icy_crust_has_high_base_albedo_even_without_snow() {
+        let icy_base = base_albedo_for(Real::ZERO, Real::ZERO, Crust::Icy);
+        assert!(
+            icy_base >= Real::percent(45),
+            "icy crust base albedo too low without snow: {icy_base:?}"
+        );
+        // The full effective albedo with snow_fraction=0 must
+        // retain the icy baseline (no other channel suppresses
+        // it below 0.45).
+        let effective = effective_albedo_for(
+            icy_base,
+            Real::ZERO, // no snow
+            Real::ZERO, // no sea ice
+            Real::ZERO, // no cloud
+            crate::clouds::CloudType::Stratus,
+        );
+        assert!(
+            effective >= Real::percent(45),
+            "icy crust effective albedo collapses without snow: {effective:?}"
+        );
     }
 
     #[test]
@@ -546,7 +672,11 @@ mod tests {
         }
 
         let albedo_of = |s: &PhysicsState| -> Real {
-            let base = base_albedo_for(s.water_depth()[0], s.biofuel_ceiling()[0]);
+            let base = base_albedo_for(
+                s.water_depth()[0],
+                s.biofuel_ceiling()[0],
+                s.planet_crust(),
+            );
             effective_albedo_for(
                 base,
                 s.snow_fraction()[0],
