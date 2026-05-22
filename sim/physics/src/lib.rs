@@ -72,8 +72,9 @@ pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tectonics::{CrustType, Plate, Tectonics};
 pub use tidal_heating::{
     apply_tidal_heating, default_subsurface_heat_fraction, distribute_heat_to_cells,
-    k2_over_q_icy, k2_over_q_rocky, love_number_rocky, moon_tidal_heat_rate, q_factor_icy,
-    q_factor_rocky, subsurface_conduction_step, subsurface_heat_fraction, MoonHeating,
+    k2_over_q_icy, k2_over_q_rocky, laplace_resonance_multiplier, love_number_rocky,
+    moon_tidal_heat_rate, q_factor_icy, q_factor_rocky, subsurface_conduction_step,
+    subsurface_heat_fraction, MoonHeating,
 };
 pub use tides::{MoonTide, Tides};
 pub use vertical::VerticalConvection;
