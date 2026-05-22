@@ -129,12 +129,33 @@ fn h2o_greenhouse_k() -> Real {
 
 /// Per-unit-density greenhouse coefficient for CO2. Per-molecule
 /// CO2 is a stronger IR absorber than H2O in its bands, but
-/// planetary CO2 densities are much lower; the 15× scale vs. H2O
-/// (in this unit system) keeps an Earth-like ~400 ppm column at a
-/// modest background contribution while a Venus-like dense-CO2
-/// atmosphere bumps T_eq into the runaway zone.
+/// planetary CO2 densities are much lower; the ~1500× scale vs.
+/// H2O (in this unit system) lets a modest CO2 buildup deliver
+/// the multi-K forcing real Earth sees from CO2 doubling without
+/// requiring Venus-scale columns.
+///
+/// Calibrated for T13 snowball recovery (fix-C3): a snowball
+/// planet with the stock `Volcanism::earth_like` source builds
+/// ~9 units of CO2 per cell over ~10⁶ ticks (≈ 1000× the
+/// depleted initial column). At `K = 5.0` the raw greenhouse
+/// term lands near ~45 K — enough that, even with the
+/// snowball-cell effective albedo still pinned high by sea-ice
+/// (per-cell T_eq baseline ~233 K, ~36 K below the ice-free
+/// baseline ~269 K), the total per-cell T_eq crosses the freeze
+/// line and the positive ice-albedo feedback unlocks. The
+/// previous coefficient (0.030 K per unit) topped out at ~0.3 K
+/// of forcing from the same buildup, ~100× too small to lever
+/// past the bifurcation gap.
+///
+/// Earth-baseline cells carry only fractions of a unit of CO2,
+/// so the contribution stays a fraction of a degree — the modern
+/// Earth equilibrium is dominated by the atmosphere-class
+/// baseline `greenhouse_k`. A Venus-like dense-CO2 column
+/// (~10⁶ units in the calibration test) overdrives the cap, so
+/// [`greenhouse_cap_k`] binds and the plateau is set by the cap
+/// rather than this coefficient.
 fn co2_greenhouse_k() -> Real {
-    Real::from_ratio(30, 1_000)
+    Real::from_int(5)
 }
 
 /// Per-unit-density greenhouse coefficient for methane. Similar
@@ -1362,8 +1383,10 @@ mod tests {
 
     #[test]
     fn co2_contributes_linearly_to_greenhouse() {
-        // CO2's contribution is per-density × 30. A modest CO2
-        // load should still produce a measurable T_eq lift.
+        // CO2's contribution is per-density × `co2_greenhouse_k`
+        // (5.0 K per unit post-fix-C3). A modest CO2 load should
+        // still produce a measurable T_eq lift; the greenhouse cap
+        // clamps the contribution at 250 K for very dense columns.
         let rad = Radiation::for_planet(
             3,
             Real::from_int(1_361),
@@ -1383,7 +1406,10 @@ mod tests {
             *t = Real::from_int(280);
         }
         for v in with_co2.substance_mut(Substance::CO2.idx()) {
-            *v = Real::from_int(5_000); // 5000 × 0.030 = +150 K T_eq forcing
+            // 5000 × 5.0 = 25,000 K raw, clamped to the 250 K cap;
+            // still well above the no-CO2 baseline so the assertion
+            // below (with_co2 warmer than without_co2) holds.
+            *v = Real::from_int(5_000);
         }
         rad.integrate(&mut without_co2, Real::ONE);
         rad.integrate(&mut with_co2, Real::ONE);
