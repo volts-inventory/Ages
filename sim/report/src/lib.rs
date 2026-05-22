@@ -40,6 +40,7 @@ pub mod frame;
 mod highlights;
 mod html;
 pub mod labels;
+pub mod narration;
 mod parse;
 mod q32;
 mod render;
@@ -51,6 +52,10 @@ pub use frame::{
     WorldFrame,
 };
 pub use html::html;
+pub use narration::{
+    narrate_event, replay_narration, replay_narration_from_reader, NarrateError, NarratingEmitter,
+    NarratorState,
+};
 pub use parse::{events_from_reader, ParseError};
 pub use render::markdown;
 pub use viewport::{TempUnit, ViewportConfig, ViewportEmitter};
