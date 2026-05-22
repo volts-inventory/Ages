@@ -1249,6 +1249,7 @@ mod tests {
             "aqueous",
             Real::from_int(10_000),
             state.grid().n_cells(),
+            None,
         );
         // Baseline biomass for all extant species pre-catastrophe.
         let before: std::collections::BTreeMap<sim_species::SpeciesId, Real> = eco
