@@ -2059,3 +2059,258 @@ fn lava_world_runs_with_silicate_substrate() {
         eco.species.len()
     );
 }
+
+// ---------------------------------------------------------------------
+// T21 — Ammoniacal-substrate end-to-end test.
+//
+// `MetabolicSubstrate::Ammoniacal` has full sampling + chemistry
+// wiring (substrate temperature range [195, 240] K, kinetics prefactor
+// 0.4, reducing/thin atmosphere only) but no integration test exercises
+// a complete Ammoniacal-substrate planet run. T21 builds an
+// Ammoniacal-equivalent planet manually (substrate=Ammoniacal,
+// T_surface ≈ 220 K mid-window, Atmosphere::Reducing per
+// `atmosphere_compatible`, mass=1, radius=1) and drives the per-tick
+// ecosystem step for 1000 ticks, mirroring T15 (Titan / Hydrocarbon).
+// Assertions cover: build doesn't panic, mean T stays in [180, 260] K
+// (substrate window + slack), ≥1 extant species post-run, and the
+// solvent kinetics prefactor equals the documented 0.4 (slower than
+// Earth's aqueous 1.0 baseline). The wider 1000-tick exercise catches
+// chemistry blowups, Q32.32 overflow, and biological collapse on a
+// cold reducing-atmosphere substrate.
+// ---------------------------------------------------------------------
+
+#[test]
+fn ammoniacal_analog_run_produces_credible_state() {
+    use sim_physics::chemistry::{
+        solvent_reaction_kinetics_prefactor, MetabolicSubstrate as ChemistrySubstrate,
+    };
+    use sim_physics::{HexGrid, PhysicsState};
+    use sim_world::{init_planet, planet_name_from_seed, Atmosphere, Magnetosphere};
+
+    // Pick a fixed seed so the run is bit-for-bit reproducible. The
+    // seed only drives the `planet_name_from_seed` lookup + the
+    // ecosystem / RNG streams downstream; the planet bulk properties
+    // are pinned by this fixture rather than sampled.
+    let seed: u64 = 0x2117_AAAA_AAAA_5EED;
+
+    // Sanity precondition: the substrate's documented atmosphere
+    // compatibility includes `Atmosphere::Reducing` (this is the
+    // spec-chosen atmosphere for the fixture). Pin it here so a future
+    // refactor that narrows the Ammoniacal-compatible atmosphere set
+    // can't silently invalidate this fixture's atmosphere choice.
+    assert!(
+        MetabolicSubstrate::Ammoniacal.atmosphere_compatible(Atmosphere::Reducing),
+        "Ammoniacal substrate must accept Atmosphere::Reducing"
+    );
+
+    let planet = Planet {
+        seed,
+        name: planet_name_from_seed(seed),
+        // Earth-mass / Earth-radius rocky world — the spec pins both
+        // to `Real::ONE`. Derived gravity ≈ 9.81 m/s² (Earth-equivalent).
+        mass: Real::ONE,
+        radius: Real::ONE,
+        // Rocky composition so init_planet keeps the latitude-driven
+        // surface temperature (GaseousShell would override every cell
+        // to 700 K, blowing the Ammoniacal range).
+        composition: Composition::Rocky,
+        // Surface temperature 220 K — mid-range of the Ammoniacal
+        // liquid window [195, 240] K. NH3 is liquid here at
+        // ~Earth-equivalent pressure on a reducing atmosphere.
+        mean_temperature: Real::from_int(220),
+        // Modest equator-to-pole gradient (cold reducing atmospheres
+        // tend toward weak meridional gradients due to high IR opacity
+        // of NH3 + H2).
+        temperature_gradient: Real::from_int(10),
+        terrain_peak: Real::from_int(4_000),
+        terrain_centre_q: 4,
+        terrain_centre_r: 4,
+        sea_level: Real::from_int(1_500),
+        // Reducing: matches `atmosphere_compatible(Ammoniacal)` and the
+        // sampling distribution's NH3/H2/CH4 reducing-atmosphere
+        // composition for Ammoniacal worlds.
+        atmosphere: Atmosphere::Reducing,
+        // Ammoniacal reducing-atmosphere composition (per
+        // `sim_world::sampling`): NH3-bearing with H2 + CH4 + N2.
+        // Authored fractions roughly: N2 ≈ 0.40, NH3 ≈ 0.30, H2 ≈ 0.20,
+        // CH4 ≈ 0.10. Trace gases left at zero.
+        atmospheric_composition: AtmosphericComposition {
+            n2: Real::from_ratio(40, 100),
+            o2: Real::ZERO,
+            co2: Real::ZERO,
+            ch4: Real::from_ratio(10, 100),
+            nh3: Real::from_ratio(30, 100),
+            h2o: Real::ZERO,
+            h2: Real::from_ratio(20, 100),
+            ar: Real::ZERO,
+            other: Real::ZERO,
+        },
+        // ~Earth-equivalent surface pressure — inside the Reducing
+        // density / scale-height band so the categorical Atmosphere
+        // label coheres with the numeric pressure.
+        surface_pressure: Real::from_int(101_325),
+        // Sparse: substrate-first contract still requires *some* life
+        // so the ecosystem sampler has tier members to step; an
+        // Ammoniacal world is a candidate for life but historically
+        // sparser than aqueous Earth.
+        biosphere: BiosphereClass::Sparse,
+        biosphere_density: Real::from_ratio(3, 10),
+        magnetosphere: Magnetosphere::Weak,
+        // Ammoniacal worlds' crust is typically basaltic with NH3 /
+        // water-ice deposits; basaltic is the closest balanced match.
+        crust: Crust::Basaltic,
+        crustal_composition: CrustalComposition::empty(),
+        // Stellar irradiance at the Ammoniacal sampling band's
+        // outer-system distance (~2.5 AU): 1361 / 2.5² ≈ 218 W/m².
+        stellar_luminosity: Real::from_int(218),
+        // Ammoniacal sampling band is 1.5-3.5 AU; pick mid-band 2.5 AU.
+        orbital_distance_au: Real::from_ratio(25, 10),
+        moon_count: 0,
+        moons: Vec::new(),
+        orbital_eccentricity_x100: 3,
+        axial_tilt_deg: Real::from_int(20),
+        day_length_hours: Real::from_int(24),
+        orbital_period_months: 48,
+        metabolic_substrate: MetabolicSubstrate::Ammoniacal,
+        substrate_perturbation: Real::ZERO,
+        locking_state: LockingState::FreeRotator,
+        // G-dwarf host star, mid-life. Bolometric scale set to the
+        // planet's per-m² irradiance (~218 W/m²) so the SED breakdown
+        // is consistent with the planet's orbital distance.
+        star: Star::with_age(
+            SpectralType::G,
+            Real::from_int(218),
+            Real::from_ratio(45, 10),
+            Real::from_int(10),
+        ),
+    };
+
+    // Sanity: Earth-mass / Earth-radius gravity should land at ≈ 9.81
+    // m/s². Spot-check that the bulk mass/radius pair didn't silently
+    // invert.
+    let g = planet.gravity().to_f64_for_display();
+    assert!(
+        (9.0..=11.0).contains(&g),
+        "Ammoniacal analog gravity should be ≈ 9.81 m/s² (got {g})",
+    );
+
+    // Build the physics state + ecosystem the same way `run()` does
+    // (mirrors `ecosystem_fixture_for_seed` but uses the manually-
+    // constructed planet so the substrate is pinned). This is the
+    // "build doesn't panic" path — any Q32.32 overflow in init_planet
+    // on an Ammoniacal-reducing fixture would unwind the test here.
+    let cfg = RunConfig::dev(seed, 1);
+    let grid = HexGrid::new(cfg.grid_width, cfg.grid_height);
+    let mut state = PhysicsState::new(grid);
+    init_planet(&mut state, &planet);
+    let n_cells = state.grid().n_cells() as i64;
+    let capacity = {
+        let cap = Real::from_int(n_cells) * planet.biosphere_density;
+        if cap < Real::ONE {
+            Real::ONE
+        } else {
+            cap
+        }
+    };
+    let substrate_tag: &'static str = planet.metabolic_substrate.tag();
+    let mut ecosystem = sim_ecosystem::sample_ecosystem_with_substrate(
+        planet.seed,
+        substrate_tag,
+        capacity,
+    );
+
+    // Assertion: ecosystem must contain at least one species. The
+    // substrate-first contract guarantees every sampled planet carries
+    // a viable trophic web — a zero-species ecosystem here would mean
+    // the Ammoniacal-substrate path produced an empty pool.
+    assert!(
+        !ecosystem.species.is_empty(),
+        "Ammoniacal-substrate ecosystem must have at least one species; \
+         got an empty species map",
+    );
+
+    // Solvent kinetics prefactor (Ammoniacal = 0.4) means slower
+    // chemistry than Earth (Aqueous = 1.0). Pinned via
+    // `solvent_reaction_kinetics_prefactor` so the chemistry layer
+    // picks it up automatically when the planet's substrate is
+    // Ammoniacal. This is the per-substrate Arrhenius-like multiplier
+    // applied to combustion and biofuel-regrowth rates.
+    let kin_ammoniacal = solvent_reaction_kinetics_prefactor(&ChemistrySubstrate::Ammoniacal);
+    let kin_aqueous = solvent_reaction_kinetics_prefactor(&ChemistrySubstrate::Aqueous);
+    assert!(
+        kin_ammoniacal < kin_aqueous,
+        "Ammoniacal kinetics prefactor must be below aqueous baseline \
+         (cold solvent → slower chemistry): ammoniacal={:?}, aqueous={:?}",
+        kin_ammoniacal,
+        kin_aqueous,
+    );
+    assert_eq!(
+        kin_ammoniacal,
+        Real::from_ratio(4, 10),
+        "Ammoniacal kinetics prefactor must be 0.4 (per substrate.rs)"
+    );
+
+    // Run for 1000 ticks. The per-tick step mirrors the production
+    // `run()` loop's ecosystem call: `step_with_biogeochem_at_tick`
+    // couples producer growth ← solar + CO2, respiration → CO2, then
+    // runs the extinction sweep. Existing debug_asserts inside the
+    // step + chemistry layer fire if mass conservation breaks.
+    let solar = planet.stellar_luminosity;
+    let mut min_mean_temp = f64::INFINITY;
+    let mut max_mean_temp = f64::NEG_INFINITY;
+    for tick in 0..1000u64 {
+        let _events = ecosystem.step_with_biogeochem_at_tick(&mut state, solar, tick);
+        // Mean surface temperature (planet-wide aggregate) — the
+        // ecosystem step does not directly mutate temperature, but
+        // chemistry-coupled CO2 flux does feed back through the
+        // radiation law in `run()`; here we sample post-step to make
+        // sure the field hasn't drifted out of the substrate's window
+        // due to a sign-flip in the biogeochem coupling.
+        let temps = state.temperature();
+        let mut sum = Real::ZERO;
+        for t in temps {
+            sum = sum + *t;
+        }
+        let n = temps.len() as i64;
+        let mean = (sum / Real::from_int(n)).to_f64_for_display();
+        if mean < min_mean_temp {
+            min_mean_temp = mean;
+        }
+        if mean > max_mean_temp {
+            max_mean_temp = mean;
+        }
+    }
+
+    // Mean temperature stays in the Ammoniacal liquid range with
+    // slack. The substrate's nominal liquid window is [195, 240] K;
+    // we use [180, 260] K per the spec — catches a sign-flip /
+    // runaway drift while tolerating reasonable equator-pole
+    // variability and future calibration tweaks.
+    assert!(
+        (180.0..=260.0).contains(&min_mean_temp),
+        "mean temperature underflowed Ammoniacal liquid range over 1000 \
+         ticks: min={min_mean_temp} K, max={max_mean_temp} K (expected ~220 K)",
+    );
+    assert!(
+        (180.0..=260.0).contains(&max_mean_temp),
+        "mean temperature overflowed Ammoniacal liquid range over 1000 \
+         ticks: min={min_mean_temp} K, max={max_mean_temp} K (expected ~220 K)",
+    );
+
+    // Ecosystem still has at least one species after 1000 ticks of
+    // stepping. Some extinctions are expected on a sparse-biosphere
+    // planet, but a fully-extinct trophic web would mean the
+    // substrate-first contract was violated mid-run — the Ammoniacal
+    // tolerance envelope should keep at least one pool member alive
+    // through the per-tick extinction sweep.
+    let extant_count = ecosystem
+        .species
+        .values()
+        .filter(|s| s.is_extant)
+        .count();
+    assert!(
+        extant_count >= 1,
+        "expected ≥ 1 extant species after 1000-tick Ammoniacal-analog \
+         run; got {extant_count}",
+    );
+}
