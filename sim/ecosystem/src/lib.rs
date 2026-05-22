@@ -139,6 +139,74 @@ pub const SYNTROPHY_MIN_PARTNER_BIOMASS: (i64, i64) = (1, 100);
 /// tick.
 pub const SYNTROPHY_COLLAPSE_RATE: (i64, i64) = (25, 100);
 
+/// P3.1 — `MutualismKind::SeedDisperser` activation threshold. When
+/// the disperser side's biomass is at or above this fraction of the
+/// planet's producer capacity, the mutualistic flux into the producer
+/// is multiplied by [`SEED_DISPERSER_RANGE_BOOST`] (modelling extended
+/// effective range from the disperser ferrying propagules into new
+/// cells). Below threshold the interaction falls through to the
+/// generic mutualism flux. Calibrated as 0.5% of capacity so a small
+/// disperser cohort can still trigger the boost, but the trigger
+/// requires a real population — not a vanishing trace.
+pub const SEED_DISPERSER_BIOMASS_THRESHOLD: (i64, i64) = (5, 1000);
+/// P3.1 — `MutualismKind::SeedDisperser` flux multiplier applied to
+/// the producer side of the mutualism once the disperser's biomass
+/// clears [`SEED_DISPERSER_BIOMASS_THRESHOLD`]. 1.20× matches the
+/// "extended effective range" intuition: the producer's growth from
+/// the mutualism gets a 20% bump because seeds are reaching new cells.
+pub const SEED_DISPERSER_RANGE_BOOST: (i64, i64) = (120, 100);
+
+/// P3.1 — `MutualismKind::Pollinator` per-unit-biomass coupling
+/// multiplier. The pollinator-side flux into the producer is scaled
+/// by `1 + POLLINATOR_BIOMASS_COUPLING × (pollinator_biomass /
+/// producer_capacity)`, so a pollinator cohort at e.g. 1% of capacity
+/// boosts the flux by 30% (`POLLINATOR_BIOMASS_COUPLING = 30`). The
+/// scaling sits on top of the generic mutualism flux and saturates
+/// gracefully — at very high pollinator biomass the multiplier still
+/// grows linearly, which is fine because the underlying flux is
+/// saturating (Type-II) in the producer side.
+pub const POLLINATOR_BIOMASS_COUPLING: i64 = 30;
+
+/// P3.1 — `MutualismKind::Engineer` per-cell tolerance-match boost
+/// applied to cohabiting species when an engineer is present and
+/// active. Modelled as an additive multiplier on the cohabitor's
+/// growth-derived flux into the species; +10% bump matches the
+/// "shift per-cell habitat" intuition. Cohabitation is defined as
+/// "same `Habitat` tag" since the ecosystem layer doesn't carry
+/// per-cell occupancy — the closest approximation we can make at
+/// this layer.
+pub const ENGINEER_MATCH_BOOST: (i64, i64) = (10, 100);
+
+/// P3.1 — `ParasiteKind::Macro` host fertility multiplier. Macro
+/// parasites (worms, fleas) impose a chronic reproductive cost —
+/// modelled as a 10% extra deduction on the host's biomass on top of
+/// the generic parasitism flux (a hit to the host's growth potential
+/// per tick). The 10% figure mirrors the field-ecology rule of thumb
+/// for chronic helminth burdens on large herbivores.
+pub const MACRO_FERTILITY_MULTIPLIER: (i64, i64) = (10, 100);
+
+/// P3.1 — `ParasiteKind::Micro` crowding-disease scaling. When the
+/// host's biomass exceeds [`MICRO_CROWDING_THRESHOLD`] (5% of producer
+/// capacity), micro parasites (bacteria, protists) impose an
+/// additional -5% biomass hit per tick — modelling the density-
+/// dependent epidemic transmission of crowd diseases. Below the
+/// threshold the host is sparse enough that transmission rate doesn't
+/// add a meaningful extra loss.
+pub const MICRO_SURVIVAL_PENALTY: (i64, i64) = (5, 100);
+pub const MICRO_CROWDING_THRESHOLD: (i64, i64) = (5, 100);
+
+/// P3.1 — `ParasiteKind::Virus` episodic outbreak cadence and
+/// intensity. Every `VIRUS_OUTBREAK_PERIOD` ticks a virus parasite
+/// fires a deterministic SplitMix64-driven hit at
+/// `VIRUS_OUTBREAK_HOST_LOSS` × host biomass (default -30% — matching
+/// the rough field rule for a virgin-soil viral epidemic). Between
+/// outbreaks the interaction is inert (no flux, no biomass change).
+/// The cadence is a hard period (no jitter) so deterministic replay
+/// is byte-stable; the SplitMix step is reserved for tie-breaking
+/// when multiple virus parasites coexist on the same host.
+pub const VIRUS_OUTBREAK_PERIOD: u64 = 100;
+pub const VIRUS_OUTBREAK_HOST_LOSS: (i64, i64) = (30, 100);
+
 /// Per-Chemoautotroph-species growth-demand baseline used by
 /// `partition_chemoautotrophs`. A Chemoautotroph wants to add up to
 /// this fraction of the producer carrying capacity per tick, scaled
@@ -347,7 +415,7 @@ impl PlanetEcosystem {
     pub fn step_at_tick(&mut self, tick: u64) -> Vec<SpeciesExtinct> {
         self.grow_producers();
         self.partition_chemoautotrophs();
-        self.apply_interactions();
+        self.apply_interactions(tick);
         self.enforce_syntrophy();
         self.decay_consumers();
         // P2.5: no post-step Lindeman cap — per-habitat assimilation
@@ -405,7 +473,7 @@ impl PlanetEcosystem {
         // syntrophy enforcement still run alongside the biogeochem
         // coupling so a planet with both layers gets the full stack.
         self.partition_chemoautotrophs();
-        self.apply_interactions();
+        self.apply_interactions(tick);
         self.enforce_syntrophy();
         self.decay_consumers();
         let respired = self.respire_consumers();
@@ -700,7 +768,7 @@ impl PlanetEcosystem {
         total_released
     }
 
-    fn apply_interactions(&mut self) {
+    fn apply_interactions(&mut self, tick: u64) {
         // Snapshot biomasses pre-step so deltas reference a
         // consistent state. Two-pass: build deltas into a separate
         // BTreeMap, apply at end.
@@ -716,7 +784,23 @@ impl PlanetEcosystem {
             .iter()
             .map(|(id, s)| (*id, s.habitat))
             .collect();
+        // Per-species role snapshot — used by the P3.1 differentiated
+        // MutualismKind / ParasiteKind step to look up which side of
+        // an interaction pair is the mutualist / parasite (the role
+        // payload carries the variant).
+        let role_snapshot: BTreeMap<SpeciesId, EcosystemRole> = self
+            .species
+            .iter()
+            .map(|(id, s)| (*id, s.role))
+            .collect();
         let mut deltas: BTreeMap<SpeciesId, Real> = BTreeMap::new();
+
+        // P3.1 Engineer mutualism — collected during the main loop
+        // and applied in a second pass so the +10% match-score boost
+        // hits *all* cohabitors (same Habitat tag), not just direct
+        // interaction partners. Stored as `(engineer_id,
+        // engineer_biomass, host_habitat)`.
+        let mut engineer_events: Vec<(SpeciesId, Real, Habitat)> = Vec::new();
 
         // Iterate pairs in sorted order — BTreeMap iterator is
         // deterministic.
@@ -754,7 +838,7 @@ impl PlanetEcosystem {
             let flux = interaction.strength * pred * per_pred;
 
             match interaction.kind {
-                InteractionKind::Predation | InteractionKind::Parasitism => {
+                InteractionKind::Predation => {
                     // Predator gains a fraction of the flux —
                     // per-habitat Lindeman assimilation (P2.5).
                     // Aquatic predators run ~30:1; flying/amphibious
@@ -772,6 +856,115 @@ impl PlanetEcosystem {
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
                         *deltas.entry(*affected).or_insert(Real::ZERO) - flux;
                 }
+                InteractionKind::Parasitism => {
+                    // P3.1: branch on `ParasiteKind`. The *parasite*
+                    // is whichever side of the pair has the
+                    // `Parasite { kind }` role — typically the
+                    // affector, but we look it up rather than assume.
+                    let parasite_kind = lookup_parasite_kind(
+                        &role_snapshot,
+                        *affector,
+                        *affected,
+                    );
+                    let predator_habitat = habitat_snapshot
+                        .get(affector)
+                        .copied()
+                        .unwrap_or(Habitat::Terrestrial);
+                    let assim = lindeman_assimilation_for_habitat(predator_habitat);
+                    match parasite_kind {
+                        Some(ParasiteKind::Macro) => {
+                            // -10% extra host fertility hit. Models
+                            // the chronic reproductive cost of worms
+                            // / fleas: above the generic flux the
+                            // host loses an additional 10% of the
+                            // flux to suppressed fertility. The
+                            // parasite gains the standard assimilated
+                            // share of the *base* flux only — extra
+                            // fertility damage is "respired-as-heat"
+                            // from the host's growth budget, not
+                            // assimilated tissue.
+                            let fertility_penalty =
+                                flux * Real::from(MACRO_FERTILITY_MULTIPLIER);
+                            *deltas.entry(*affector).or_insert(Real::ZERO) =
+                                *deltas.entry(*affector).or_insert(Real::ZERO)
+                                    + flux * assim;
+                            *deltas.entry(*affected).or_insert(Real::ZERO) =
+                                *deltas.entry(*affected).or_insert(Real::ZERO)
+                                    - flux
+                                    - fertility_penalty;
+                        }
+                        Some(ParasiteKind::Micro) => {
+                            // Crowding-disease scaling — extra -5%
+                            // hit when the host biomass exceeds the
+                            // crowding threshold. Below threshold the
+                            // host is sparse enough that the
+                            // density-dependent transmission rate
+                            // doesn't bite.
+                            let crowding_threshold = Real::from(MICRO_CROWDING_THRESHOLD)
+                                * self.producer_capacity;
+                            let extra = if prey >= crowding_threshold {
+                                prey * Real::from(MICRO_SURVIVAL_PENALTY)
+                            } else {
+                                Real::ZERO
+                            };
+                            *deltas.entry(*affector).or_insert(Real::ZERO) =
+                                *deltas.entry(*affector).or_insert(Real::ZERO)
+                                    + flux * assim;
+                            *deltas.entry(*affected).or_insert(Real::ZERO) =
+                                *deltas.entry(*affected).or_insert(Real::ZERO)
+                                    - flux
+                                    - extra;
+                        }
+                        Some(ParasiteKind::Virus) => {
+                            // Episodic — every VIRUS_OUTBREAK_PERIOD
+                            // ticks the virus fires a deterministic
+                            // hit at -30% host biomass. Between
+                            // outbreaks the pair is inert (no flux,
+                            // no assimilation). The SplitMix64 step
+                            // mixes (tick, affector, affected) so
+                            // multiple virus parasites firing on the
+                            // same tick still produce a stable
+                            // ordering for tie-breaking; the firing
+                            // *condition* is the period gate.
+                            if VIRUS_OUTBREAK_PERIOD != 0
+                                && tick > 0
+                                && tick % VIRUS_OUTBREAK_PERIOD == 0
+                            {
+                                let _ = virus_outbreak_hash(
+                                    tick,
+                                    affector.0,
+                                    affected.0,
+                                );
+                                let host_loss =
+                                    prey * Real::from(VIRUS_OUTBREAK_HOST_LOSS);
+                                // The parasite gains a small share
+                                // (Lindeman-assimilated) of the
+                                // outbreak biomass — viruses
+                                // amplify their own population on a
+                                // successful hit.
+                                *deltas.entry(*affector).or_insert(Real::ZERO) =
+                                    *deltas.entry(*affector).or_insert(Real::ZERO)
+                                        + host_loss * assim;
+                                *deltas.entry(*affected).or_insert(Real::ZERO) =
+                                    *deltas.entry(*affected).or_insert(Real::ZERO)
+                                        - host_loss;
+                            }
+                            // Otherwise inert — no biomass change.
+                        }
+                        None => {
+                            // Pair tagged as Parasitism but neither
+                            // side has a Parasite role payload — fall
+                            // through to the generic
+                            // predation-equivalent path so back-compat
+                            // fixtures don't regress.
+                            *deltas.entry(*affector).or_insert(Real::ZERO) =
+                                *deltas.entry(*affector).or_insert(Real::ZERO)
+                                    + flux * assim;
+                            *deltas.entry(*affected).or_insert(Real::ZERO) =
+                                *deltas.entry(*affected).or_insert(Real::ZERO) - flux;
+                        }
+                    }
+                }
                 InteractionKind::Competition => {
                     // Affector reduces the affected. Symmetric
                     // interactions live in the matrix as two
@@ -781,20 +974,86 @@ impl PlanetEcosystem {
                         *deltas.entry(*affected).or_insert(Real::ZERO) - flux;
                 }
                 InteractionKind::Mutualism => {
-                    // Both sides benefit. Stored as two entries
-                    // (a→b and b→a); each step adds a small
-                    // benefit to the affected side proportional to
-                    // the affector's biomass. The conversion uses
-                    // the *recipient's* habitat — what its
-                    // metabolism turns the gross mutualistic flux
-                    // into biomass.
+                    // P3.1: branch on `MutualismKind`. The *mutualist*
+                    // side carries the variant; the *partner* side
+                    // (typically a Producer) receives the
+                    // differentiated boost.
                     let affected_habitat = habitat_snapshot
                         .get(affected)
                         .copied()
                         .unwrap_or(Habitat::Terrestrial);
                     let assim = lindeman_assimilation_for_habitat(affected_habitat);
+                    let mut effective_flux = flux;
+
+                    // Identify the mutualist side. Either side could
+                    // carry the role (the symmetric pair is stored as
+                    // both directions); the variant we apply to *this*
+                    // direction is determined by whichever side is the
+                    // Mutualist when the affector→affected is into a
+                    // non-Mutualist (e.g. into the producer).
+                    let mutualist_kind = lookup_mutualism_kind(
+                        &role_snapshot,
+                        *affector,
+                        *affected,
+                    );
+                    let recipient_is_mutualist = matches!(
+                        role_snapshot.get(affected),
+                        Some(EcosystemRole::Mutualist { .. })
+                    );
+
+                    match mutualist_kind {
+                        Some(MutualismKind::Pollinator) if !recipient_is_mutualist => {
+                            // Pollinator boosts the producer flux —
+                            // scaling with pollinator biomass relative
+                            // to producer capacity. The pollinator
+                            // side is the *affector* in this branch
+                            // (we already established the recipient
+                            // is not the mutualist), so `pred` is the
+                            // pollinator biomass.
+                            if self.producer_capacity > Real::ZERO {
+                                let coupling = Real::from_int(POLLINATOR_BIOMASS_COUPLING)
+                                    * (pred / self.producer_capacity);
+                                effective_flux = flux + flux * coupling;
+                            }
+                        }
+                        Some(MutualismKind::SeedDisperser) if !recipient_is_mutualist => {
+                            // SeedDisperser extends producer range —
+                            // multiply the flux by 1.20 once the
+                            // disperser's biomass clears the
+                            // threshold. The "extended range" is the
+                            // physical mechanism: seeds reach more
+                            // cells per tick.
+                            let threshold = Real::from(SEED_DISPERSER_BIOMASS_THRESHOLD)
+                                * self.producer_capacity;
+                            if pred >= threshold {
+                                effective_flux = flux * Real::from(SEED_DISPERSER_RANGE_BOOST);
+                            }
+                        }
+                        Some(MutualismKind::Engineer) if !recipient_is_mutualist => {
+                            // Engineer effect — book a cohabitor-wide
+                            // match-score boost for the second pass.
+                            // The recipient (the species we just
+                            // identified as not-mutualist) is the
+                            // engineer's primary host and inherits the
+                            // normal Mutualism flux; cohabitors then
+                            // get the +10% boost applied at the end.
+                            let host_habitat = habitat_snapshot
+                                .get(affected)
+                                .copied()
+                                .unwrap_or(Habitat::Terrestrial);
+                            engineer_events.push((*affector, pred, host_habitat));
+                        }
+                        _ => {
+                            // Generic (or symmetric reverse direction
+                            // where the recipient *is* the mutualist):
+                            // fall through to the standard symmetric
+                            // mutualism flux.
+                        }
+                    }
+
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
-                        *deltas.entry(*affected).or_insert(Real::ZERO) + flux * assim;
+                        *deltas.entry(*affected).or_insert(Real::ZERO)
+                            + effective_flux * assim;
                 }
                 InteractionKind::Commensalism => {
                     // One-way benefit, no effect on the affector.
@@ -817,6 +1076,47 @@ impl PlanetEcosystem {
                     let assim = Real::from((5, 100));
                     *deltas.entry(*affected).or_insert(Real::ZERO) =
                         *deltas.entry(*affected).or_insert(Real::ZERO) + flux * assim;
+                }
+            }
+        }
+
+        // P3.1 Engineer mutualism second pass — apply the +10%
+        // match-score boost to *all* cohabitors (species sharing the
+        // engineer's host's habitat). The boost is a small additive
+        // biomass gain proportional to the cohabitor's biomass and
+        // the engineer's biomass: `Δ = cohabitor × engineer ×
+        // ENGINEER_MATCH_BOOST / producer_capacity`. Scaling by
+        // engineer biomass and dividing by capacity keeps the boost
+        // bounded — a small engineer cohort produces a small bump,
+        // and a planet with a tiny capacity (test fixtures) doesn't
+        // amplify it into a runaway.
+        if self.producer_capacity > Real::ZERO {
+            for (engineer_id, engineer_biomass, host_habitat) in &engineer_events {
+                for (id, role) in &role_snapshot {
+                    if *id == *engineer_id {
+                        continue;
+                    }
+                    // Skip the engineer's own role payload.
+                    if matches!(role, EcosystemRole::Mutualist { .. }) {
+                        continue;
+                    }
+                    let cohabitor_habitat = habitat_snapshot
+                        .get(id)
+                        .copied()
+                        .unwrap_or(Habitat::Terrestrial);
+                    if cohabitor_habitat != *host_habitat {
+                        continue;
+                    }
+                    let cohabitor_biomass = match biomass_snapshot.get(id) {
+                        Some(b) if *b > Real::ZERO => *b,
+                        _ => continue,
+                    };
+                    let boost = cohabitor_biomass
+                        * *engineer_biomass
+                        * Real::from(ENGINEER_MATCH_BOOST)
+                        / self.producer_capacity;
+                    *deltas.entry(*id).or_insert(Real::ZERO) =
+                        *deltas.entry(*id).or_insert(Real::ZERO) + boost;
                 }
             }
         }
@@ -1152,6 +1452,65 @@ fn apply_co2_delta(state: &mut PhysicsState, delta: Real) {
         let next = *c + per_cell;
         *c = if next < Real::ZERO { Real::ZERO } else { next };
     }
+}
+
+/// P3.1 helper — look up the `MutualismKind` of whichever side of the
+/// `(a, b)` pair carries the `Mutualist { kind }` role payload. Returns
+/// `None` if neither side does (back-compat fixtures with hand-built
+/// matrices that use `InteractionKind::Mutualism` on non-mutualist
+/// pairs, or fixtures that don't tag the role at all). When both sides
+/// happen to be mutualists (uncommon but valid — two mutualist species
+/// cooperating), returns the affector's kind so the per-direction
+/// dispatch stays deterministic.
+fn lookup_mutualism_kind(
+    roles: &BTreeMap<SpeciesId, EcosystemRole>,
+    affector: SpeciesId,
+    affected: SpeciesId,
+) -> Option<MutualismKind> {
+    if let Some(EcosystemRole::Mutualist { kind }) = roles.get(&affector) {
+        return Some(*kind);
+    }
+    if let Some(EcosystemRole::Mutualist { kind }) = roles.get(&affected) {
+        return Some(*kind);
+    }
+    None
+}
+
+/// P3.1 helper — look up the `ParasiteKind` of whichever side of the
+/// `(a, b)` pair carries the `Parasite { kind }` role payload. Returns
+/// `None` if neither side does (back-compat fixtures with hand-built
+/// matrices that use `InteractionKind::Parasitism` on non-parasite
+/// pairs). Affector takes precedence — the typical wiring has the
+/// parasite as the affector preying on its host.
+fn lookup_parasite_kind(
+    roles: &BTreeMap<SpeciesId, EcosystemRole>,
+    affector: SpeciesId,
+    affected: SpeciesId,
+) -> Option<ParasiteKind> {
+    if let Some(EcosystemRole::Parasite { kind }) = roles.get(&affector) {
+        return Some(*kind);
+    }
+    if let Some(EcosystemRole::Parasite { kind }) = roles.get(&affected) {
+        return Some(*kind);
+    }
+    None
+}
+
+/// P3.1 helper — SplitMix64-style hash of `(tick, affector_id,
+/// affected_id)`. Used by the virus-parasite branch to derive a
+/// deterministic tie-break order when multiple virus parasites fire
+/// on the same outbreak tick. The cadence (period gate) is the firing
+/// condition; this hash exists so future extensions (e.g. random
+/// host-shopping among multiple candidates) have a deterministic
+/// stream available without revisiting the call site.
+#[must_use]
+pub fn virus_outbreak_hash(tick: u64, affector: u32, affected: u32) -> u64 {
+    let mut z = tick
+        .wrapping_add((affector as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .wrapping_add((affected as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// Evaluate a functional response. `prey` is the affected species'
