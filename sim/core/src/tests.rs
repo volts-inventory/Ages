@@ -1334,3 +1334,293 @@ fn titan_analog_run_produces_credible_state() {
          got {extant_count}",
     );
 }
+
+// ---------------------------------------------------------------------
+// T18: M-dwarf habitable-zone tidally-locked planet end-to-end test.
+//
+// M-dwarfs (Sprint 5 Item 18) flare ~100× as often as G-dwarfs, and
+// their habitable-zone planets sit close enough to the star to tidal-
+// lock (Item 19 / 24). T18 verifies that a planet at the intersection
+// of all three traits — M-dwarf host, `LockingState::Synchronous`
+// rotation, HZ-equivalent orbital insolation — exercises every
+// wiring path cleanly:
+//
+//   1. P1.5 day-night temperature gradient (radiation law swaps the
+//      per-row zonal-mean for a per-cell great-circle distance from
+//      the fixed sub-stellar point).
+//   2. Item 19 fixed sub-stellar point (`sub_stellar_point` returns
+//      a constant for Synchronous regardless of macro-step).
+//   3. Item 18 / T18 spectral-aware solar-flare cadence (100× G-dwarf
+//      base rate → flares fire inside 1000 ticks where a G-dwarf
+//      equivalent fires zero).
+//   4. Catastrophe + ecosystem survival under sustained flaring (the
+//      eco-species pool retains extant entries across 1000 ticks).
+// ---------------------------------------------------------------------
+
+/// Build a fully-formed Planet with the requested host-star spectral
+/// type, `LockingState`, and HZ-equivalent insolation. Mass / radius
+/// are set to the "small rocky" end of the substrate's range (0.5
+/// Earth mass, 0.7 Earth radii — typical M-dwarf HZ planet) and the
+/// rest of the bulk properties are pinned to a calm Earth-like
+/// baseline so the test isolates the star / locking variables.
+///
+/// `flare_capable` controls whether the planet's magnetosphere /
+/// luminosity satisfy `solar_flare_fires`. Set true for the M-dwarf
+/// fixture; the G-dwarf comparison fixture keeps the same to isolate
+/// the spectral-class effect on the firing cadence.
+fn m_dwarf_hz_planet_fixture(
+    spectral: SpectralType,
+    locking: LockingState,
+    flare_capable: bool,
+) -> Planet {
+    Planet {
+        seed: 0,
+        name: "T18-Fixture".to_string(),
+        // 0.5 Earth mass, 0.7 Earth radii — typical M-dwarf HZ
+        // rocky planet (Trappist-1e-equivalent). Gravity derives
+        // from `g = EARTH_G × M / R²` → ~1.0× Earth surface gravity
+        // for this combination (the mass/radius shrink track each
+        // other so habitability stays high).
+        mass: Real::from_ratio(5, 10),
+        radius: Real::from_ratio(7, 10),
+        composition: Composition::Rocky,
+        // Mean / gradient: Earth-like calm baseline so the per-cell
+        // day-night gradient (the P1.5 wiring under test) is the
+        // primary modulator of cell-T differences, not bulk planet
+        // gradient noise.
+        mean_temperature: Real::from_int(288),
+        temperature_gradient: Real::from_int(20),
+        terrain_peak: Real::from_int(8000),
+        terrain_centre_q: 0,
+        terrain_centre_r: 0,
+        sea_level: Real::from_int(2000),
+        atmosphere: sim_world::Atmosphere::Oxidising,
+        atmospheric_composition: AtmosphericComposition::vacuum(),
+        biosphere_density: Real::from_ratio(5, 10),
+        crustal_composition: CrustalComposition::empty(),
+        surface_pressure: Real::from_int(101_325),
+        biosphere: BiosphereClass::Lush,
+        // `solar_flare_fires` gates on Weak / None magnetosphere AND
+        // stellar_luminosity ≥ 1500. Set both to satisfy the gate
+        // when `flare_capable`; an M-dwarf HZ planet routinely loses
+        // its atmosphere to stellar wind so a weak magnetosphere is
+        // the realistic baseline.
+        magnetosphere: if flare_capable {
+            sim_world::Magnetosphere::Weak
+        } else {
+            sim_world::Magnetosphere::Strong
+        },
+        crust: Crust::Basaltic,
+        // HZ-equivalent insolation: M-dwarf nominal luminosity is
+        // 0.04 Lsun, but the HZ inner edge is at ~0.18 AU, so the
+        // *per-m² irradiance at the planet* matches Earth's 1361 W/m².
+        // We pin the per-planet irradiance to the flare-firing
+        // threshold (1500 W/m² ≈ slightly inside the HZ inner edge,
+        // which is exactly the close-in M-dwarf HZ situation).
+        stellar_luminosity: Real::from_int(1_500),
+        // HZ-equivalent orbital distance for an M-dwarf with 0.04 Lsun:
+        // `d = sqrt(L/Lsun) × 1 AU ≈ 0.2 AU`.
+        orbital_distance_au: Real::from_ratio(2, 10),
+        moon_count: 0,
+        moons: vec![],
+        orbital_eccentricity_x100: 2,
+        axial_tilt_deg: Real::from_int(23),
+        // Synchronous-locked: rotation period equals orbit period.
+        // M-dwarf HZ orbital period ~ 6 days = 144 hours.
+        day_length_hours: Real::from_int(144),
+        orbital_period_months: 12,
+        metabolic_substrate: MetabolicSubstrate::Aqueous,
+        substrate_perturbation: Real::ZERO,
+        locking_state: locking,
+        // M-dwarf host: 0.04 Lsun nominal, 1000 Gyr lifetime, 5 Gyr
+        // age (a mature mid-life M dwarf). The `bolometric_at_planet`
+        // argument feeds the SED breakdown — we pass 1361 W/m² so
+        // the per-channel fluxes land near Earth-on-Sun magnitudes
+        // (the HZ-equivalent irradiance for this planet).
+        star: Star::with_age(
+            spectral,
+            Real::from_int(1_361),
+            Real::from_int(5),
+            spectral.nominal_lifetime_gyr(),
+        ),
+    }
+}
+
+#[test]
+fn m_dwarf_hz_locked_planet_runs_cleanly() {
+    // --- 1. Construct the M-dwarf + Synchronous + HZ fixture and
+    //        a G-dwarf comparison fixture (same locking + flare
+    //        gating; only the spectral class differs).
+    let m_planet = m_dwarf_hz_planet_fixture(
+        SpectralType::M,
+        LockingState::Synchronous,
+        true,
+    );
+    let g_planet = m_dwarf_hz_planet_fixture(
+        SpectralType::G,
+        LockingState::Synchronous,
+        true,
+    );
+
+    // --- 2. P1.5 wiring active: day-side / night-side temperature
+    //        gradient. Build the planet's Radiation law, integrate
+    //        the per-tick relaxation toward equilibrium for 500
+    //        ticks on a 1-row 8-cell strip (latitudinal cooling
+    //        suppressed so the day-night gradient is the only
+    //        modulator), then assert the sub-stellar cell (q=0)
+    //        sits warmer than the antistellar cell (q=4).
+    let (sub_lat_m, sub_lon_m) = sim_world::sub_stellar_point(&m_planet, 0);
+    let rad_m = sim_physics::Radiation::for_planet(
+        1,                       // 1-row strip
+        m_planet.stellar_luminosity,
+        30,                      // 30% albedo
+        Real::ZERO,              // no greenhouse forcing
+        0,                       // no axial tilt
+        0,                       // no seasonal cycle
+        0,                       // circular orbit
+        m_planet.day_length_hours,
+    )
+    .with_locking(sim_physics::LockingMode::Synchronous, sub_lat_m, sub_lon_m);
+    let mut state = sim_physics::PhysicsState::new(sim_physics::HexGrid::new(8, 1));
+    for t in state.temperature_mut() {
+        *t = Real::from_int(280);
+    }
+    {
+        use sim_physics::Law;
+        for _ in 0..500 {
+            rad_m.integrate(&mut state, Real::ONE);
+        }
+    }
+    let day_t = state.temperature()[0];
+    let night_t = state.temperature()[4];
+    assert!(
+        day_t > night_t,
+        "P1.5 wiring: sub-stellar cell must be warmer than antistellar \
+         cell on a Synchronous-locked planet (got day={day_t:?} night={night_t:?})",
+    );
+
+    // --- 3. Item 19 wiring active: sub-stellar point is fixed
+    //        across macro-steps for `LockingState::Synchronous`.
+    let p_t0 = sim_world::sub_stellar_point(&m_planet, 0);
+    let p_t500 = sim_world::sub_stellar_point(&m_planet, 500);
+    let p_t1000 = sim_world::sub_stellar_point(&m_planet, 1000);
+    assert_eq!(
+        p_t0, p_t500,
+        "Item 19 wiring: Synchronous sub-stellar point must be fixed across 500 ticks",
+    );
+    assert_eq!(
+        p_t0, p_t1000,
+        "Item 19 wiring: Synchronous sub-stellar point must remain fixed at t=1000",
+    );
+
+    // --- 4. Spectral-aware flare-rate ordering: an M-dwarf's
+    //        per-tick flare rate is 100× the G-dwarf baseline (the
+    //        Item 18 calibration that drives T18's catastrophe-
+    //        cadence wiring).
+    let m_flare_rate = m_planet.star.flare_rate_per_tick();
+    let g_flare_rate = g_planet.star.flare_rate_per_tick();
+    assert_eq!(
+        m_flare_rate,
+        g_flare_rate * Real::from_int(100),
+        "Item 18 wiring: M-dwarf flare rate must be 100× G-dwarf baseline",
+    );
+
+    // --- 5. Drive the catastrophe path for 1000 ticks on both the
+    //        M-dwarf and G-dwarf fixtures and count solar-flare
+    //        firings. The trigger uses a spectral-class-aware
+    //        firing period (`base / 100` for M, `base` for G), so
+    //        the M-dwarf must fire at least one flare in 1000 ticks
+    //        while the G-dwarf (base period ~18804) fires zero —
+    //        proving the catastrophe path is spectral-aware.
+    let recognition = sim_recognition::RecognitionLibrary::earth_like_default();
+    // Species derived from a sampled planet so the species-derived
+    // tolerance envelope + dormancy + cosmology fields are populated
+    // (`Species::default` isn't a thing; deriving from a sampled
+    // planet is the canonical construction path used by every other
+    // test in this file).
+    let template_planet = sim_world::sample_planet(42);
+    let species = sim_species::derive(&template_planet, &recognition);
+
+    fn run_1000_ticks(
+        planet: &Planet,
+        species: &sim_species::Species,
+    ) -> (usize, sim_ecosystem::PlanetEcosystem) {
+        let grid = sim_physics::HexGrid::new(8, 8);
+        let mut state = sim_physics::PhysicsState::new(grid);
+        sim_world::init_planet(&mut state, planet);
+        // Pin the densest cell's temperature / pressure to centre-
+        // of-aqueous-envelope values so the post-flare tolerance
+        // gate doesn't accidentally bottleneck the species'
+        // match_score below the radiation axis (mirrors the
+        // canonical `extremophile_species_survives_solar_flare_better_than_aqueous`
+        // fixture's setup).
+        state.temperature_mut()[0] = Real::from_int(300);
+        state.pressure_mut()[0] = Real::from_int(101_325);
+        let mut civ = sim_civ::Civ::new(1, 0, sim_arith::Pop::from_int(1_000_000));
+        // Producer biomass high so the disease trigger doesn't
+        // preempt the solar-flare path (crowding stays below 0.8).
+        civ.producer_biomass = Real::from_int(100);
+        let capacity = Real::from_int(state.grid().n_cells() as i64) * planet.biosphere_density;
+        let mut eco = sim_ecosystem::sample_ecosystem_with_substrate(
+            planet.seed,
+            planet.metabolic_substrate.tag(),
+            capacity.max(Real::ONE),
+        );
+        let mut flares = 0usize;
+        for tick in 0..1000u64 {
+            // Step the ecosystem each tick so the per-tick biogeochem
+            // path is exercised end-to-end (same coupling sim-core's
+            // `run()` uses).
+            let _ = eco.step_with_biogeochem_at_tick(
+                &mut state,
+                planet.stellar_luminosity,
+                tick,
+            );
+            if let Some(rec) = sim_civ::catastrophe::check_and_apply(
+                &mut civ,
+                &mut state,
+                planet,
+                species,
+                tick,
+                Some(&mut eco),
+            ) {
+                if matches!(rec.kind, sim_civ::catastrophe::CatastropheKind::SolarFlare) {
+                    flares += 1;
+                }
+            }
+        }
+        (flares, eco)
+    }
+
+    let (m_flares, m_eco) = run_1000_ticks(&m_planet, &species);
+    let (g_flares, _g_eco) = run_1000_ticks(&g_planet, &species);
+
+    // --- 6. Catastrophe path fires solar flares more frequently on
+    //        the M-dwarf than the G-dwarf equivalent. Concretely:
+    //        the M-dwarf flares ≥ 1× within 1000 ticks (period ~188);
+    //        the G-dwarf flares 0× (period ~18804, well beyond the
+    //        1000-tick window). The strict inequality proves the
+    //        T18 spectral-aware firing wiring is live.
+    assert!(
+        m_flares >= 1,
+        "T18 wiring: M-dwarf must fire at least one solar flare in 1000 ticks \
+         (period ~188); got {m_flares}",
+    );
+    assert!(
+        m_flares > g_flares,
+        "T18 wiring: M-dwarf flare count ({m_flares}) must exceed G-dwarf flare count ({g_flares}) \
+         in a 1000-tick window — proves the catastrophe path is spectral-class-aware",
+    );
+
+    // --- 7. At least one species persists through 1000 ticks of
+    //        sustained M-dwarf flaring. The ecosystem starts with
+    //        multiple eco-species (producers + consumers + decomposers
+    //        + parasites); even after a flare-driven catastrophe pass
+    //        the extant-pool must not collapse to zero.
+    let extant_count = m_eco.species.values().filter(|s| s.is_extant).count();
+    assert!(
+        extant_count >= 1,
+        "T18 survival: at least one eco-species must persist through 1000 ticks \
+         of M-dwarf flaring; extant count={extant_count}",
+    );
+}
