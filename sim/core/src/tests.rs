@@ -1055,3 +1055,282 @@ fn super_earth_run_with_2g_gravity_does_not_overflow() {
          initial species"
     );
 }
+
+// ---------------------------------------------------------------------
+// T15 — Titan-class (Hydrocarbon substrate) end-to-end calibration test.
+//
+// `MetabolicSubstrate::Hydrocarbon` exists in the substrate enum and is
+// reachable through the normal `sample_planet` distribution, but no
+// integration test pins the behaviour of an end-to-end run on a
+// non-Earth substrate. This test builds a Titan-equivalent planet
+// manually (substrate = Hydrocarbon, T_surface = 94 K, dense methane
+// atmosphere, low gravity from low mass + radius), wires it into the
+// same physics + ecosystem fixture the production `run()` builds, and
+// drives the per-tick ecosystem step for 1000 ticks. Assertions stay
+// loose — the goal is to catch chemistry blowups, Q32.32 overflow,
+// extreme temperature drift, or ecosystem crashes on a substrate well
+// outside the Aqueous default.
+// ---------------------------------------------------------------------
+
+#[test]
+fn titan_analog_run_produces_credible_state() {
+    use sim_physics::{HexGrid, PhysicsState, Substance};
+    use sim_world::{init_planet, planet_name_from_seed, Atmosphere, Magnetosphere};
+
+    // Titan-equivalent worldgen. Real Titan facts (used as anchors;
+    // sampling within the Hydrocarbon substrate's tolerance window):
+    //   - Surface temperature ≈ 94 K (well within the substrate's
+    //     90-180 K liquid range; CH4/C2H6 are liquid at the surface).
+    //   - Atmospheric pressure ≈ 146.7 kPa (1.45 × Earth, mostly N2
+    //     with ~1.4% CH4).
+    //   - Mass ≈ 0.0225 Earth masses; radius ≈ 0.404 Earth radii.
+    //     Derived gravity ≈ 9.81 × 0.0225 / 0.404² ≈ 1.35 m/s²
+    //     (Titan ≈ 1.35 m/s² — matches).
+    //   - Orbits Saturn at ~9.5 AU from the Sun; Saturn's a G-type
+    //     proxy here (we don't model planet-around-planet orbits, so
+    //     the host star sits at the Saturn-equivalent orbital distance).
+    //   - Dense methane-N2 reducing/hazy atmosphere with tholin haze.
+    //     We pick `Atmosphere::Hazy` since the spec calls out
+    //     "ReducingThick" which doesn't exist as a variant — Hazy is
+    //     the closest match for a thick CH4/N2 mixture (Titan-style).
+    //
+    // Pick a fixed seed so the run is bit-for-bit reproducible. The
+    // seed only drives the `planet_name_from_seed` lookup + the
+    // ecosystem / RNG streams downstream; the planet bulk properties
+    // are pinned by this fixture rather than sampled.
+    let seed: u64 = 0x1517_1774_44EE_5EED;
+    let planet = Planet {
+        seed,
+        name: planet_name_from_seed(seed),
+        // Titan: 0.0225 Earth masses. Real::from_ratio(225, 10_000).
+        mass: Real::from_ratio(225, 10_000),
+        // Titan: 0.404 Earth radii. Real::from_ratio(404, 1000).
+        radius: Real::from_ratio(404, 1000),
+        // Rocky composition so init_planet keeps the latitude-
+        // driven surface temperature (GaseousShell would override
+        // every cell to 700 K, blowing the Hydrocarbon range).
+        composition: Composition::Rocky,
+        // Surface temperature 94 K — inside the Hydrocarbon
+        // substrate's [90, 180] K liquid range and matches Titan.
+        mean_temperature: Real::from_int(94),
+        // Modest equator-to-pole gradient (Titan's atmospheric
+        // circulation keeps the surface within a few K).
+        temperature_gradient: Real::from_int(5),
+        // Modest topography — Titan's highest peaks sit ~3300 m
+        // above the abyssal plain (cryovolcanic ridges +
+        // hydrocarbon-eroded mesas).
+        terrain_peak: Real::from_int(3_500),
+        terrain_centre_q: 4,
+        terrain_centre_r: 4,
+        // Hydrocarbon lakes are shallow (Ligeia Mare ~170 m
+        // deep); the sea_level here is the abyssal-plain offset,
+        // not the lake depth — keep modest.
+        sea_level: Real::from_int(1_500),
+        // Hazy is the closest Atmosphere variant to Titan's dense
+        // CH4/N2 layered haze (the spec's "ReducingThick" name
+        // doesn't exist as a variant; Hazy carries the right
+        // density and scale height — 5.4 kg/m³, 21 km scale).
+        atmosphere: Atmosphere::Hazy,
+        // Titan composition: ~95% N2, ~4.9% CH4, traces of H2/Ar.
+        // Mass fractions roughly: N2 ≈ 0.95, CH4 ≈ 0.05.
+        atmospheric_composition: AtmosphericComposition {
+            n2: Real::from_ratio(95, 100),
+            o2: Real::ZERO,
+            co2: Real::ZERO,
+            ch4: Real::from_ratio(5, 100),
+            nh3: Real::ZERO,
+            h2o: Real::ZERO,
+            h2: Real::ZERO,
+            ar: Real::ZERO,
+            other: Real::ZERO,
+        },
+        // 146.7 kPa = 146 700 Pa (Titan's measured surface
+        // pressure, ~1.45 × Earth). Inside the Hazy band
+        // (80 000-300 000 Pa) so the categorical label coheres
+        // with the value.
+        surface_pressure: Real::from_int(146_700),
+        // Sparse: Titan has no confirmed biosphere; the substrate-
+        // first contract still requires *some* life so the
+        // ecosystem sampler has tier members to step.
+        biosphere: BiosphereClass::Sparse,
+        biosphere_density: Real::from_ratio(2, 10),
+        magnetosphere: Magnetosphere::None,
+        // Titan's crust is dominated by water ice + tholin haze
+        // deposits + hydrocarbon sediments — Hydrocarbon-archetype.
+        crust: Crust::Hydrocarbon,
+        crustal_composition: CrustalComposition::empty(),
+        // Stellar irradiance at 9.5 AU ≈ 1361 / 9.5² ≈ 15 W/m².
+        stellar_luminosity: Real::from_int(15),
+        // Titan orbits Saturn at ~9.5 AU heliocentric.
+        orbital_distance_au: Real::from_ratio(95, 10),
+        moon_count: 0,
+        moons: Vec::new(),
+        orbital_eccentricity_x100: 5,
+        axial_tilt_deg: Real::from_int(27),
+        // Titan's day = 15.95 Earth days ≈ 382 hours.
+        day_length_hours: Real::from_int(382),
+        orbital_period_months: 12,
+        metabolic_substrate: MetabolicSubstrate::Hydrocarbon,
+        substrate_perturbation: Real::ZERO,
+        locking_state: LockingState::FreeRotator,
+        // G-dwarf host star, mid-life (Saturn orbits the Sun).
+        // `Star::with_age` adjusts the bolometric luminosity at the
+        // sampled `stellar_luminosity` for age — pass the same
+        // irradiance so the SED is consistent.
+        star: Star::with_age(
+            SpectralType::G,
+            Real::from_int(15),
+            Real::from_ratio(45, 10),
+            Real::from_int(10),
+        ),
+    };
+
+    // Sanity: gravity should land near Titan's ≈ 1.35 m/s² (0.225 /
+    // 0.404² × 9.81). This is a spot-check that the bulk
+    // mass/radius pair didn't silently invert.
+    let g = planet.gravity().to_f64_for_display();
+    assert!(
+        (1.0..=2.0).contains(&g),
+        "Titan analog gravity should be ≈ 1.35 m/s² (got {g})",
+    );
+
+    // Build the physics state + ecosystem the same way `run()` does
+    // (mirrors `ecosystem_fixture_for_seed` but uses the manually-
+    // constructed planet so the substrate is pinned).
+    let cfg = RunConfig::dev(seed, 1);
+    let grid = HexGrid::new(cfg.grid_width, cfg.grid_height);
+    let mut state = PhysicsState::new(grid);
+    init_planet(&mut state, &planet);
+    let n_cells = state.grid().n_cells() as i64;
+    let capacity = {
+        let cap = Real::from_int(n_cells) * planet.biosphere_density;
+        if cap < Real::ONE {
+            Real::ONE
+        } else {
+            cap
+        }
+    };
+    let substrate_tag: &'static str = planet.metabolic_substrate.tag();
+    let mut ecosystem = sim_ecosystem::sample_ecosystem_with_substrate(
+        planet.seed,
+        substrate_tag,
+        capacity,
+    );
+
+    // Assertion: ecosystem must contain at least one species. The
+    // substrate-first contract guarantees every sampled planet
+    // carries a viable trophic web — a zero-species ecosystem here
+    // would mean the Hydrocarbon-substrate path produced an empty
+    // pool.
+    assert!(
+        !ecosystem.species.is_empty(),
+        "Hydrocarbon-substrate ecosystem must have at least one species; \
+         got an empty species map",
+    );
+
+    // Snapshot the initial methane column so the per-tick assertion
+    // can verify bounded vapour-proxy levels. We take the sum so a
+    // single cell's runaway doesn't get hidden by row averaging.
+    let initial_methane_sum: Real = state
+        .substance(Substance::Methane.idx())
+        .iter()
+        .copied()
+        .fold(Real::ZERO, |a, b| a + b);
+
+    // Run for 1000 ticks. The per-tick step mirrors the production
+    // `run()` loop's ecosystem call: `step_with_biogeochem_at_tick`
+    // couples producer growth ← solar + CO2, respiration → CO2,
+    // then runs the extinction sweep. Existing debug_asserts inside
+    // the step + chemistry layer fire if mass conservation breaks.
+    let solar = planet.stellar_luminosity;
+    let mut min_mean_temp = f64::INFINITY;
+    let mut max_mean_temp = f64::NEG_INFINITY;
+    let mut max_methane_sum = Real::ZERO;
+    for tick in 0..1000u64 {
+        let _events = ecosystem.step_with_biogeochem_at_tick(&mut state, solar, tick);
+        // Mean surface temperature (planet-wide aggregate) — the
+        // ecosystem step does not directly mutate temperature, but
+        // chemistry-coupled CO2 flux does feed back through the
+        // radiation law in `run()`; here we sample post-step to make
+        // sure the field hasn't drifted out of the substrate's window
+        // due to a sign-flip in the biogeochem coupling.
+        let temps = state.temperature();
+        let mut sum = Real::ZERO;
+        for t in temps {
+            sum = sum + *t;
+        }
+        let n = temps.len() as i64;
+        let mean = (sum / Real::from_int(n)).to_f64_for_display();
+        if mean < min_mean_temp {
+            min_mean_temp = mean;
+        }
+        if mean > max_mean_temp {
+            max_mean_temp = mean;
+        }
+        // Methane column sum — the spec's "vapour level (Methane
+        // proxy)" assertion. The radiation law decays CH4 per tick
+        // (× 0.999) but we don't call radiation here, so the column
+        // should stay near its `init_planet`-imprinted level. The
+        // bound is loose: any positive finite value is acceptable as
+        // long as it didn't blow up to Q32.32 saturation.
+        let methane_sum: Real = state
+            .substance(Substance::Methane.idx())
+            .iter()
+            .copied()
+            .fold(Real::ZERO, |a, b| a + b);
+        if methane_sum > max_methane_sum {
+            max_methane_sum = methane_sum;
+        }
+    }
+
+    // Mean temperature stays in the Hydrocarbon liquid range (with
+    // slack — the assertion's purpose is to catch sign-flip /
+    // runaway drift, not to pin the value). The substrate's nominal
+    // range is [90, 180] K; we use [80, 200] as the slack band for
+    // the per-tick mean (catastrophe-free run shouldn't drift more
+    // than 10 K from the worldgen-imprinted 94 K, but the assertion
+    // tolerates a wider envelope to keep the canary stable across
+    // future calibration tweaks).
+    assert!(
+        (80.0..=200.0).contains(&min_mean_temp),
+        "mean temperature underflowed Hydrocarbon liquid range over 1000 ticks: \
+         min={min_mean_temp} K, max={max_mean_temp} K (expected ~94 K)",
+    );
+    assert!(
+        (80.0..=200.0).contains(&max_mean_temp),
+        "mean temperature overflowed Hydrocarbon liquid range over 1000 ticks: \
+         min={min_mean_temp} K, max={max_mean_temp} K (expected ~94 K)",
+    );
+
+    // Vapour-proxy (Methane) column stayed bounded. Initial value
+    // is whatever `init_planet` imprinted; we accept up to 10×
+    // growth as "bounded" — a Q32.32 saturation or sign-flip would
+    // blow past that by many orders of magnitude.
+    let initial_f = initial_methane_sum.to_f64_for_display();
+    let max_f = max_methane_sum.to_f64_for_display();
+    assert!(
+        max_f.is_finite() && max_f >= 0.0,
+        "methane column went non-finite or negative: initial={initial_f}, max={max_f}",
+    );
+    let upper_bound = (initial_f.abs() + 1.0) * 10.0;
+    assert!(
+        max_f <= upper_bound,
+        "methane column blew past the 10× initial bound: initial={initial_f}, \
+         max={max_f}, upper_bound={upper_bound}",
+    );
+
+    // Ecosystem still has at least one species after 1000 ticks of
+    // stepping (some extinctions are expected on a sparse-biosphere
+    // planet, but a fully-extinct Lindeman pyramid would mean the
+    // substrate-first contract was violated mid-run).
+    let extant_count = ecosystem
+        .species
+        .values()
+        .filter(|s| s.is_extant)
+        .count();
+    assert!(
+        extant_count >= 1,
+        "expected ≥ 1 extant species after 1000-tick Titan-analog run; \
+         got {extant_count}",
+    );
+}
