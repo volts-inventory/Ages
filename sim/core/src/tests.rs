@@ -154,7 +154,14 @@ fn knowledge_transmits_across_collapse_boundary() {
     // restored the seed-42 chain robustly. Uses CountingEmitter
     // so the in-memory event log doesn't blow up at month-
     // grained ticks.
-    let cfg = RunConfig::dev(42, 1000 * protocol::MONTHS_PER_YEAR);
+    //
+    // F5 (post-Item-21 RNG shift): seed re-pinned 42 → 1024 for
+    // the same reason as the non-ignored canaries in PR #78 —
+    // seed 42's planet no longer produces civs (and thus no
+    // cross-civ transmissions) within 1000 sim-years under the
+    // Items-12-24 wiring. Seed 1024 is the canonical post-
+    // Item-21 producer (see `figure_born_events_emitted_for_founding_band`).
+    let cfg = RunConfig::dev(1024, 1000 * protocol::MONTHS_PER_YEAR);
     let mut counter = CountingEmitter::new();
     run(&cfg, &mut counter).unwrap();
     let transmissions = counter.count("knowledge_transmitted");
@@ -167,7 +174,13 @@ fn knowledge_transmits_across_collapse_boundary() {
 #[test]
 #[ignore = "slow: runs 1000 sim-years; use --include-ignored for full check"]
 fn successor_civs_found_after_collapse() {
-    let cfg = RunConfig::dev(42, 1000 * protocol::MONTHS_PER_YEAR);
+    // F5 (post-Item-21 RNG shift): seed re-pinned 42 → 1024 for
+    // the same reason as the non-ignored canaries in PR #78 —
+    // seed 42's planet no longer crosses the joint emergence
+    // gate, so we never see the inaugural civ, let alone a
+    // successor. Seed 1024 is the canonical post-Item-21
+    // producer.
+    let cfg = RunConfig::dev(1024, 1000 * protocol::MONTHS_PER_YEAR);
     let mut counter = CountingEmitter::new();
     run(&cfg, &mut counter).unwrap();
     let founded_count = counter.count("civ_founded");
@@ -182,9 +195,15 @@ fn successor_civs_found_after_collapse() {
 fn collapse_fires_in_long_enough_run_with_no_discoveries() {
     // 2000 years gives the calmer mortality plus the
     // species-derived discovery cadence enough room for at
-    // least one collapse to fire on seed 42 (cognition ≈ 0.2,
+    // least one collapse to fire (cognition ≈ 0.2,
     // so attempt_period ≈ 26).
-    let cfg = RunConfig::dev(42, 2000 * protocol::MONTHS_PER_YEAR);
+    //
+    // F5 (post-Item-21 RNG shift): seed re-pinned 42 → 1024 for
+    // the same reason as the non-ignored canaries in PR #78 —
+    // seed 42's planet no longer crosses the joint emergence
+    // gate, so no civ exists to collapse. Seed 1024 is the
+    // canonical post-Item-21 producer.
+    let cfg = RunConfig::dev(1024, 2000 * protocol::MONTHS_PER_YEAR);
     let mut counter = CountingEmitter::new();
     run(&cfg, &mut counter).unwrap();
     assert!(
