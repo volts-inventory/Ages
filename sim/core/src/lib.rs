@@ -24,7 +24,7 @@ use sim_ecosystem::{
 use sim_events::Emitter;
 use sim_physics::{HexGrid, OrchestratorState, PhysicsState};
 use sim_recognition::RecognitionLibrary;
-use sim_species::SpeciesId;
+use sim_species::{EcosystemRole, Fission, Lifecycle, MutualismKind, ParasiteKind, SpeciesId};
 use sim_world::{init_planet, sample_planet, Atmosphere, Composition, Magnetosphere};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -152,15 +152,15 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     // ecosystem. The species registry feeds `step_speciation` (which
     // reads a parent `Species` from the registry to derive daughters)
     // and `step_hgt` (which iterates Microbial species to swap traits).
-    // The civ-bearing `species` derived above is *not* an ecosystem
+    // The civ-bearing `species` derived below is *not* an ecosystem
     // species record — those are the trophic-tier members sampled by
-    // `sample_ecosystem_with_substrate`. Until the per-trait species
-    // registry is wired in (P1+), the registry stays empty: the per-
-    // tick step still runs (extinction sweep + biogeochem are gated
-    // on the ecosystem's own species map, not the registry), but no
-    // daughter species or HGT events will fire. The events still flow
-    // through the emitter when they do — that's the wire-up this PR
-    // is responsible for.
+    // `sample_ecosystem_with_substrate`. The registry is populated
+    // (F1) just after the civ-bearing `species` is built: each
+    // `EcoSpecies` becomes a per-trait `Species` entry derived from
+    // the civ-bearing template, with `role` taken from `eco.role`
+    // and `lifecycle` mapped from the role so the per-tick speciation
+    // (polyploid path → `Lifecycle::Plant`) and HGT (≥ 2
+    // `Lifecycle::Microbial` species) paths can actually fire.
     let mut species_registry: BTreeMap<SpeciesId, sim_species::Species> = BTreeMap::new();
     let mut speciation_tracker = SpeciationTracker::new();
 
@@ -213,6 +213,49 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
     // species canon as `species.discovered_templates`.
     let mut species = sim_species::derive(&planet, &recognition);
     emitter.emit(&Event::Species(species_to_event(&species)))?;
+
+    // F1: populate `species_registry` from the ecosystem's
+    // `EcoSpecies` entries so `step_speciation` and `step_hgt`
+    // actually have parents to derive daughters from / Microbial
+    // pairs to swap traits between. Each `EcoSpecies` becomes a
+    // per-trait `Species` derived from the civ-bearing template
+    // (so modalities, manipulation, cognition, tolerances inherit
+    // sensibly), with three role-driven overrides:
+    //   - `role` ← `eco.role` (so daughters inherit the trophic tier).
+    //   - `seed` ← `planet.seed.wrapping_add(eco.species_id.0)` so
+    //     per-EcoSpecies sampling (and the divergence-pull hashes
+    //     used by `derive_daughter_species`) are distinct between
+    //     ecosystem members.
+    //   - `lifecycle` ← role-mapped so the speciation/HGT paths
+    //     have a non-empty pool: Producer → Plant (polyploid
+    //     speciation path); micro-Parasite / Virus / Saprotroph /
+    //     Detritivore → Microbial (HGT path); everything else
+    //     keeps the civ-bearing Vertebrate default.
+    for eco in ecosystem.species.values() {
+        let mut s = species.clone();
+        s.seed = planet.seed.wrapping_add(u64::from(eco.species_id.0));
+        s.name = format!("{}-eco{}", species.name, eco.species_id.0);
+        s.role = eco.role;
+        s.lifecycle = match eco.role {
+            EcosystemRole::Producer { .. } => Lifecycle::Plant,
+            EcosystemRole::Parasite {
+                kind: ParasiteKind::Micro | ParasiteKind::Virus,
+            } => Lifecycle::Microbial {
+                fission_strategy: Fission::Binary,
+            },
+            EcosystemRole::Saprotroph => Lifecycle::Microbial {
+                fission_strategy: Fission::Budding,
+            },
+            EcosystemRole::Detritivore => Lifecycle::Microbial {
+                fission_strategy: Fission::Conjugation,
+            },
+            EcosystemRole::Mutualist { kind: MutualismKind::Pollinator } => {
+                Lifecycle::Insect
+            }
+            _ => Lifecycle::Vertebrate,
+        };
+        species_registry.insert(eco.species_id, s);
+    }
     // Emit the species' starting cosmology pole-position
     // (cosmology bias) as a one-shot record event. Lets the post-run
     // report's species card show "Mira's species starts at
@@ -675,11 +718,14 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
         // Speciation + HGT. Both run once per tick (the per-tick
         // probabilities for polyploidy / HGT are baked into the
         // step functions themselves; the per-tick allopatric and
-        // sympatric streak counters live on the tracker). The
-        // species registry is empty until P1 wires the trait
-        // registry through, so these calls return empty event
-        // vectors today — but the wire-up is in place so the
-        // moment the registry is populated the events flow.
+        // sympatric streak counters live on the tracker). F1
+        // populated `species_registry` from `ecosystem.species` at
+        // worldgen, so the polyploid speciation path (Plant) and
+        // the HGT trial path (≥ 2 Microbial species) actually
+        // produce events; the allopatric/sympatric streaks remain
+        // zero until a future patch threads per-cell biota into
+        // the tracker observers (`observe_allopatric_split` /
+        // `observe_sympatric_pressure`).
         //
         // P1.2: surface cosmic-ray ground flux (Item 20:
         // `1 / (dipole_strength + 0.1)`) into the speciation + HGT

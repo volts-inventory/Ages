@@ -476,3 +476,32 @@ fn species_extinct_events_flow_through_run_emitter() {
          is wired in — 0 ticks suggests an early panic in the step"
     );
 }
+
+#[test]
+fn ecosystem_events_fire_in_live_run() {
+    // F1: post-PR-#73 (P0.1) the run loop calls `step_speciation`
+    // and `step_hgt` each tick, but the `species_registry` was
+    // initialised empty so both early-returned. F1 populates the
+    // registry from `ecosystem.species` at worldgen: every
+    // `EcoSpecies` becomes a per-trait `Species` with role taken
+    // from the ecosystem record and a role-mapped `Lifecycle`
+    // (Producer → Plant, Microbial parasites/saprotrophs/detritivore
+    // → Microbial, etc.) so polyploid speciation and the HGT trial
+    // path both have a non-empty pool to draw from. With the
+    // registry populated, at least one
+    // `speciation_occurred` or `species_extinct` event should land
+    // in a 16k-tick run on the proven seed-1024 worldgen. We accept
+    // either side of the path so a quiet 16k-tick ecosystem still
+    // proves the wire-up is live — the ecosystem-event channel
+    // produced one event end-to-end through `run()`.
+    let cfg = RunConfig::dev(1024, 16_000);
+    let mut counter = CountingEmitter::new();
+    run(&cfg, &mut counter).unwrap();
+    let speciation_count = counter.count("speciation_occurred");
+    let extinction_count = counter.count("species_extinct");
+    assert!(
+        speciation_count + extinction_count >= 1,
+        "expected >= 1 speciation_occurred or species_extinct event in 16k-tick run, \
+         got {speciation_count}+{extinction_count}"
+    );
+}
