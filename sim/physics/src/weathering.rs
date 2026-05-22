@@ -559,76 +559,22 @@ mod tests {
     ///   weathering / volcanism / greenhouse constants are
     ///   miscalibrated.
     ///
-    /// ## Current status (T13 baseline run)
+    /// ## Calibration history (fix-C3)
     ///
-    /// On the stock earth-like constants, this test does *not*
-    /// pass within the 1_000_000-tick budget. Diagnostics from
-    /// the failing run:
-    ///   - initial CO2 total = 0.04 (0.01 per cell on 4 cells)
-    ///   - final CO2 total ≈ 40 (≈ 10 per cell — sink suppressed,
-    ///     source ran for 10⁶ ticks at 4×10⁻⁵ total per tick =
-    ///     +40 expected; observed)
-    ///   - weathering removed ≈ 0.07 over the full run (cold
-    ///     T-factor floor at 1e-3 × low precip-factor → sink
-    ///     barely active, *as expected* on a snowball)
-    ///   - initial mean T = 250 K → final mean T = 211 K
-    ///     (planet cooled further, *not* recovered)
-    ///   - final snow_fraction = 0 (snow_fraction drops because
-    ///     `IceAlbedo` requires either land+precip or
-    ///     `Substance::Ice > 0` to host snow; on a water-covered
-    ///     snowball cell with vapour frozen out, the snow channel
-    ///     drains while `sea_ice_fraction` stays saturated at
-    ///     ~1.0 → effective albedo stays high via the sea-ice
-    ///     channel)
-    ///
-    /// Interpretation: with `co2_greenhouse_k = 0.030 K` per unit
-    /// CO2 density (`radiation.rs`), 10 units of CO2 per cell
-    /// adds only ≈ 0.3 K of greenhouse forcing — three orders of
-    /// magnitude too little to lever the planet out of the ~0.55
-    /// sea-ice albedo basin at our stellar+albedo+greenhouse
-    /// calibration. The ice-albedo feedback latches the snowball
-    /// state too rigidly for the volcanism-rate CO2 source to
-    /// break it within Walker-Hays-Kasting-equivalent timescales.
-    ///
-    /// FIXME(T13-calibration): constants to revisit (in priority
-    /// order) before flipping this test from `#[ignore]` to live:
-    ///
-    /// 1. `co2_greenhouse_k` in `radiation.rs` (currently 30 mK
-    ///    per unit CO2). Real-Earth CO2 doubling adds ~3 K of
-    ///    forcing; the per-unit coefficient here should scale so
-    ///    a 10× CO2 buildup adds ~10 K, not 0.3 K. Candidate:
-    ///    raise to ≥ 1 K per unit so a 10-unit buildup clears the
-    ///    snowball-to-habitable bifurcation gap (~20 K in the
-    ///    `cold_seed_...` test).
-    /// 2. `VOLCANIC_CO2_NUM` / `VOLCANIC_CO2_DEN` in
-    ///    `volcanism.rs` (currently 1e-5 per boundary-cell per
-    ///    tick). Real-Earth volcanic CO2 outgassing ≈ 0.1 Gt
-    ///    C/yr, which in our scaled per-cell units corresponds
-    ///    to ~1e-3 per tick if 1 unit CO2 ≈ 100 Gt C. A 100×
-    ///    bump here would compress the recovery timescale
-    ///    proportionally.
-    /// 3. `cover_rate` and the snow-on-water-cell precondition in
-    ///    `IceAlbedo::integrate` (`albedo.rs`). The snowball
-    ///    melt-back path on water cells currently runs through
-    ///    the `sea_ice_fraction` channel only; once T crosses
-    ///    freeze, sea-ice should retreat fast enough for the
-    ///    albedo drop to compound the warming. If the
-    ///    `cover_rate = 0.10` per tick is too slow to track a
-    ///    warming-driven sigmoid drop, the recovery stalls at
-    ///    the bifurcation crossing.
-    /// 4. Initial-state choice (peak snow `0.85`, sea-ice `0.55`).
-    ///    These match published values; not expected to need
-    ///    retuning, but listed for completeness.
-    ///
-    /// Test is marked `#[ignore]` so CI stays green while the
-    /// calibration is resolved; the assertions below define the
-    /// success criteria the calibration must hit. Once `(1)` is
-    /// landed, this test should be re-enabled.
-    ///
-    /// Run manually with:
-    ///   `cargo test -p sim-physics --lib snowball -- --ignored`
+    /// The original T13 baseline ran with
+    /// `co2_greenhouse_k = 0.030 K` per unit CO2 density. A
+    /// snowball planet under the stock `Volcanism::earth_like`
+    /// source built up ~10 units of CO2 per cell over 10⁶ ticks
+    /// (source-vs-sink shape correct: weathering suppressed at
+    /// cold/dry, volcanism continued at the boundary rate). But
+    /// 10 units × 0.030 K = only 0.3 K of greenhouse forcing —
+    /// three orders of magnitude short of the ~20 K bifurcation
+    /// gap the ice-albedo feedback latches. The test sat
+    /// `#[ignore]`d until fix-C3 raised `co2_greenhouse_k` to
+    /// 3.0 K per unit (100× boost). The CO2 buildup is unchanged
+    /// (volcanism/weathering kept stock); the forcing it delivers
+    /// is now ~30 K, comfortably past the bifurcation gap.
     #[test]
-    #[ignore = "T13 calibration target: CO2 greenhouse coefficient too small to drive snowball recovery within 1M ticks (see FIXME above)"]
     fn snowball_recovery_via_volcanic_co2_buildup() {
         use crate::albedo::IceAlbedo;
         use crate::laws::Law;
@@ -806,24 +752,14 @@ mod tests {
              removed_by_weathering={total_co2_removed_by_weathering:?}"
         );
 
-        // Recovery bound. If this fires, the FIXME below names
-        // the constants to revisit.
+        // Recovery bound. If this fires, the calibration of
+        // `co2_greenhouse_k` (radiation.rs) / `VOLCANIC_CO2_*`
+        // (volcanism.rs) / the snowball-cell albedo path has
+        // drifted; rerun the fix-C3 calibration.
         let recovered_at = recovery_tick.unwrap_or_else(|| {
             panic!(
-                "FIXME: snowball did not recover within {MAX_TICKS} ticks. \
-                 Walker-Hays-Kasting expects CO2-buildup-driven recovery; \
-                 the relevant constants to recalibrate are: \
-                 (a) `VOLCANIC_CO2_NUM` / `VOLCANIC_CO2_DEN` in `volcanism.rs` \
-                 (per-tick per-boundary-cell source — currently 1e-5); \
-                 (b) `co2_greenhouse_k` in `radiation.rs` \
-                 (currently 0.030 K per unit CO2 density); \
-                 (c) `T_FACTOR_MIN_NUM` / `T_FACTOR_MIN_DEN` in `weathering.rs` \
-                 (cold-cell weathering floor — currently 1e-3, ensures \
-                 weathering doesn't completely zero out the sink); \
-                 (d) initial snowball albedo (peak snow albedo `0.85`, \
-                 sea-ice `0.55`) — if too high, ice-albedo feedback locks the \
-                 cold basin too rigidly for CO2 greenhouse to break out. \
-                 Diagnostics: initial_co2={initial_co2_total:?} \
+                "snowball did not recover within {MAX_TICKS} ticks: \
+                 initial_co2={initial_co2_total:?} \
                  final_co2={final_co2_total:?} \
                  weathering_removed={total_co2_removed_by_weathering:?} \
                  initial_t_mean={initial_t_mean:?} final_t_mean={final_t_mean:?} \
