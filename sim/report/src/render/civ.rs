@@ -141,6 +141,7 @@ fn render_civ_territory_map(
     pm: &protocol::PlanetMap,
     planet: Option<&protocol::PlanetDerived>,
     civ: &CivChapter,
+    phase: crate::render::SurfacePhase,
 ) {
     if pm.grid_width == 0 || pm.grid_height == 0 {
         return;
@@ -192,7 +193,7 @@ fn render_civ_territory_map(
                     '*'
                 }
             } else {
-                terrain_symbol(pm, r, q, terrain_peak)
+                terrain_symbol(pm, r, q, terrain_peak, phase)
             };
             line.push(symbol);
             line.push(' ');
@@ -324,7 +325,8 @@ pub(super) fn render_civ_chapter(s: &mut String, civ: &CivChapter, d: &Digest) {
     if let Some(pm) = &d.planet_map {
         if !civ.claimed_cells.is_empty() {
             render_settlement_pattern(s, pm, civ);
-            render_civ_territory_map(s, pm, d.planet.as_ref(), civ);
+            let phase = crate::render::surface_phase_for_digest(d);
+            render_civ_territory_map(s, pm, d.planet.as_ref(), civ, phase);
         }
     }
     let _ = writeln!(s);

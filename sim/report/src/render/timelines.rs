@@ -288,7 +288,16 @@ pub(super) fn render_world_keyframes(s: &mut String, d: &Digest) {
             "Year {} — {active} active civ(s)",
             tick_to_year(frame.tick, period)
         );
-        let body = crate::frame::render_world_frame(pm, d.planet.as_ref(), frame, &caption);
+        let body = crate::frame::render_world_frame_styled(
+            pm,
+            d.planet.as_ref(),
+            frame,
+            &caption,
+            crate::frame::FrameStyle {
+                phase: crate::render::surface_phase_for_digest(d),
+                ..Default::default()
+            },
+        );
         s.push_str(&body);
         let _ = writeln!(s);
         // Paired density map showing per-cell cohort
@@ -303,6 +312,7 @@ pub(super) fn render_world_keyframes(s: &mut String, d: &Digest) {
                 "Year {} density (capital letter; ` ░ ▒ ▓ █` shading)",
                 tick_to_year(frame.tick, period)
             ),
+            crate::render::surface_phase_for_digest(d),
         );
         if !density.is_empty() {
             s.push_str(&density);

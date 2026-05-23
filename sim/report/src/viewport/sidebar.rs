@@ -74,17 +74,40 @@ impl<W: Write> ViewportEmitter<W> {
             } else {
                 "1-9=fill% · white=nomad · #=war"
             };
-            vec![
-                density_line.to_string(),
-                "~sea · ≈deep · ▲peak · △hill".to_string(),
-                "▒land · ░coast · ·=plain".to_string(),
-            ]
+            // Terrain glyphs depend on planet surface phase: lava
+            // worlds drop sea/coast entries in favour of magma,
+            // ice worlds add the ice-sheet glyph.
+            let (terrain1, terrain2) = match self.surface_phase() {
+                crate::render::SurfacePhase::Lava => (
+                    "* magma · ▲peak · △outcrop".to_string(),
+                    "(rocky peaks exposed above magma sea)".to_string(),
+                ),
+                crate::render::SurfacePhase::IceCap => (
+                    "+ ice sheet · ▲peak · △hill".to_string(),
+                    "▒land · ░coast · ·=plain".to_string(),
+                ),
+                crate::render::SurfacePhase::Earthlike => (
+                    "~sea · ≈deep · ▲peak · △hill".to_string(),
+                    "▒land · ░coast · ·=plain".to_string(),
+                ),
+            };
+            vec![density_line.to_string(), terrain1, terrain2]
         } else {
-            vec![
-                "1-9=civ-id · *=civ≥10".to_string(),
-                "0=nomad · #=war · ~sea · ≈deep".to_string(),
-                "▲peak · △hill · ▒land · ░coast · ·=plain".to_string(),
-            ]
+            let (line2, line3) = match self.surface_phase() {
+                crate::render::SurfacePhase::Lava => (
+                    "0=nomad · #=war · * magma".to_string(),
+                    "▲peak · △outcrop · ·=plain".to_string(),
+                ),
+                crate::render::SurfacePhase::IceCap => (
+                    "0=nomad · #=war · + ice sheet".to_string(),
+                    "▲peak · △hill · ▒land · ░coast · ·=plain".to_string(),
+                ),
+                crate::render::SurfacePhase::Earthlike => (
+                    "0=nomad · #=war · ~sea · ≈deep".to_string(),
+                    "▲peak · △hill · ▒land · ░coast · ·=plain".to_string(),
+                ),
+            };
+            vec!["1-9=civ-id · *=civ≥10".to_string(), line2, line3]
         };
         // Species sub-block (3 lines from species_card()).
         if let Some(species_body) = self.species_card() {

@@ -104,8 +104,91 @@ pub(crate) fn render_planet(s: &mut String, d: &Digest) {
     // water).
     if let Some(pm) = &d.planet_map {
         if pm.grid_width > 0 && pm.grid_height > 0 {
-            render_ascii_map(s, pm, d.planet.as_ref());
+            let phase = surface_phase_for_digest(d);
+            render_ascii_map(s, pm, d.planet.as_ref(), phase);
         }
+    }
+}
+
+/// Derive the surface phase straight from a digest by pulling the
+/// substrate freeze/boil range out of the captured `RunMetadata`,
+/// applying the per-seed perturbation, and forwarding into
+/// [`surface_phase`]. Returns `Earthlike` when either source is
+/// missing. Shared by every renderer that needs the phase
+/// (post-run ASCII map, per-civ territory map, density frames).
+#[must_use]
+pub fn surface_phase_for_digest(d: &crate::digest::Digest) -> SurfacePhase {
+    let (freeze_k, boil_k) = substrate_range_for(d);
+    surface_phase(d.planet.as_ref(), freeze_k, boil_k)
+}
+
+fn substrate_range_for(d: &crate::digest::Digest) -> (f64, f64) {
+    let Some(p) = &d.planet else { return (0.0, 0.0) };
+    let Some(m) = &d.metadata else { return (0.0, 0.0) };
+    let perturb = q32_to_f64(p.substrate_perturbation_q32);
+    let f = m
+        .substrate_freeze_k
+        .get(&p.metabolic_substrate)
+        .copied()
+        .unwrap_or(0.0);
+    let b = m
+        .substrate_boil_k
+        .get(&p.metabolic_substrate)
+        .copied()
+        .unwrap_or(0.0);
+    (f * (1.0 + perturb), b * (1.0 + perturb))
+}
+
+/// Coarse surface-physics state used to remap terrain glyphs for
+/// non-Earth-analog planets. Computed once per planet via
+/// [`surface_phase`] and threaded through [`terrain_symbol`].
+///
+/// - `Earthlike` — temperate aqueous biology in the liquid-water
+///   band; renders with the historical glyph set (▲△▒░~≈).
+/// - `Lava`      — silicate biology with surface in the molten
+///   silicate range; every non-peak cell becomes `*` (magma plain).
+/// - `IceCap`    — aqueous biology with surface below the water
+///   freeze point; cells with `water_depth > 0` become `+` (ice
+///   sheet) since the water is solid. Land cells stay as normal
+///   terrain glyphs (cold continents look like continents at this
+///   zoom; in colour mode the palette can convey the cold).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SurfacePhase {
+    #[default]
+    Earthlike,
+    Lava,
+    IceCap,
+}
+
+/// Derive the surface phase from the planet's substrate and mean
+/// temperature relative to the substrate's solvent freeze/boil
+/// points (already perturbed via `Planet::substrate_perturbation_q32`
+/// at the call site).
+///
+/// Returns `Earthlike` when no planet event is available so callers
+/// can pass `Option<&PlanetDerived>` straight through.
+#[must_use]
+pub fn surface_phase(
+    planet: Option<&protocol::PlanetDerived>,
+    substrate_freeze_k: f64,
+    substrate_boil_k: f64,
+) -> SurfacePhase {
+    let Some(p) = planet else {
+        return SurfacePhase::Earthlike;
+    };
+    let t = q32_to_f64(p.mean_temperature_q32);
+    match p.metabolic_substrate.as_str() {
+        "silicate"
+            if substrate_freeze_k > 0.0
+                && t >= substrate_freeze_k
+                && t <= substrate_boil_k =>
+        {
+            SurfacePhase::Lava
+        }
+        "aqueous" if substrate_freeze_k > 0.0 && t < substrate_freeze_k => {
+            SurfacePhase::IceCap
+        }
+        _ => SurfacePhase::Earthlike,
     }
 }
 
@@ -120,20 +203,56 @@ pub(crate) fn render_planet(s: &mut String, d: &Digest) {
 /// - `▒` inland land
 /// - `~` shallow water (`water_depth` ≤ 100m)
 /// - `≈` deep water
+/// - `*` magma plain (silicate world in molten range)
+/// - `+` ice sheet (aqueous world below water freeze, water cells)
 /// - `≡` gaseous shell (`terrain_peak == 0`; no rocky surface)
 /// - `·` featureless surface (low-relief rocky / sub-surface
 ///   ocean ice / oceanic basin without liquid water)
+///
+/// `phase` selects the glyph set: `Earthlike` is the historical
+/// behaviour; `Lava` and `IceCap` remap the relevant cells so a
+/// silicate molten world doesn't read as a green-and-blue Earth
+/// and an ice world doesn't read as having liquid oceans.
 #[allow(clippy::many_single_char_names)]
 pub(crate) fn terrain_symbol(
     pm: &protocol::PlanetMap,
     r: usize,
     q: usize,
     terrain_peak: f64,
+    phase: SurfacePhase,
 ) -> char {
     let w = pm.grid_width as usize;
     let i = r * w + q;
     let elev = pm.elevation_q32.get(i).copied().map_or(0.0, q32_to_f64);
     let depth = pm.water_depth_q32.get(i).copied().map_or(0.0, q32_to_f64);
+    if matches!(phase, SurfacePhase::Lava) {
+        // Silicate world in the molten silicate range: every land
+        // cell is magma. Peaks still poke through as rocky
+        // outcrops (▲ / △) so the map reads as a global lava sea
+        // with a few exposed peaks.
+        if terrain_peak > 0.0 && elev > 0.0 {
+            let approx_sea = 0.3 * terrain_peak;
+            let land_range = terrain_peak - approx_sea;
+            if land_range > 0.0 {
+                let land_frac = (elev - approx_sea) / land_range;
+                if land_frac > 0.85 {
+                    return '\u{25B2}'; // ▲ exposed peak
+                }
+                if land_frac > 0.55 {
+                    return '\u{25B3}'; // △ low rocky outcrop
+                }
+            }
+        }
+        return '*'; // magma plain
+    }
+    if matches!(phase, SurfacePhase::IceCap) && depth > 0.0 {
+        // Aqueous world below water freeze: water cells are
+        // frozen solid. Single glyph at this zoom (no thin/thick
+        // distinction). Land cells fall through to normal logic
+        // (frozen continents look like continents; colour mode
+        // conveys cold via cyan tint).
+        return '+';
+    }
     if depth > 100.0 {
         return '\u{2248}'; // deep water
     }
@@ -230,16 +349,24 @@ fn render_ascii_map(
     s: &mut String,
     pm: &protocol::PlanetMap,
     planet: Option<&protocol::PlanetDerived>,
+    phase: SurfacePhase,
 ) {
     let terrain_peak = planet.map_or(0.0, |p| q32_to_f64(p.terrain_peak_q32));
     let w = pm.grid_width as usize;
     let h = pm.grid_height as usize;
     let _ = writeln!(s, "```text");
-    let _ = writeln!(
-        s,
-        "Planet map ({}x{} hex). ▲ peak  △ mtn  ▒ inland  ░ coast  ~ shallow  ≈ deep",
-        pm.grid_width, pm.grid_height
-    );
+    let legend = match phase {
+        SurfacePhase::Lava => {
+            "Planet map (lava world). ▲ peak  △ outcrop  * magma plain"
+        }
+        SurfacePhase::IceCap => {
+            "Planet map (ice world). ▲ peak  △ mtn  ▒ inland  ░ coast  + ice sheet"
+        }
+        SurfacePhase::Earthlike => {
+            "Planet map. ▲ peak  △ mtn  ▒ inland  ░ coast  ~ shallow  ≈ deep"
+        }
+    };
+    let _ = writeln!(s, "{legend} ({}x{} hex)", pm.grid_width, pm.grid_height);
     let _ = writeln!(s);
     // Column header. Two-character columns plus the row-prefix
     // padding (3 chars) so the digits land above their cells.
@@ -255,7 +382,7 @@ fn render_ascii_map(
             line.push(' ');
         }
         for q in 0..w {
-            line.push(terrain_symbol(pm, r, q, terrain_peak));
+            line.push(terrain_symbol(pm, r, q, terrain_peak, phase));
             line.push(' ');
         }
         let _ = writeln!(s, "{line}");
@@ -475,4 +602,147 @@ fn render_ecosystem_summary(s: &mut String, d: &Digest) {
         )
     );
     let _ = writeln!(s);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::{PlanetDerived, PlanetMap};
+
+    fn planet(substrate: &str, mean_t_k: f64) -> PlanetDerived {
+        PlanetDerived {
+            seed: 0,
+            name: String::new(),
+            gravity_q32: 0,
+            composition: String::new(),
+            mean_temperature_q32: ((mean_t_k * (1u64 << 32) as f64) as i64),
+            temperature_gradient_q32: 0,
+            terrain_peak_q32: ((10_000.0 * (1u64 << 32) as f64) as i64),
+            sea_level_q32: 0,
+            atmosphere: String::new(),
+            surface_pressure_q32: 0,
+            biosphere: String::new(),
+            magnetosphere: String::new(),
+            crust: String::new(),
+            stellar_luminosity_q32: 0,
+            moon_count: 0,
+            axial_tilt_deg_q32: 0,
+            day_length_hours_q32: 0,
+            orbital_period_months: 12,
+            metabolic_substrate: substrate.into(),
+            substrate_perturbation_q32: 0,
+            atmospheric_n2_q32: 0,
+            atmospheric_o2_q32: 0,
+            atmospheric_co2_q32: 0,
+            atmospheric_ch4_q32: 0,
+            atmospheric_nh3_q32: 0,
+            atmospheric_h2o_q32: 0,
+            atmospheric_h2_q32: 0,
+            atmospheric_ar_q32: 0,
+            atmospheric_other_q32: 0,
+            biosphere_density_q32: 0,
+            crustal_silicate_q32: 0,
+            crustal_hydrocarbon_q32: 0,
+            crustal_piezoelectric_q32: 0,
+            crustal_ferrous_q32: 0,
+            crustal_rare_earth_q32: 0,
+            crustal_ice_q32: 0,
+            crustal_other_q32: 0,
+        }
+    }
+
+    fn pm_with(depth_at_cell_zero: f64, peak_at_cell_zero: f64) -> PlanetMap {
+        let scale = (1u64 << 32) as f64;
+        PlanetMap {
+            grid_width: 1,
+            grid_height: 1,
+            elevation_q32: vec![(peak_at_cell_zero * scale) as i64],
+            water_depth_q32: vec![(depth_at_cell_zero * scale) as i64],
+        }
+    }
+
+    /// Silicate substrate above silicate freeze (1687 K nominal)
+    /// classifies as `Lava`.
+    #[test]
+    fn surface_phase_lava_for_molten_silicate() {
+        let p = planet("silicate", 2_500.0);
+        assert_eq!(
+            surface_phase(Some(&p), 1687.0, 3538.0),
+            SurfacePhase::Lava
+        );
+    }
+
+    /// Aqueous substrate below water freeze (273.15 K) classifies as
+    /// `IceCap`. Mars-like / Europa-like worlds.
+    #[test]
+    fn surface_phase_ice_cap_for_frozen_aqueous() {
+        let p = planet("aqueous", 200.0);
+        assert_eq!(
+            surface_phase(Some(&p), 273.15, 373.15),
+            SurfacePhase::IceCap
+        );
+    }
+
+    /// Temperate aqueous + non-molten silicate fall through to
+    /// `Earthlike` — the historical glyph set.
+    #[test]
+    fn surface_phase_earthlike_in_default_band() {
+        let earth = planet("aqueous", 288.0);
+        assert_eq!(
+            surface_phase(Some(&earth), 273.15, 373.15),
+            SurfacePhase::Earthlike
+        );
+        let cold_silicate = planet("silicate", 600.0);
+        assert_eq!(
+            surface_phase(Some(&cold_silicate), 1687.0, 3538.0),
+            SurfacePhase::Earthlike
+        );
+    }
+
+    /// `terrain_symbol` in `Lava` phase paints `*` for low-elev
+    /// cells and lets peaks/outcrops stick out as ▲/△.
+    #[test]
+    fn terrain_symbol_lava_paints_magma_with_exposed_peaks() {
+        let pm_low = pm_with(0.0, 1_000.0); // low-elev cell on a peak=10k world
+        let pm_peak = pm_with(0.0, 9_500.0); // >85% of terrain_peak
+        assert_eq!(terrain_symbol(&pm_low, 0, 0, 10_000.0, SurfacePhase::Lava), '*');
+        assert_eq!(
+            terrain_symbol(&pm_peak, 0, 0, 10_000.0, SurfacePhase::Lava),
+            '\u{25B2}' // ▲
+        );
+    }
+
+    /// `terrain_symbol` in `IceCap` phase paints `+` for cells with
+    /// water depth (ice sheet) and falls through to normal terrain
+    /// glyphs for land cells.
+    #[test]
+    fn terrain_symbol_ice_cap_paints_frozen_seas() {
+        let frozen_sea = pm_with(50.0, 0.0); // depth > 0
+        let land = pm_with(0.0, 5_000.0); // mid-elev land
+        assert_eq!(
+            terrain_symbol(&frozen_sea, 0, 0, 10_000.0, SurfacePhase::IceCap),
+            '+'
+        );
+        // Land cell falls through to inland-land glyph
+        assert_eq!(
+            terrain_symbol(&land, 0, 0, 10_000.0, SurfacePhase::IceCap),
+            '\u{2592}' // ▒
+        );
+    }
+
+    /// Earthlike phase is the historical behaviour (regression
+    /// guard): water cells render as ≈/~, land cells as ▒/░, etc.
+    #[test]
+    fn terrain_symbol_earthlike_unchanged() {
+        let deep = pm_with(200.0, 0.0);
+        let shallow = pm_with(50.0, 0.0);
+        assert_eq!(
+            terrain_symbol(&deep, 0, 0, 10_000.0, SurfacePhase::Earthlike),
+            '\u{2248}' // ≈
+        );
+        assert_eq!(
+            terrain_symbol(&shallow, 0, 0, 10_000.0, SurfacePhase::Earthlike),
+            '~'
+        );
+    }
 }
