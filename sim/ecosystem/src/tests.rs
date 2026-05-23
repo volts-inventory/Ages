@@ -18,6 +18,7 @@
 //! 11. `decomposer_chain_balances_carbon_budget`
 
 use super::*;
+use protocol::{ExtinctionCause, SpeciesExtinct};
 use sim_arith::Real;
 use std::collections::BTreeMap;
 use sim_physics::chemistry::{
