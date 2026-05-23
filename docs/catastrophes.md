@@ -1,95 +1,161 @@
 # Catastrophes
 
-Five cell-localized hazard kinds. Severity scales with the planet's
-substrate so disease severity comes out of biosphere richness,
-volcanic cooldown out of crust mineral content, ice-age severity
-out of mean temperature.
+Five cell-localized hazard kinds plus the full damage / survival /
+recovery chain. Each kind has its own trigger predicate, cooldown,
+and pop-loss fraction. All five flow through the same
+`apply_resistance_and_dormancy` damage formula so resistance,
+dormancy, and tolerance gating apply uniformly. Post-F-wave, all
+five also propagate into the ecosystem via `apply_catastrophe_at_cell`.
 
-For deeper detail per crate, see
-[`sim/civ/src/catastrophe/`](../sim/civ/src/catastrophe/) and
-[`sim/civ/README.md`](../sim/civ/README.md).
+Module layout (`sim/civ/src/catastrophe/`, split by CA5 + CB2):
 
-## Five kinds
+| File | Concern |
+|---|---|
+| `mod.rs` | Facade — kind/cooldown/pop-loss constants, re-exports |
+| `kind.rs` | `CatastropheKind` enum + `tag()` |
+| `record.rs` | `CatastropheRecord` per-event payload |
+| `triggers.rs` | Per-kind firing predicates |
+| `factors.rs` | Planet-driven severity/cooldown scaling |
+| `cells.rs` | Cell targeting (densest, deterministic pick, neighbours) |
+| `damage.rs` | `catastrophe_cell_conditions`, `apply_resistance_and_dormancy` |
+| `apply/` | Per-kind dispatchers (CB2 split) |
+| `apply/volcanic.rs`, `asteroid.rs`, `disease.rs`, `solar_flare.rs`, `ice_age.rs` | One file per kind |
+| `apply/mod.rs` | `check_and_apply` dispatcher (volcanic → disease → asteroid → solar flare → ice age, first hit wins) |
 
-| Kind | Trigger | Cell selection | Severity scales with |
-|------|---------|----------------|----------------------|
-| `Volcanic` | Crust mineral hot-zone + cooldown | Per-cell volcanic risk priors | Crust mineral richness |
-| `Disease` | Endemic; biosphere reservoir | Densest claimed cell | Biosphere density |
-| `Asteroid` | Stochastic (low base rate) | Deterministic `(seed, tick)`-keyed cell | Crust composition (impact substrate) |
-| `SolarFlare` | Stellar luminosity priors | Whole-hemisphere; population effect proportional to tech-shielding | Luminosity |
-| `IceAge` | Mean-temperature priors | Cells below seasonal-floor threshold | `(planet.mean_temperature - threshold)` magnitude |
+## The five kinds
 
-Each catastrophe emits `CatastropheFired { kind, cell, severity,
-tick }` plus follow-up `CivTerritoryChanged` if the catastrophe
-unclaims cells.
+| Kind | Trigger (`triggers.rs`) | Cooldown (years) | Pop loss | Cell scope |
+|---|---|---|---|---|
+| **Volcanic** | Crust temperature breaches local solidus | 200 | 5% | Single cell + neighbours; resets cell fuel, drops T 50K |
+| **Disease** | Crowding density past per-substrate threshold; age floor 300y | 500 | 30% | Densest claimed cell + spreads to adjacent claimed |
+| **Asteroid** | Deterministic per-tick low probability | 5,000 | 40% | Impact cell + neighbours; +5 radiation boost |
+| **SolarFlare** | High stellar irradiance + weak local magnetosphere | 800 | 10% | Every cell; radiation = flare_magnitude × cosmic_ray_ground_flux |
+| **IceAge** | Sustained planet-mean temperature drop | 4,000 | 20% | Every cell; -ICE_AGE_TEMP_DROP_K |
 
-## Cell-localized
+Cooldowns are per-month-tick (post-T1, see `sim/civ/src/catastrophe/
+mod.rs:43-48`). Disease has a 300-year age floor so newly-founded
+civs aren't insta-plagued.
 
-Disease, asteroid, and volcanic always target specific cells.
-Solar flare and ice age have hemispheric / multi-cell footprints
-but still reduce to per-cell population effects so the
-population-dynamics phase can apply them uniformly.
+Substrate scales per-kind: see `factors.rs`. Disease severity tracks
+biosphere richness, volcanic cooldown tracks crust mineral content,
+ice-age severity tracks atmospheric heat capacity.
 
-A civ may absorb a catastrophe without collapsing if its
-population is concentrated outside the affected cell(s); a civ
-whose densest cell takes a disease hit may collapse if the loss
-exceeds its total-population fraction.
+## Damage formula
 
-## Cooldowns
-
-`Volcanic` cooldown: 200 baseline-years (`200 ×
-MONTHS_PER_YEAR`). After firing, the cell can't fire volcanic
-again until cooldown elapses.
-
-`Disease` cooldown: 500 baseline-years per (civ, region) pair,
-stretched by the substrate-metabolism factor — a silicate civ
-sees plagues at a 5× longer absolute cadence than an aqueous one,
-so per-generation hit rate stays constant across substrates. The
-civ-age floor for disease (300 baseline-years post-founding) is
-likewise stretched. The other four kinds are physics-driven
-(stellar / orbital / geological) and keep raw tick cooldowns
-regardless of substrate.
-
-Asteroid, solar flare, ice age have their own per-cell cooldowns
-sized to be rare events on the run timescale.
-
-## Tech shielding
-
-Some tier-2+ tools contribute to `catastrophe_resistance` (the
-effect category in the tool spec). When a catastrophe fires on a
-civ with shielding, severity multiplies by `(1 - resistance)`
-clamped to a floor.
-
-`solar_flare` is the canonical example: a civ with `electromagnetism`
-or higher tier suffers a fraction of the loss an unshielded civ
-takes. The tool is what makes Faraday-cage-equivalent shelter
-possible — no shielding without the underlying physics being
-known.
-
-## Substrate-relative severity
-
-Catastrophe severity scales with substrate priors so different
-planets feel different hazard profiles:
-
-- A high-biosphere ammoniacal world has frequent low-severity
-  disease.
-- A low-biosphere silicate world has rare high-severity disease
-  (every outbreak in a thin biosphere is more devastating).
-- A volcanic crust raises both volcanic frequency and per-event
-  severity.
-
-This is the "different worlds, different hazards" counterpart to
-the "different worlds, different sciences" theme.
-
-## Catastrophe events
+`damage::apply_resistance_and_dormancy` (post-P0.4 + F3) computes:
 
 ```
-CatastropheFired { kind, civ_id, cell, severity, tick }
+base_loss = raw_frac × (1 - civ.apply_catastrophe_resistance(...))
+loss_after_dormancy = base_loss × (1 - dormancy × severity)
+loss_after_tolerance = loss_after_dormancy × (1 - tolerance.match_score(cell))
 ```
 
-The `severity` scalar is `[0, 1]` — fraction of cell population
-removed before tech shielding applies. Survivors take residual
-stress for several ticks (lower birth rate, higher death rate).
+Three layers of attenuation:
 
-Post-run report renders catastrophes as anchors in the per-civ
-timeline; severe events bubble into the highlights reel.
+1. **Tool-based resistance** — civs unlock catastrophe-mitigating
+   tools (PermanentMasonry, DefensiveFortification, AdaptiveAgronomy,
+   etc.). `civ.apply_catastrophe_resistance(raw_frac)` reduces the
+   headline severity before any biology gates kick in.
+2. **Dormancy** (P1.3) — species with high `dormancy_capability`
+   (e.g. tardigrade-grade extremophiles) shrug off catastrophes via
+   a damage-reduction multiplier *and* deposit the surviving fraction
+   into a `DormantPool` reservoir. The pool drains back to active
+   population over hundreds of ticks via `step_dormant_resurrection`.
+3. **Tolerance** (P0.4) — `species.tolerance.match_score(cell_T,
+   cell_pH, cell_sal, cell_rad, cell_p)` scales the remaining loss
+   by the cell's fit to the species envelope. An extremophile with
+   `radiation_max = 20` keeps ~100% of population on a flare cell
+   that rad=4; a narrow-envelope aqueous species loses everything.
+
+`severity_factor` is currently pinned at 1.0 for all five kinds (see
+`DORMANCY_SEVERITY_FACTOR` in `damage.rs`). A future polish pass
+could expose it per-kind so shallow events bypass dormancy benefit.
+
+## Cell-condition probe
+
+`catastrophe_cell_conditions(state, planet, cell, temp_delta, extra_rad)`
+returns the `(T, pH, salinity, radiation, pressure)` tuple fed into
+`tolerance.match_score`. Per-cell `T` and `p` come from the physics
+state (Pa → atm); pH and salinity use substrate baselines (no per-
+cell ocean-chemistry field exists yet).
+
+For radiation-driven events (SolarFlare):
+
+```rust
+let cosmic_amp = state.cosmic_ray_ground_flux().clamp(0.2, 5.0);
+let post_flare_rad = baseline_radiation_flux() + solar_flare_radiation_boost() * cosmic_amp;
+```
+
+The bidirectional clamp (T8) means strong magnetospheres dampen
+flare damage by up to 5× *below* baseline; magnetic-reversal windows
+amplify by up to 5× *above* baseline. (Pre-T8, the floor was at 1.0,
+so strong magnetospheres couldn't reduce damage.)
+
+## Ecosystem propagation (T2)
+
+After the civ-side pop loss, the dispatcher calls
+`ecosystem.apply_catastrophe_at_cell(...)` with the same cell
+conditions. The trophic web feels the catastrophe too:
+
+| Kind | Ecosystem effect |
+|---|---|
+| Volcanic | Drain producer biomass at affected cell only |
+| Asteroid | Drain biomass at impact + neighbours; +5 rad → species below `radiation_max` lose more |
+| SolarFlare | Drain across all cells, scaled by tolerance + cosmic flux |
+| IceAge | Drain across all cells with temperature drop applied to match_score |
+| Disease | **Skipped** — disease is host-biology-internal, doesn't strip the trophic web |
+
+Pre-T2 only volcanic touched the ecosystem (via `reduce_at_cell`,
+no tolerance gate). Now all four reach the trophic web through the
+tolerance-gated entry point.
+
+## DormantPool seeding (P1.3)
+
+When a catastrophe fires:
+
+```
+pop_before = civ.cohort.total()
+killed = pop_before × loss_after_tolerance
+dormant_seeded = killed × species.dormancy_capability × severity_factor
+civ.dormant_pool.population += dormant_seeded
+civ.dormant_pool.entered_tick = tick
+```
+
+So a `dormancy = 0.9` species under a full-severity catastrophe
+diverts 90% of would-be casualties into cryptobiosis instead of
+death. The resurrect step (`step_dormant_resurrection`) drains the
+pool back into the active cohort at ~1%/tick, capped at the
+pre-catastrophe population level. Result: mass-extinction recovery
+is representable; a tardigrade-grade species can rebuild from a
+catastrophe that would wipe a narrow species permanently.
+
+## Magnetic-reversal amplification on SolarFlare
+
+`state.cosmic_ray_ground_flux() = 1 / (dipole_strength + 0.1)`.
+During normal periods, dipole_strength = 1.0 → flux ≈ 0.91 (close to
+baseline). During reversals (`DipoleState::Reversing`), the strength
+drops to 0.1 → flux ≈ 5.0, amplifying both the radiation gate on
+tolerance and the speciation/HGT rates (via the cosmic-ray multiplier
+in `step_speciation` / `step_hgt`).
+
+## Tests
+
+- `apply/<kind>.rs` per-kind tests for cooldown / trigger /
+  dispatcher correctness
+- `extremophile_species_survives_solar_flare_better_than_aqueous` —
+  P0.4 anchor: tolerant species survives ≥3× more
+- `dormant_species_survives_catastrophe_at_reduced_rate` — P1.3
+- `mass_extinction_recovery_via_seed_bank_resurrection` — full loop
+- `non_volcanic_catastrophes_now_affect_ecosystem` (T2) — confirms
+  flare/asteroid/ice-age touch trophic web
+- `extremophile_eco_species_survives_solar_flare_better` (T2 echo)
+- `strong_magnetosphere_suppresses_flare_damage` (T8 bidirectional clamp)
+
+## Event emission
+
+Every fire emits `Event::CatastropheFired { kind, civ_id, fraction_lost,
+tick }` via the run's `Emitter`. The post-run digest aggregates by
+kind into the catastrophe histogram (`docs/report.md`). The narrator
+(`sim/report/src/narration.rs`) renders each as a one-line story
+beat: `"Year 1023: catastrophe Volcanic fired on civ Karnan — 5%
+population loss."`

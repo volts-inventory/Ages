@@ -1,12 +1,13 @@
 # Viewport
 
-Live ASCII viewport. Renders the planet in your terminal as it
-evolves, sharing the post-run report's frame renderer so the live
-view and the post-run keyframes look identical.
+Live ASCII viewport. Renders the planet in your terminal as the
+simulation evolves, sharing the post-run report's `WorldFrame`
+renderer so the live view and the post-run keyframes look
+identical.
 
 For deeper detail per crate, see
 [`sim/report/src/viewport/`](../sim/report/src/viewport/) and
-[`sim/report/README.md`](../sim/report/README.md).
+[`sim/report/src/frame.rs`](../sim/report/src/frame.rs).
 
 ## Invocation
 
@@ -15,12 +16,41 @@ cargo run --release -p ages -- --seed 42 --years 1000 \
   --cli viewport --tick-rate-ms 50 --frame-every-ticks 6
 ```
 
-Or just `./run.sh` for a fresh random seed at sensible defaults.
+Or `./run.sh` for a fresh random seed at sensible defaults.
 
-## Layout
+## Module layout
 
-74-column themed-box layout with a vertical rule separating the
-map zone (left) from the sidebar (right):
+The viewport is split across seven small files so each concern
+stays on its own page
+([`sim/report/src/viewport/mod.rs:20-27`](../sim/report/src/viewport/mod.rs)):
+
+| File | Responsibility |
+|---|---|
+| `emitter.rs` | `ViewportEmitter` struct + `Emitter` trait dispatch + alt-screen lifecycle. |
+| `state.rs`  | `apply_state` — event → snapshot mirroring + the `should_render` frame-cadence gate. |
+| `log.rs`    | `log_message` event classifier for the scrolling log, plus the cosmology / civ / relation label helpers. |
+| `cards.rs`  | `planet_card()` and `species_card()` formatters. |
+| `sidebar.rs`| `build_sidebar_lines()` — legend block + species recap + per-civ panels. |
+| `layout.rs` | `render()` — three-region frame composition and per-row absolute-positioning paint. |
+| `ansi.rs`   | ANSI escapes, divider helpers, visible-width math. |
+| `config.rs` | `ViewportConfig` + `TempUnit`. |
+
+The emitter mirrors a curated subset of events into snapshots
+([`sim/report/src/viewport/emitter.rs:8-15`](../sim/report/src/viewport/emitter.rs)):
+`Planet` / `PlanetMap`, `CivFounded`, `CivTerritoryChanged`,
+`CivCollapsed`, `Tick { phase: TickEnd }` (the frame-cadence
+trigger), and `RunEnd` (restore terminal + final frame). Every
+other event is forwarded verbatim — the viewport is a pure
+observer that happens to also write a refreshing frame to
+stdout.
+
+## Frame layout
+
+74-column box layout with a vertical `|` rule splitting the
+middle row into the **map zone** (left, 40 cols) and the
+**sidebar** (right, 30 cols). Widths are pinned in
+[`sim/report/src/viewport/ansi.rs:50-67`](../sim/report/src/viewport/ansi.rs):
+`MAP_WIDTH = 40`, `SIDEBAR_WIDTH = 30`, `VIEWPORT_WIDTH = 74`.
 
 ```
 ---------------- Lyra-a ----------------
@@ -29,116 +59,269 @@ map zone (left) from the sidebar (right):
       129h · 11mo · 17° · 2 moons
          Y0 M0 · 1 civ · 1F/0C · 1834p
 
------------------ map ------------------
-     01234567890123456789012345678901
-    +--------------------------------+
-   0|A11≈≈≈≈≈≈░▒▒▒▒▒△△△△△△△△△△▲▲▲△△△1|
-   1|11≈≈≈≈≈≈░▒▒▒▒▒△△△△△△△△△△▲▲▲▲▲△△1|
-   …
-  19|111≈≈≈≈≈≈≈≈≈░▒▒▒▒▒△△△△△△000△△△△△|
-    +--------------------------------+
-
------------------ key ------------------
-  0-9=pop · 0=nomad · #=war
-  ~sea · ≈deep · ▲peak · △hill
-  ▒land · ░coast · ·=plain
--------------- Cyranites ---------------
-      centralized medium cognition
-    sense: tactile · manip: tentacle
-    44y · solitary · noisy · carbon
------------------ log ------------------
-      y0 civ 1 founded (10 cells)
+----------------- map ------------------+--------- key ----------
+     01234567890123456789012345678901   | dim/bold=fill% · white=nomad · #=war
+    +--------------------------------+  | ~sea · ≈deep · ▲peak · △hill
+   0|A11≈≈≈≈≈≈░▒▒▒▒▒△△△△△△△△△△▲▲▲△△△1| | ▒land · ░coast · ·=plain
+   1|11≈≈≈≈≈≈░▒▒▒▒▒△△△△△△△△△△▲▲▲▲▲△△1| |
+   …                                    | ─── Cyranites ───
+  19|111≈≈≈≈≈≈≈≈≈░▒▒▒▒▒△△△△△△000△△△△△|  | centralized medium cognition
+    +--------------------------------+  | sense: tactile · manip: tentacle
+                                        | 44y · solitary · noisy · carbon
+                                        |
+                                        | ─── Volthain ───
+                                        | A=cap · ▒▒▒=pop · t2 · 4 tools
+                                        | last: thermal sensor
+                                        | y0 · 14 cells · 247p →
+                                        | cohesion 100% · life 44y · peace
 ```
 
-Sections:
+When `show_planet_card = true` (the default), the recent-events
+log rides alongside the planet card at the top of the frame
+instead of along the bottom — kept in
+[`sim/report/src/viewport/layout.rs:94-169`](../sim/report/src/viewport/layout.rs).
+Bare-map test configs (`show_planet_card = false`) keep the
+classic centred map + bottom log layout.
 
-| Section | Content |
-|---------|---------|
-| Planet | Name, world type, climate, atmosphere, mean temp, magnetism, day length, year length, axial tilt, moons. Bottom row carries the calendar (Y/M), civ counts, figure counts, total population. |
-| Map | The hex grid rendered as ASCII, framed by `+--+` corners. Default 36×30. |
-| Key | Glyph legend — terrain bands, claim symbols, war markers, nomadic glyphs. |
-| Species | Cognition topology, sensorium, manipulation, lifespan, sociality, communication fidelity, biochemistry. |
-| Log | Scrolling 3-line event log. Recent events first. |
-| Per-civ panels | One 4-line block per active civ: header `─── {Civ name} ───` (name colored in the civ's palette), identity line — `{letter}=cap · 0-9=pop` in colored mode (both glyphs serve as a colour swatch), or `{letter}=cap · {digit}=civ` in monochrome — then stats line `y{founded_year} · {N} cells · {pop}p` and religion line. |
+### Sections
+
+| Section | Source |
+|---|---|
+| Planet card | `planet_card()` — type · habitability badge, atmosphere · temperature · magnetism, atmospheric composition, day · year · tilt · moons. ([`cards.rs:23-109`](../sim/report/src/viewport/cards.rs)) |
+| Caption | `Y{year} M{month} · {N} civ · {F}F/{C}C · {pop}p`. ([`layout.rs:56-64`](../sim/report/src/viewport/layout.rs)) |
+| Map | `WorldFrame` shared with the post-run report (see [Frame renderer](#frame-renderer)). Default 36×30, compact 1-char-per-cell. |
+| Sidebar legend | Glyph reference, 3 lines, mode-aware. ([`sidebar.rs:67-88`](../sim/report/src/viewport/sidebar.rs)) |
+| Species card | Cognition phrase · sense/manip · lifespan / sociality / comm / biochem. ([`cards.rs:125-163`](../sim/report/src/viewport/cards.rs)) |
+| Per-civ panels | One block per active civ, sorted by population desc. ([`sidebar.rs:114-376`](../sim/report/src/viewport/sidebar.rs)) |
+| Log | Scrolling 3-line event log (default), most-recent-last. ([`log.rs`](../sim/report/src/viewport/log.rs)) |
 
 ## Map glyphs
 
+Glyph picking lives in
+[`frame.rs:render_world_frame_styled`](../sim/report/src/frame.rs)
+with precedence: centroid → multi-owner `#` → single-owner cell
+→ nomad → terrain. Terrain selection is in
+[`render/planet.rs:terrain_symbol`](../sim/report/src/render/planet.rs).
+
+### Terrain (biome) glyphs
+
+| Glyph | Meaning | 256-color (`use_color`) |
+|---|---|---|
+| `≈` | Deep water (`water_depth > 100 m`) | 27 deep blue |
+| `~` | Shallow water (`water_depth > 0`) | 39 sky blue |
+| `░` | Coastal land (axial neighbour is water) | 143 sand |
+| `▒` | Inland land (lower 55% of land range) | 34 forest green |
+| `△` | Hill (next 30% of land range) | 94 brown |
+| `▲` | Peak (top 15% of land range) | 15 bright white |
+| `≡` | Gaseous shell (`terrain_peak == 0`) | 222 light yellow |
+| `·` | Featureless rocky / sub-surface ocean / oceanic basin | 244 gray |
+
+The terrain colour table lives in
+[`frame.rs:terrain_color_code`](../sim/report/src/frame.rs).
+
+### Civ / population glyphs
+
 | Glyph | Meaning |
-|-------|---------|
-| `≈` | Deep ocean |
-| `~` | Shallow water |
-| `≡` | Gas-giant cloud band |
-| `░` | Coast |
-| `·` | Low-relief / sub-surface ocean / oceanic basin floor |
-| `▒` | Land |
-| `△` | Hill |
-| `▲` | Peak |
-| `0` | Nomadic (unclaimed) population concentration; rendered in default white |
-| `0`–`9` (colored) | Cell claimed by a civ. Digit is a log-scaled saturation reading: `9` = pop at the cell's carrying capacity, lower digits = farther below cap (each step ≈ ³√10× pop). Civ identity is carried by the colour, not the digit. |
-| `1`–`9` (mono) | Cell claimed by exactly that civ. Used in the markdown post-run report where colours don't render. |
-| `*` (mono) | Cell claimed by a civ with id ≥ 10 |
-| `A`–`Z` | Civ centroid (capital letter); colored to match the civ's claim digit |
-| `#` | Disputed cell (multi-owner) |
+|---|---|
+| `A`–`Z` | Civ centroid (civ 1 = `A`, civ 27 = `A` again — modulo 26) — [`frame.rs:centroid_symbol`](../sim/report/src/frame.rs). |
+| `#` | Disputed cell (multiple civ owners). Centroid check runs before dispute check, so a contested capital still shows the older civ's letter. |
+| **Colour mode, digit mode (default off):** `1`–`9` | Per-cell **population saturation** as `pop / cap` × 10, civ identity carried by colour. Digit `9` = ≥90% of carrying capacity, `1` ≈ 10%, < 10% falls back to the terrain glyph in civ colour ("ownership by colour, barely settled by landform"). See [`frame.rs:pop_digit`](../sim/report/src/frame.rs). |
+| **Colour mode, density mode (default on):** terrain glyph in civ colour | Brightness encodes pop / cap — bold ≥ 60%, normal ≥ 30%, dim < 30%. Centroid letters still mark capitals. ([`frame.rs:262-330`](../sim/report/src/frame.rs)) |
+| **Mono mode (markdown report):** `1`–`9` | Civ-id digit. `*` for civ ids ≥ 10. |
+| `0` (mono) / terrain glyph in bright white (colour) | Nomadic species presence (no civ claim, pop > `NOMAD_DISPLAY_FLOOR_POP`). ([`frame.rs:331-365`](../sim/report/src/frame.rs)) |
 
-Terrain glyphs colour-code in capable terminals: blue water, brown
-mountains, green land, white peaks. ANSI-aware visible-width
-calculation handles colour-escape sequences without misaligning
-the row gutter.
+Civ id → 256-color palette: 24 hand-picked hues, cycling
+([`frame.rs:civ_color_code`](../sim/report/src/frame.rs)).
 
-## Civ panels
+## Sidebar
 
-Each currently-active civ surfaces a 4-line block sorted by
-population descending (so the biggest civ shows first):
+Built by `build_sidebar_lines()`
+([`sidebar.rs:41-377`](../sim/report/src/viewport/sidebar.rs)).
+Three sub-blocks, each separated by a blank line.
+
+### Legend
+
+Three lines, mode-aware
+([`sidebar.rs:67-88`](../sim/report/src/viewport/sidebar.rs)):
+
+- **Colour mode, digit:** `1-9=fill% · white=nomad · #=war`
+- **Colour mode, density:** `dim/bold=fill% · white=nomad · #=war`
+- **Mono mode:** `1-9=civ-id · *=civ≥10` / `0=nomad · #=war · ~sea · ≈deep`
+
+Terrain glyphs in line 2 + 3.
+
+### Species panel
+
+3-line body from `species_card()`, headed by `─── {species name} ───`:
 
 ```
-─── Volthain ───
-  A=cap · 0-9=pop
-  y127 · 14 cells · 247p
-  reformist · solitary
+─── Cyranites ───
+centralized medium cognition
+sense: tactile · manip: tentacle
+44y · solitary · noisy · carbon
 ```
 
-In colored mode the civ name and identity glyphs render in the
-civ's palette colour so the panel doubles as a colour swatch — a
-reader can match each panel to the matching cells on the map at a
-glance. In monochrome mode the identity line falls back to
-`{letter}=cap · {digit}=civ` and the digit names the civ id (so
-civs are still distinguishable in the markdown post-run report).
+### Per-civ panels
 
-`civ_names` and `civ_founded_year` maps populate on `CivFounded`
-and clear on `CivCollapsed`. Civ names come from
-`civ_name_from_seed(seed, civ_id)` — 64 stems × 6 endings = 384
-deterministic kingdom-feeling names per `(seed, civ_id)` pair.
+One block per currently-active civ, sorted by total population
+descending (ties broken by civ_id ascending —
+[`sidebar.rs:126-131`](../sim/report/src/viewport/sidebar.rs)).
+Each block:
 
-## Disputed-cell rendering
+```
+─── Volthain ───            ← civ name painted in civ palette colour
+A=cap · ▒▒▒=pop · t2 · 4 tools
+last: thermal sensor
+y127 · 14 cells · 247p ↑
+cohesion 72% · life 44y · at war ⚔
+empirical+0.3 · ritual-0.4
+⚔ war: Karnan
+```
 
-Multi-owner cells render as `#`. The render pipeline runs the
-multi-owner check **before** the centroid letter so overlapping
-centroids surface as `#` instead of one civ's letter silently
-masking the other. Older civ's `A` shows at the contested capital
-(via `entry().or_insert()` ordering) so the same letter doesn't
-flicker between civs.
+Lines:
 
-## Atomic frame paint
+1. **Header** — `─── {Civ name} ───` or `─── civ {id} ───` if
+   the name hasn't arrived yet. In colour mode the name renders
+   in the civ's palette colour so the panel doubles as a colour
+   swatch.
+2. **Identity** — `{centroid_letter}=cap · {pop_swatch}=pop ·
+   t{tier} · {N} tools`. In density mode `pop_swatch` is three
+   `▒` glyphs in civ colour at dim / normal / bold brightness so
+   the reader can match the swatch ladder to map cells. In digit
+   mode it's `0-9` in civ colour. In mono mode it's the legacy
+   `{letter}=cap · {digit}=civ`. ([`sidebar.rs:172-201`](../sim/report/src/viewport/sidebar.rs))
+3. **Last unlock** (when present) — `last: {tool_name}`.
+4. **Year / cells / pop** — `y{founded_year} · {N} cells ·
+   {pop}p {trend}`. The trend arrow (`↑` / `↓` / `→`) compares
+   against the previous frame's snapshot with a ±0.5% deadband
+   ([`sidebar.rs:228-256`](../sim/report/src/viewport/sidebar.rs)).
+5. **Cohesion / life / war** — `cohesion {pct}% · life {y}y · {at war ⚔ | peace}`.
+6. **Belief axes** (optional) — dominant cosmology + religion
+   axis with signed magnitude, e.g. `empirical+0.3 · ritual-0.4`.
+   Threshold: |axis| ≥ 0.20 ([`sidebar.rs:301-342`](../sim/report/src/viewport/sidebar.rs)).
+7. **War rivals** (optional) — `⚔ war: {Foo, Bar}` listing
+   active war partners by name.
 
-Each frame writes to a `Vec<u8>` buffer first, then flushes in one
-write — no incremental-paint flicker, no scroll, no half-painted
-rows. The buffer starts with `\x1b[H\x1b[2J` (cursor home + clear)
-so the prior frame is cleared as part of the same atomic write.
+`civ_names`, `civ_founded_year`, cosmology, religion, tech tier,
+tools, cohesion, life expectancy, and last unlocked tool all
+live on the per-civ `CivState` struct
+([`emitter.rs:134-145`](../sim/report/src/viewport/emitter.rs)),
+populated incrementally from per-event handlers and cleared
+together on `CivCollapsed`.
 
-`run.sh` does *not* auto-shrink the grid based on terminal height;
-the user can stick with the full 36×30 grid even if it scrolls
-the planet section off the top.
+## Cards
 
-## Conflict log dedup
+### Planet card
 
-Multi-tick wars produce per-cell `ConflictResolved` events. A
-single declared war can produce 200+ skirmishes. The viewport
-tracks `wars_logged: BTreeSet<(u32, u32)>` to dedupe so each war
-surfaces **once** in the log per pair, cleared on `CivCollapsed`
-so re-emerged civ_ids re-trigger.
+Three lines, each ≤ 32 chars so the card fits on portrait phone
+terminals ([`cards.rs:23-109`](../sim/report/src/viewport/cards.rs)):
 
-`log_message` is a `&mut self` method on the viewport state to
-mutate the dedup set deterministically.
+1. `{planet_type} · {friendly_habitability_badge}` — e.g.
+   `ocean world · scorching`.
+2. `{atmosphere_descriptor} · {temperature}{unit} · {mag} mag` —
+   reads the per-seed substrate freeze/boil perturbation from
+   `RunMetadata` so the displayed value matches the physics
+   wiring.
+3. Atmospheric composition (top three channels by mass fraction)
+   when non-vacuum.
+4. `{day}h · {months}mo · {tilt}° · {N} moon(s)` — orbital
+   mechanics.
+
+Temperature unit defaults to Fahrenheit; flip via `TempUnit` in
+the `ViewportConfig` ([`config.rs:42-86`](../sim/report/src/viewport/config.rs)).
+
+### Species card
+
+Three lines ([`cards.rs:125-163`](../sim/report/src/viewport/cards.rs)):
+
+1. `{topology} {tier} cognition` — full-word topology
+   (`centralized` / `distributed` / `collective` / `acentric`) +
+   tier bucket from `cog_tier`.
+2. `sense: {primary modality} · manip: {primary manipulation}`.
+3. `{lifespan}y · {sociality} · {comm fidelity} · {biochem}`.
+
+The species name is not repeated here — the sidebar's
+`─── {species name} ───` divider carries it.
+
+## ANSI / alt-screen lifecycle
+
+`use_alt_screen = true` (the default) wraps the session in the
+terminal's alternate-screen buffer + hides the cursor on first
+frame ([`emitter.rs:176-194`](../sim/report/src/viewport/emitter.rs))
+and restores both on `RunEnd`. The user's scrollback is
+untouched. Escape constants live in
+[`ansi.rs:8-43`](../sim/report/src/viewport/ansi.rs):
+
+```
+\x1b[?1049h   alt-screen on        ANSI_ALT_SCREEN_ON
+\x1b[?1049l   alt-screen off       ANSI_ALT_SCREEN_OFF
+\x1b[?25l     hide cursor          ANSI_HIDE_CURSOR
+\x1b[?25h     show cursor          ANSI_SHOW_CURSOR
+\x1b[K        erase to end of line ANSI_ERASE_LINE
+\x1b[J        erase to end of screen ANSI_ERASE_TO_END
+```
+
+### Per-row paint strategy
+
+The render loop builds the whole frame into an in-memory
+`Vec<u8>` first
+([`layout.rs:85-245`](../sim/report/src/viewport/layout.rs)). In
+alt-screen mode each row is then emitted with an absolute
+cursor-positioning escape (`\x1b[<row>;1H`) + `\x1b[K`, never
+via `\n`, so the terminal never scrolls. After the last row a
+trailing `\x1b[J` cleans up rows below the new frame's bottom
+([`layout.rs:273-310`](../sim/report/src/viewport/layout.rs)).
+
+A 1.5 ms inter-row pause keeps multi-byte glyphs (`▲`, `⚔`, `≈`)
+from straddling PTY chunk boundaries on mobile SSH terminals
+([`layout.rs:296-308`](../sim/report/src/viewport/layout.rs)) —
+documented mitigation for iOS Termius's UTF-8 parser dropping
+continuation bytes when rows arrive back-to-back.
+
+When `use_alt_screen = false` the buffer is flushed in a single
+write (no per-row positioning, no scroll-prevention) — the test
+configs and pipe-to-file consumers take this path.
+
+## Sub-stellar point on synchronous worlds
+
+The planet-card layer flags rotation state via
+`rotation_state_label` in
+[`render/planet.rs:359-382`](../sim/report/src/render/planet.rs):
+a planet whose day length lies within ±5% of one orbital period
+reads as `synchronous (tidally locked)`, anything longer is a
+`slow rotator`, anything shorter is `free rotation`. The
+underlying tidal-locking model + sub-stellar longitude
+advancement live in
+[`sim/world/src/tidal_locking.rs`](../sim/world/src/tidal_locking.rs):
+`sub_stellar_point(planet, macro_step)` returns the locked
+planet's fixed sub-stellar `(lat, lon)` or, for free rotators,
+the longitude that advances each macro-step.
+
+The live viewport does **not** yet paint a sub-stellar point
+highlight on the map grid — the rotation classification surfaces
+only in the post-run markdown report's planet table. The
+geometry is plumbed end-to-end through `sim_world`; a follow-up
+can read the sub-stellar `(lat, lon)`, project it onto the hex
+grid, and overlay a glyph on the frame renderer without
+disturbing the determinism contract.
+
+## Frame renderer
+
+`render_world_frame_styled`
+([`frame.rs:115-409`](../sim/report/src/frame.rs)) is the single
+ASCII-grid renderer shared by:
+
+- **Live viewport** (`--cli=viewport`) — `ViewportEmitter::render`
+  passes `FrameStyle { use_color, compact, density }` populated
+  from the user's `ViewportConfig`.
+- **Post-run report keyframes** — `Digest::keyframes(every_ticks)`
+  reconstructs `WorldFrame`s at fixed intervals and the markdown
+  layer renders each one in monochrome compact density (see
+  [report.md](report.md)).
+
+Both paths build the same `WorldFrame { tick, civs, nomad_cells }`
+struct ([`frame.rs:56-63`](../sim/report/src/frame.rs)) — there's
+no second renderer to drift.
 
 ## Determinism
 
@@ -146,15 +329,44 @@ The viewport sits **outside** the simulation's compute path.
 Toggling `--cli=viewport` doesn't change the canonical event log
 — same seed, byte-for-byte identical NDJSON regardless of
 `--cli` mode or `--tick-rate-ms`. The viewport is a pure
-function of the event stream + a small frame-state struct.
+function of the event stream plus the small set of snapshot
+structs on `ViewportEmitter`.
 
-`tput lines` and terminal-resize behaviour are read-only — the
-viewport adapts to the terminal but doesn't feed back into the
-simulation.
+Terminal-resize behaviour is read-only — the viewport adapts to
+the available width via `pad_to` / `visible_width` but never
+feeds back into the simulation.
 
 ## Frame cadence
 
 `--frame-every-ticks` controls how often a frame paints. Default
 50 ticks. `--tick-rate-ms` adds a real-time delay between ticks
-for watchability — both knobs are decorative and don't affect
-the NDJSON.
+for watchability. Both knobs are decorative and don't affect the
+NDJSON ([`state.rs:289-300`](../sim/report/src/viewport/state.rs):
+`should_render` only returns `true` on `Tick { phase: TickEnd }`
+where `tick % frame_every == 0`, plus the terminal frame on
+`RunEnd`).
+
+## Log dedup
+
+The scrolling log has per-event dedup latches on
+`ViewportEmitter` so high-volume per-tick chatter doesn't drown
+the 3-line strip ([`emitter.rs:79-118`](../sim/report/src/viewport/emitter.rs)):
+
+| Latch | Effect |
+|---|---|
+| `wars_logged: BTreeSet<(winner, loser)>` | One `defeated` line per war pair. Cleared on `CivCollapsed` so a re-emerged civ_id can re-trigger. |
+| `templates_confirmed_logged: BTreeSet<template_id>` | One `species confirmed` line per template (recognition firings span thousands per run). |
+| `relations_falsified_logged` / `relations_lapsed_logged: BTreeSet<relation_id>` | First-of-kind only per relation. |
+| `transmissions_logged: BTreeSet<(source, dest)>` | One `sharing knowledge` line per pair for the lifetime of the run. |
+| `wars_active: BTreeSet<(min, max)>` | Mirrors core's active-war set; drives the sidebar's `at war ⚔` tag. |
+| `civ_last_emitted_pop_q32: BTreeMap<civ_id, i128>` | Previous-frame pop snapshot for the per-civ trend arrow (±0.5% deadband). |
+| `relation_template_names: BTreeMap<relation_id, String>` | Captured on the first `RelationConfirmed`; lets downstream log lines read as `lost "water flows downhill"` instead of `lost r438`. |
+
+`log_message` runs **before** the state-mutation match in
+`apply_state`
+([`state.rs:24-64`](../sim/report/src/viewport/state.rs)) so
+events that drop identifying state (notably `CivCollapsed`
+removing the civ's name) don't strip it before the log line
+captures it. Same-tick `CivContact` events coalesce into one
+line — `"Karnan, Goran met Yothan"` instead of two separate
+`"X met Y"` lines.
