@@ -14,9 +14,11 @@ use sim_report::{
     replay_narration, NarratingEmitter, TempUnit, ViewportConfig, ViewportEmitter,
 };
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufRead, BufWriter};
 use std::path::PathBuf;
 use std::time::Duration;
+
+mod config_prompt;
 
 fn main() -> Result<()> {
     let args = parse_args()?;
@@ -47,6 +49,17 @@ fn main() -> Result<()> {
     }
     if let Some(h) = args.grid_height {
         cfg.grid_height = h;
+    }
+    // `--config` runs the interactive planet-builder before the sim.
+    // Map geography stays seed-driven; planet-level scalars
+    // (substrate, atmosphere, temperature, gravity, …) are
+    // overridden from the user's picks via `PlanetOverrides`.
+    if args.config {
+        let stdin = std::io::stdin();
+        let mut handle = stdin.lock();
+        let mut buf = std::io::BufReader::new(&mut handle as &mut dyn BufRead);
+        cfg.planet_overrides =
+            config_prompt::run_interactive(&mut buf, std::io::stdout().lock())?;
     }
     let throttle = Duration::from_millis(args.tick_rate_ms);
 
@@ -217,6 +230,10 @@ struct Args {
     /// Mutually exclusive with `--narration` (a freshly running sim
     /// has nothing to replay).
     replay_narration: Option<PathBuf>,
+    /// `--config`: run the interactive planet-builder before the
+    /// sim starts. The seed still controls map geography; every
+    /// other planet-level scalar can be set by hand.
+    config: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -273,6 +290,7 @@ fn parse_args() -> Result<Args> {
     let mut temperature_unit: TempUnit = TempUnit::Fahrenheit;
     let mut narration: bool = false;
     let mut replay_narration_path: Option<PathBuf> = None;
+    let mut config: bool = false;
 
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -376,6 +394,9 @@ fn parse_args() -> Result<Args> {
                 let v = iter.next().context("--replay-narration needs a path")?;
                 replay_narration_path = Some(PathBuf::from(v));
             }
+            "--config" => {
+                config = true;
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -409,6 +430,7 @@ fn parse_args() -> Result<Args> {
             temperature_unit,
             narration,
             replay_narration: replay_narration_path,
+            config,
         });
     }
 
@@ -437,6 +459,7 @@ fn parse_args() -> Result<Args> {
         temperature_unit,
         narration,
         replay_narration: replay_narration_path,
+        config,
     })
 }
 
@@ -501,7 +524,14 @@ fn print_help() {
              --replay-narration <path>  skip the sim entirely; read a previously-\n  \
                                     recorded NDJSON event log at <path> and emit\n  \
                                     narration lines to stdout retroactively. Mutually\n  \
-                                    exclusive with --narration.\n\
+                                    exclusive with --narration.\n  \
+             --config               interactive planet-builder before the sim\n  \
+                                    starts. Asks one question at a time (substrate,\n  \
+                                    atmosphere, temperature, gravity, star, tilt,\n  \
+                                    day length, year length, moons, magnetosphere,\n  \
+                                    crust, biosphere). Map geography stays seeded;\n  \
+                                    every other scalar is yours. Press 0 / Enter to\n  \
+                                    leave a value at the seed default.\n\
          \n\
          Each seed yields a different planet. Try a few seeds — most\n\
          produce coherent worlds, some are inhospitable. Recognition\n\

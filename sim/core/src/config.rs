@@ -16,6 +16,9 @@ pub fn rng_from_seed(seed: u64) -> Rng {
 
 /// Run configuration. The planet is sampled from `seed` at run
 /// start (sim-world::sample_planet); same seed → identical run.
+/// `planet_overrides` lets the `--config` interactive prompt
+/// substitute per-field user choices on top of the seed-sampled
+/// planet; map geography always comes from the seed.
 #[derive(Debug, Clone)]
 pub struct RunConfig {
     pub seed: u64,
@@ -23,6 +26,7 @@ pub struct RunConfig {
     pub grid_width: u32,
     pub grid_height: u32,
     pub orchestration: OrchestrationConfig,
+    pub planet_overrides: sim_world::PlanetOverrides,
 }
 
 impl RunConfig {
@@ -36,6 +40,7 @@ impl RunConfig {
             max_ticks,
             grid_width: 12,
             grid_height: 8,
+            planet_overrides: sim_world::PlanetOverrides::default(),
             orchestration: OrchestrationConfig {
                 // Earlier this was 12 (one macro-step per month within a
                 // year-long tick); now 1 (one macro-step per month-long

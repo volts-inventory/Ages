@@ -57,7 +57,9 @@ pub use habitability::{
 };
 pub use init::{discharge_threshold_for, init_planet};
 pub use planet::Planet;
-pub use sampling::{planet_name_from_seed, sample_planet};
+pub use sampling::{
+    planet_name_from_seed, sample_planet, sample_planet_with_overrides, PlanetOverrides,
+};
 pub use star::{bolometric_scale_at_age, SedFractions, SpectralType, Star};
 pub use tidal_locking::{step_eccentricity_damping, sub_stellar_point};
 pub use types::{
