@@ -2,20 +2,26 @@
 
 How the project's ambitions map to what's shipped today. For
 mechanics depth on any single feature, see the per-feature docs
-in [`docs/`](.). For how to run it, see [`README.md`](../README.md).
-For active work tracking, see [`PLANNING.md`](../PLANNING.md).
+in [`docs/`](.). For how to run it, see
+[`docs/getting-started.md`](getting-started.md). For active work
+tracking, see [`PLANNING.md`](../PLANNING.md). For user-visible
+release notes, see [`CHANGELOG.md`](../CHANGELOG.md).
 
 ## Vision in one paragraph
 
 Ages produces **the biography of a species across its full
-history**. A planet is sampled from a seed; a species evolves to
+history** on **any planet**, not just Earth-like ones — Earth +
+Mars + Venus + Titan + Ammoniacal + super-Earth + hot Jupiter +
+M-dwarf-locked + Europa + Ganymede + Callisto + Silicate lava all
+run cleanly. A planet is sampled from a seed; a species evolves to
 fit it; civilizations rise and fall within the species over
-thousands of years, each deriving genuinely different physics
-from ours because their world is different. Knowledge survives
+thousands of years, each deriving genuinely different physics from
+ours because their world is different. Knowledge survives
 collapses through inherited artifacts with comprehension-decayed
 transmission. Discoveries are fits against real simulated data,
 not authored truth tokens. Outputs are structured (NDJSON event
-log + markdown report); no LLM in the loop.
+log + markdown report + optional prose narration); no LLM in the
+loop.
 
 ## Six guiding principles
 
@@ -37,10 +43,32 @@ trace back to at least one.
    functional forms with real parameters. Wrong hypotheses are
    first-class. Refinement is open-ended.
 5. **No hand-holding output, no LLM.** Outputs are structured:
-   NDJSON + snapshots + live CLI + markdown report.
+   NDJSON + snapshots + live CLI + markdown report + optional
+   single-sentence narration.
 6. **Determinism as a contract.** Same `(seed, grid)` pair =
    byte-for-byte identical NDJSON. Physics, fits, RNG all thread
    through Q32.32 fixed-point arithmetic.
+
+## Current state at a glance
+
+- **Status:** `SHIP_IT` from the round-5 dual-expert reviews
+  (xeno + astro), both unconditional. First tagged release
+  `1.0.0` landed once that sign-off closed (see
+  [`CHANGELOG.md`](../CHANGELOG.md)).
+- **Cross-planet coverage:** end-to-end test matrix passes on 12
+  substrate / spectral-class combinations — Earth, Mars, Venus,
+  Titan (hydrocarbon), Ammoniacal, super-Earth gravity, hot
+  Jupiter (extreme params), M-dwarf HZ tidally-locked, Europa,
+  Ganymede, Callisto (tidal heating), and Silicate lava.
+- **Test suite:** 663+ tests across the workspace's 9 main sim
+  crates (`arith`, `core`, `physics`, `world`, `recognition`,
+  `species`, `ecosystem`, `population`, `civ`) plus
+  `sim/events`, `sim/report`, `protocol`, and the `ages` binary.
+  CI enforces byte-for-byte determinism on the reference seed.
+- **Shipped:** 35 plan-v2 items + 26 post-implementation fixes +
+  4 calibration fixes + 19 cleanup PRs + viewport / narration +
+  docs cleanup wave.
+- **PR count:** 160+ PRs merged to `main`.
 
 ## Vision pillar → shipped features
 
@@ -54,6 +82,7 @@ trace back to at least one.
 | Atmospheric composition + crustal composition as continuous vectors, not categorical labels | **Shipped** (9-channel + 7-channel) | [world.md](world.md) |
 | Substrate-derived demographics (founding floor, capacity, migration, birth rate) | **Shipped** | [population.md](population.md) |
 | Per-terrain habitability multipliers gating claim eligibility | **Shipped** | [world.md](world.md), [population.md](population.md) |
+| Cross-planet validity — Mars, Venus, Titan, Europa, Ganymede, Callisto, Silicate lava, M-dwarf-locked, super-Earth, hot Jupiter, Ammoniacal | **Shipped** (12-class end-to-end test matrix) | [`CHANGELOG.md`](../CHANGELOG.md) |
 
 ### 2. Emergence over authoring
 
@@ -99,6 +128,7 @@ trace back to at least one.
 | Periodic `Snapshot` digests embedded in NDJSON | **Shipped** | [architecture.md](architecture.md) |
 | Live CLI event stream with verbosity levels | **Shipped** | [architecture.md](architecture.md) |
 | Live ASCII viewport sharing the post-run frame renderer | **Shipped** | [viewport.md](viewport.md) |
+| In-binary single-sentence narration (`--narration`); offline replay (`--replay-narration`) | **Shipped** (`NarratingEmitter` + `replay_narration`) | [report.md](report.md), [architecture.md](architecture.md) |
 | Markdown post-run report (planet card, species card, per-civ chapters, paired keyframes) | **Shipped** | [report.md](report.md) |
 | Python prose narrator consuming the same NDJSON | **Shipped** | [report.md](report.md) |
 | Shared label vocabulary via `RunMetadata` event | **Shipped** | [report.md](report.md) |
