@@ -3,49 +3,26 @@
 //! Real planets lose atmosphere through four physical channels, each
 //! with a distinct driver:
 //!
-//! 1. **Jeans (thermal)**. Random thermal motion in the exosphere
-//!    flings molecules above escape velocity. The canonical Jeans
-//!    dimensionless escape parameter is
-//!    `λ = m × v_esc² / (2 × k_B × T)`; escape rate scales as
-//!    `exp(-λ)`. Light molecules (small `m`) escape exponentially
-//!    faster than heavy ones — for Earth conditions, the H-vs-He
-//!    retention ratio is ~10⁴, far steeper than the linear per-
-//!    substance weighting the v1 model used. Earth-equivalent
-//!    Jeans loss of hydrogen is ~3 kg/s; for CO2 it's effectively
-//!    zero. P2.2 of `docs/post-implementation-fixes.md` replaced
-//!    the dimensionless `v_esc/sqrt(T)` heuristic with explicit
-//!    `m × v_esc² / T` so heavy species are now exponentially
-//!    retained as physics dictates. T4 of the any-planet backlog
-//!    further plugs the *exobase* T into the exponent rather than
-//!    the surface T — real exobase is ~1000 K for Earth while the
-//!    surface is 288 K, and the exponential dependence on T means
-//!    using surface T was wrong by orders of magnitude on hot
-//!    atmospheres.
-//!
-//! 2. **Hydrodynamic blow-off**. When XUV (extreme UV) flux is high
-//!    enough, the exosphere expands outward as a bulk fluid rather
-//!    than as individual escaping molecules. Young stars deliver
-//!    ~100× modern Sun's XUV; the early Solar System lost most of
-//!    Mars's primordial atmosphere this way. Modelled as
-//!    `base × euv_flux × thermal_factor` — only fires meaningfully
-//!    when both are high.
-//!
-//! 3. **Photochemical**. UV photolysis breaks H2O / CH4 into lighter
-//!    species (H, O, etc.); those products escape faster than the
-//!    parent. This is the dominant loss channel for Mars *today* —
-//!    no ozone layer means raw UV reaches the lower atmosphere and
-//!    cracks water vapour into H + OH, and the H escapes. Modelled
-//!    as `base × uv_flux × dissociation_factor` where the
-//!    dissociation factor is highest for light volatiles (H2O,
-//!    CH4) and low for heavier ones (CO2).
-//!
-//! 4. **Ion escape**. Charged species escape along open magnetic
-//!    field lines. A strong planetary magnetic field traps ions on
-//!    closed field lines (magnetosphere); a weak / absent one lets
-//!    the solar wind strip charged particles directly. Modelled as
-//!    `base / (1 + magnetic_strength)`. Earth's strong dipole keeps
-//!    ion loss negligible; Mars (no dipole) loses ~2 kg/s of O via
-//!    this channel and ~few × 10^25 ions per second according to MAVEN.
+//! 1. **Jeans (thermal)** — see [`jeans`]. Random thermal motion in
+//!    the exosphere flings molecules above escape velocity; the
+//!    rate scales as `exp(-λ)` with `λ = m × v_esc² / (2 × k_B × T)`.
+//!    Light molecules escape exponentially faster than heavy ones —
+//!    Earth-equivalent H-vs-He retention ratio is ~10⁴. P2.2 of
+//!    `docs/post-implementation-fixes.md` replaced the dimensionless
+//!    `v_esc/sqrt(T)` heuristic with explicit `m × v_esc² / T`; T4
+//!    of the any-planet backlog further plugs the *exobase* T into
+//!    the exponent rather than the surface T.
+//! 2. **Hydrodynamic blow-off** — see [`hydrodynamic`]. When XUV
+//!    flux is high enough, the exosphere expands as a bulk fluid;
+//!    young stars deliver ~100× modern Sun's XUV and stripped
+//!    Mars's primordial atmosphere this way.
+//! 3. **Photochemical** — see [`photochemical`]. UV photolysis
+//!    breaks H2O / CH4 into lighter products that escape faster
+//!    than the parent. Dominant loss channel for Mars *today*.
+//! 4. **Ion escape** — see [`ion`]. Charged species escape along
+//!    open magnetic field lines; suppressed by `1 / (1 + B)` so a
+//!    strong dipole shields effectively (Earth) while no dipole
+//!    leaves the solar wind to strip directly (Mars, ~2 kg/s of O).
 //!
 //! ## Composition shifts (light first)
 //!
@@ -54,7 +31,7 @@
 //! velocity which favours light molecules; hydrodynamic blow-off
 //! drags lighter species more efficiently; photochemical dissociation
 //! creates light products by definition; ion escape mass-fractionates
-//! along the same axis. The per-substance mass weight below
+//! along the same axis. The per-substance mass weight in [`params`]
 //! captures this differential.
 //!
 //! ## Calibration
@@ -71,497 +48,31 @@
 //! iteration, no state-dependent branching beyond clamps. Q32.32
 //! throughout via `sim_arith::Real`.
 
+pub mod hydrodynamic;
+pub mod ion;
+pub mod jeans;
+pub mod params;
+pub mod photochemical;
+
+pub use hydrodynamic::{hydrodynamic_thermal_factor, HYDRODYNAMIC_T_REF_K};
+pub use ion::ion_escape_factor;
+pub use jeans::{
+    exobase_temperature, jeans_factor, molecular_mass_amu, EXOBASE_EUV_GAIN_DEN,
+    EXOBASE_EUV_GAIN_NUM, EXOBASE_RATIO_MAX, EXOBASE_SURFACE_PRESSURE_REF_DEN,
+    EXOBASE_SURFACE_PRESSURE_REF_NUM, JEANS_COEFFICIENT, JEANS_LAMBDA_MAX, JEANS_T_FLOOR_K,
+};
+pub use params::{
+    EscapeChannels, PlanetEscapeParams, ATMOSPHERIC_SUBSTANCES, HELIUM_MASS_AMU,
+    HYDRODYNAMIC_BASE_DEN, HYDRODYNAMIC_BASE_NUM, HYDROGEN_MASS_AMU, ION_BASE_DEN, ION_BASE_NUM,
+    JEANS_BASE_DEN, JEANS_BASE_NUM, MAVEN_CALIBRATION_SCALE_DEN, MAVEN_CALIBRATION_SCALE_NUM,
+    PHOTOCHEMICAL_BASE_DEN, PHOTOCHEMICAL_BASE_NUM,
+};
+pub use photochemical::{photochemical_uv_factor, PHOTOCHEMICAL_UV_REF_W_M2};
+
 use crate::chemistry::Substance;
 use crate::state::PhysicsState;
-use sim_arith::transcendental::exp;
+use params::substance_weight;
 use sim_arith::Real;
-
-/// Planet-derived inputs to the escape calculation. Bundled in a
-/// small struct rather than passed as five scalar arguments so the
-/// call site stays readable and additions (e.g. exobase altitude)
-/// don't break callers. Populated from `Planet` + `Star` at the
-/// `sim-core` wiring layer — `sim-physics` doesn't depend on
-/// `sim-world`, so we can't import `Planet` directly here.
-#[derive(Debug, Clone, Copy)]
-pub struct PlanetEscapeParams {
-    /// Escape velocity at the planet's surface, km/s. Derived from
-    /// `Planet::escape_velocity()`. Earth ≈ 11.18, Mars ≈ 5.03,
-    /// Venus ≈ 10.36.
-    pub escape_velocity_km_s: Real,
-    /// Extreme-UV irradiance at the planet's orbit, W/m². Drives
-    /// hydrodynamic blow-off. Read from `Planet::star.euv_flux`.
-    /// Modern Sun-on-Earth ≈ 0.001 W/m² (the SED fraction is tiny);
-    /// young Sun ≈ 0.1 W/m². If Item 18a hasn't merged yet, use
-    /// `star.bolometric_luminosity × 0.001`.
-    pub euv_flux_w_m2: Real,
-    /// Near-UV irradiance at the planet's orbit, W/m². Drives
-    /// photochemical dissociation. Modern Sun-on-Earth ≈ 90 W/m²;
-    /// for stars without a dedicated UV SED channel, use a small
-    /// fraction (~5%) of the bolometric luminosity.
-    pub uv_flux_w_m2: Real,
-    /// Planet-scale magnetic field strength, in arbitrary units
-    /// matching whatever the `Magnetism` law writes to the per-cell
-    /// field. Earth-equivalent dipole ≈ 1.0; Mars ≈ 0.0 (no global
-    /// dipole). Read from `state.magnetic_field_magnitude` averaged
-    /// across cells, scaled by `state.dipole_strength()` during
-    /// reversal windows.
-    pub magnetic_strength: Real,
-}
-
-impl PlanetEscapeParams {
-    /// Earth-analog defaults — useful for tests and as a sanity
-    /// baseline. Strong dipole, modern EUV / UV.
-    #[must_use]
-    pub fn earth_like() -> Self {
-        Self {
-            // sqrt(2 × 9.81 × 6.371e6) / 1000 ≈ 11.18 km/s.
-            escape_velocity_km_s: Real::from_ratio(1_118, 100),
-            // Modern Sun EUV at Earth (rough): ~0.001 W/m².
-            euv_flux_w_m2: Real::from_ratio(1, 1_000),
-            // Modern Sun UV at Earth: ~90 W/m².
-            uv_flux_w_m2: Real::from_int(90),
-            // Earth's dipole at full strength = 1.0.
-            magnetic_strength: Real::ONE,
-        }
-    }
-
-    /// Mars-analog defaults: low gravity, no magnetic field, weak
-    /// modern EUV / UV. Test fixture.
-    #[must_use]
-    pub fn mars_like() -> Self {
-        Self {
-            // Mars escape velocity ≈ 5.03 km/s.
-            escape_velocity_km_s: Real::from_ratio(503, 100),
-            // ~0.4× Earth's EUV at modern Mars orbit (~1.5 AU).
-            euv_flux_w_m2: Real::from_ratio(4, 10_000),
-            // ~0.4× Earth's UV at Mars orbit.
-            uv_flux_w_m2: Real::from_int(40),
-            // Mars: no global dipole.
-            magnetic_strength: Real::ZERO,
-        }
-    }
-}
-
-/// MAVEN absolute-rate calibration scale (C2 calibration fix).
-///
-/// The four `*_BASE_NUM / *_BASE_DEN` constants below were originally
-/// tuned for *fractional* per-tick loss anchors (Earth <5%/100 ticks,
-/// Mars >1%/500 ticks, ratio-based H/He / CO2-vs-H2O tests). Converting
-/// those per-tick fractions into absolute kg/s rates via Mars's
-/// surface area + atmospheric column mass + 1-month tick duration
-/// produced numbers ~4-5 orders of magnitude *above* MAVEN's measured
-/// Mars ion + photochemical escape (~2-3 kg/s per channel; Jakosky et
-/// al. 2018, Lillis et al. 2017).
-///
-/// The cleanest fix is a single shared scale applied to every channel's
-/// base rate: `BASE_effective = (NUM / DEN) × MAVEN_CALIBRATION_SCALE`.
-/// All relative-loss tests (which compare *ratios* between channels,
-/// species, or planets) are invariant under a uniform multiplicative
-/// scale; only the absolute-kg/s comparison shifts. With
-/// `MAVEN_CALIBRATION_SCALE = 1 / 10_000`:
-///
-/// - Ion (oxidiser) at Mars: produced ≈ 4.4e5 × 1e-4 ≈ 44 kg/s.
-/// - Photochemical (vapour) at Mars: ≈ 3.2e4 × 1e-4 ≈ 3.2 kg/s.
-///
-/// Both land comfortably inside the one-order-of-magnitude envelope
-/// around MAVEN's ~3 kg/s literature value. Earth-equivalent loss
-/// stays even smaller than before (the scale only shrinks rates),
-/// keeping the < 5% / 100 ticks anchor intact.
-pub const MAVEN_CALIBRATION_SCALE_NUM: i64 = 1;
-pub const MAVEN_CALIBRATION_SCALE_DEN: i64 = 10_000;
-
-/// Base per-tick Jeans-loss rate before the `exp(-lambda)` Jeans
-/// suppression. Real Jeans escape is a tiny per-tick rate dominated
-/// by the exponential. Set low enough that even at a relatively
-/// permissive lambda ≈ 2-3 (small molecular mass / hot atmosphere)
-/// the Jeans loss stays well under 1% per Gyr at this base.
-///
-/// Applied scale: `JEANS_BASE_NUM / JEANS_BASE_DEN ×
-/// MAVEN_CALIBRATION_SCALE` — see [`MAVEN_CALIBRATION_SCALE_NUM`].
-pub const JEANS_BASE_NUM: i64 = 1;
-pub const JEANS_BASE_DEN: i64 = 100_000;
-
-/// Reference temperature floor in the Jeans exponent. Keeps the
-/// division `m × v_esc² / T` finite on frozen cells. Real exobase
-/// temperatures sit at ~1000 K for Earth; [`exobase_temperature`]
-/// converts the per-cell surface T into an EUV-scaled exobase T
-/// before [`escape_rate_for`] plugs it into [`jeans_factor`].
-pub const JEANS_T_FLOOR_K: i64 = 100;
-
-/// Surface-pressure-equivalent reference (W/m²) used to translate
-/// EUV irradiance into a dimensionless exobase-heating factor.
-///
-/// Physical motivation (T4 of the any-planet backlog): the
-/// thermosphere is heated by EUV absorption, and the heating per
-/// unit column-mass scales as `EUV / column_mass`. A thin
-/// atmosphere (Mars) lets EUV penetrate and reach a relatively
-/// large fraction of the column, so the exobase sits much warmer
-/// than the surface (Mars exobase ≈ 300-400 K over a ~210 K
-/// surface). A thick atmosphere (Venus) shields its lower layers
-/// and heats only a thin upper sliver, so the exobase ratio is
-/// closer to unity (Venus exobase ≈ 1000 K over a 737 K surface,
-/// ratio ≈ 1.4). Earth sits between (288 K surface, ~1000 K
-/// exobase, ratio ≈ 3.47).
-///
-/// We don't track column mass per planet at this layer, so we use
-/// a coarse proxy: `T_exo = T_surf × (1 + EUV_GAIN × EUV /
-/// PRESSURE_REF)`. Calibrating `PRESSURE_REF` against the modern-
-/// Earth-at-orbit value `EUV ≈ 0.001 W/m²` puts the gain `(1 +
-/// 2.5) ≈ 3.5×` on a planet receiving Earth-level EUV, matching
-/// the Earth exobase ratio. Mars at ~0.0004 W/m² gives `1 + 1.0
-/// ≈ 2.0×` (close to the real 1.7×). Hot young Venus with high
-/// EUV (~0.01) clamps via [`EXOBASE_RATIO_MAX`] before it can
-/// inflate exobase T unboundedly.
-pub const EXOBASE_SURFACE_PRESSURE_REF_NUM: i64 = 1;
-pub const EXOBASE_SURFACE_PRESSURE_REF_DEN: i64 = 1_000;
-
-/// EUV-coupled exobase heating gain. See
-/// [`EXOBASE_SURFACE_PRESSURE_REF_NUM`] for the derivation; with
-/// `gain = 2.5` an Earth-equivalent EUV of 0.001 W/m² produces a
-/// surface-to-exobase ratio of `1 + 2.5 = 3.5`, matching the
-/// canonical ~3.47 Earth exobase/surface ratio.
-pub const EXOBASE_EUV_GAIN_NUM: i64 = 25;
-pub const EXOBASE_EUV_GAIN_DEN: i64 = 10;
-
-/// Upper clamp on the surface-to-exobase ratio. Real planetary
-/// exobase temperatures saturate when the upper atmosphere becomes
-/// fully ionised — runaway EUV heating doesn't keep linearly
-/// raising T_exo. Cap at 10× the surface temperature so a hot-
-/// Jupiter-like configuration (EUV many orders of magnitude above
-/// Earth) can't drive T_exo above ~3000 K on a 300 K surface or
-/// near the Q32.32 ceiling on a hot 1000 K surface (10× → 10000 K,
-/// still comfortably inside Q32.32's ~2.1e9 max).
-pub const EXOBASE_RATIO_MAX: i64 = 10;
-
-/// Convert per-cell surface temperature into the corresponding
-/// exobase temperature for the Jeans escape calculation (T4 of
-/// the any-planet backlog).
-///
-/// Real Jeans escape happens at the exobase (~1000 K on Earth, far
-/// hotter than the 288 K surface). Using surface T in the Jeans
-/// exponent `λ = m × v_esc² / (2 × k_B × T)` overstates λ by the
-/// surface-to-exobase ratio (~3.5× on Earth), which in turn
-/// understates escape rates exponentially. Per-planet exobase
-/// temperatures vary because thermospheric heating per unit column
-/// mass scales as `EUV / column_mass`: thin atmospheres
-/// (Mars-like, low column mass) get a relatively warmer exobase;
-/// thick atmospheres (Venus-like) heat only a thin upper sliver
-/// and the ratio stays closer to unity.
-///
-/// Coarse proxy used here:
-///   `T_exo = T_surf × (1 + EUV_GAIN × EUV / PRESSURE_REF)`
-///
-/// Calibrated such that:
-/// - Earth-equivalent (EUV ≈ 0.001 W/m²) → ratio ≈ 3.5.
-/// - Mars-equivalent (EUV ≈ 0.0004 W/m²) → ratio ≈ 2.0.
-/// - Hot young Venus (EUV ≈ 0.01 W/m²) → clamped by
-///   [`EXOBASE_RATIO_MAX`] at 10× — far short of the unphysical
-///   runaway the linear form would otherwise produce.
-///
-/// Output is clamped above by `EXOBASE_RATIO_MAX × T_surf` so
-/// extreme EUV inputs (hot Jupiters) don't overflow Q32.32 inside
-/// the downstream `m × v² / T` division.
-#[must_use]
-pub fn exobase_temperature(surface_t_k: Real, euv_flux_w_m2: Real) -> Real {
-    // Floor surface T at the same floor used inside jeans_factor —
-    // frozen cells (T → 0) would otherwise produce a useless zero
-    // exobase T. The floor matches `JEANS_T_FLOOR_K` so callers
-    // composing `jeans_factor(v, exobase_temperature(T, EUV), m)`
-    // see consistent behaviour across the whole pipeline.
-    let t_surf_floored = surface_t_k.max(Real::from_int(JEANS_T_FLOOR_K));
-    let gain = Real::from_ratio(EXOBASE_EUV_GAIN_NUM, EXOBASE_EUV_GAIN_DEN);
-    let pressure_ref = Real::from_ratio(
-        EXOBASE_SURFACE_PRESSURE_REF_NUM,
-        EXOBASE_SURFACE_PRESSURE_REF_DEN,
-    );
-    // Clamp EUV at zero to handle pathological negative inputs and
-    // keep the ratio monotone-increasing in EUV.
-    let euv_clamped = euv_flux_w_m2.max(Real::ZERO);
-    let heating = gain * euv_clamped / pressure_ref;
-    let raw_ratio = Real::ONE + heating;
-    // Cap the ratio so a runaway EUV input on a warm surface
-    // doesn't push T_exo above the safe Q32.32 envelope. The
-    // ceiling at 10× also encodes that real exobase temperatures
-    // saturate once the thermosphere ionises fully.
-    let ratio_cap = Real::from_int(EXOBASE_RATIO_MAX);
-    let ratio = raw_ratio.max(Real::ONE).min(ratio_cap);
-    t_surf_floored * ratio
-}
-
-/// Calibrated Jeans coefficient `C` such that
-/// `λ = C × m_amu × v_esc_km_s² / T_K`.
-///
-/// Dimensional derivation: real `λ = m × v² / (2 × k_B × T)` with
-/// `m` in kg, `v` in m/s, `k_B = 1.38e-23 J/K`. Converting `m` to
-/// AMU (`× 1.66e-27 kg/AMU`) and `v` to km/s (`× 10⁶ (m/s)² /
-/// (km/s)²`) gives an exact physical coefficient of
-/// `1.66e-27 × 10⁶ / (2 × 1.38e-23) ≈ 60`. T4 of the any-planet
-/// backlog plugs the *exobase* temperature into the exponent (via
-/// [`exobase_temperature`]) rather than the surface T, which fixes
-/// the dominant systematic error in the Jeans rate. We keep
-/// `C = 6` (≈ physical / 10) so the legacy calibration anchors
-/// (Earth-equivalent < 5% loss / 100 ticks; H-vs-He fractionation
-/// > 1000× at Earth surface T; CO2/H2O Jeans ratio > 100× on Mars
-/// surface T) continue to hold across the existing test suite —
-/// raising C to the physical 60 would push every heavy-species
-/// lambda above [`JEANS_LAMBDA_MAX`] and collapse all retention
-/// ratios to zero. With `C = 6`:
-///
-/// - Earth H (m=1, v=11.2, T=288 surface): λ ≈ 2.61.
-///   With T_exo ≈ 1000 K from [`exobase_temperature`]: λ ≈ 0.75.
-/// - Earth He (m=4): λ ≈ 10.4 surface / ≈ 3.0 exobase.
-/// - Mars vapour (m=18, v=5, T=240 surface): λ ≈ 11.3 surface;
-///   λ ≈ 5.6 at the Mars-EUV exobase (T_exo ≈ 480 K).
-/// - Mars CO2 (m=44): λ ≈ 27.5 surface (clamped) /
-///   λ ≈ 13.8 exobase.
-///
-/// The qualitative ordering (light escapes faster, exponentially)
-/// matches first-principles Jeans escape; absolute lambdas are
-/// calibrated for the exobase-T inputs the
-/// [`escape_rate_for_with_local_field`] pipeline now produces.
-pub const JEANS_COEFFICIENT: i64 = 6;
-
-/// Upper clamp on the Jeans exponent `λ`. `exp(-λ)` underflows
-/// Q32.32 (smallest positive ≈ 2.33e-10) around `λ ≈ 22`; clamping
-/// at 21 keeps the result strictly positive for the lightest
-/// retained species so test ratios remain finite. The lower clamp
-/// at 0 ensures we never accidentally amplify (Jeans is loss-only).
-pub const JEANS_LAMBDA_MAX: i64 = 21;
-
-/// Base per-tick hydrodynamic blow-off rate before the EUV
-/// modulation. Hydrodynamic loss is dramatic when it fires — young
-/// Sun's high XUV stripped Mars's primordial atmosphere over a few
-/// hundred million years — but it requires both high EUV and a
-/// warm thermosphere. Tuned so a Mars-equivalent at modern EUV
-/// (~0.0004 W/m²) loses negligibly via this channel, but the same
-/// planet at 100× early-Sun EUV (~0.04 W/m²) loses dramatically.
-///
-/// Applied scale: `HYDRODYNAMIC_BASE_NUM / HYDRODYNAMIC_BASE_DEN ×
-/// MAVEN_CALIBRATION_SCALE` — see [`MAVEN_CALIBRATION_SCALE_NUM`].
-pub const HYDRODYNAMIC_BASE_NUM: i64 = 1;
-pub const HYDRODYNAMIC_BASE_DEN: i64 = 10;
-
-/// Temperature reference for the hydrodynamic thermal factor.
-/// Hydrodynamic blow-off only fires once the upper atmosphere is
-/// warm enough that the bulk flow speed exceeds the escape
-/// velocity locally. `300 K` puts a typical Earth surface at
-/// factor 1.0; a hot young Venus (700 K) hits ~2.3×.
-pub const HYDRODYNAMIC_T_REF_K: i64 = 300;
-
-/// Base per-tick photochemical-loss rate before UV scaling and
-/// per-substance dissociation factor. Mars loses ~2 kg/s of H via
-/// H2O photolysis today; per-month tick over million-year scales
-/// this lands at ~10% per Gyr after the UV + dissociation
-/// multipliers. The Earth photochemical channel is suppressed
-/// indirectly via the lower-magnitude `magnetic_strength` (and
-/// directly via ozone shielding, modelled here as a smaller
-/// effective UV) — see test calibration constants.
-///
-/// Applied scale: `PHOTOCHEMICAL_BASE_NUM / PHOTOCHEMICAL_BASE_DEN ×
-/// MAVEN_CALIBRATION_SCALE` — see [`MAVEN_CALIBRATION_SCALE_NUM`].
-pub const PHOTOCHEMICAL_BASE_NUM: i64 = 1;
-pub const PHOTOCHEMICAL_BASE_DEN: i64 = 100_000;
-
-/// UV reference flux for the photochemical channel. `100 W/m²` puts
-/// modern Earth (~90 W/m² near-UV) at factor ~0.9; the photochemical
-/// channel scales linearly with UV.
-pub const PHOTOCHEMICAL_UV_REF_W_M2: i64 = 100;
-
-/// Base per-tick ion-escape rate before magnetic-field
-/// suppression. Mars (no dipole) loses ~3 kg/s of O via ion
-/// pickup today; on a per-month tick over million-year scales
-/// this lands at ~few percent per Gyr. Earth's strong dipole
-/// brings the per-tick rate down by ~4× via the `1/(1+B)`
-/// shielding term, making this the principal Mars-vs-Earth
-/// differentiator.
-///
-/// Applied scale: `ION_BASE_NUM / ION_BASE_DEN ×
-/// MAVEN_CALIBRATION_SCALE` — see [`MAVEN_CALIBRATION_SCALE_NUM`].
-pub const ION_BASE_NUM: i64 = 1;
-pub const ION_BASE_DEN: i64 = 10_000;
-
-/// Per-substance escape weights used by the non-Jeans channels
-/// (hydrodynamic blow-off, photochemical dissociation, ion escape).
-/// These channels have their own physical drivers (EUV flux,
-/// UV-driven dissociation, magnetic shielding) and their
-/// mass-dependence is much gentler than Jeans's exponential, so a
-/// linear weight that's roughly inverse-proportional to molecular
-/// mass is a reasonable per-channel approximation. Jeans escape
-/// itself now uses [`molecular_mass_amu`] + [`jeans_factor`] for the
-/// physically-grounded exponential mass discrimination.
-///
-/// Vapour (H2O, M=18) and Methane (CH4, M=16): light, escape fast
-/// (relative to heavier oxidiser-like species). Photolysis
-/// products dominate this row in real planets.
-///
-/// CO2 (M=44): heavy, escapes slowly even with no magnetic field.
-/// The dominant escape channel for CO2 is hydrodynamic blow-off
-/// during the young-star epoch; it's nearly impossible to lose
-/// significant CO2 via Jeans alone.
-///
-/// Oxidiser (O2, M=32): intermediate. Ion escape is the dominant
-/// channel for O on unmagnetised worlds (e.g. modern Mars losing
-/// O to the solar wind).
-const fn substance_weight(s: Substance) -> (i64, i64) {
-    match s {
-        // Methane is the lightest non-H tracked substance — escapes
-        // fastest. Weight = 1.0.
-        Substance::Methane => (10, 10),
-        // Water vapour: slightly heavier than methane, similar weight.
-        Substance::Vapour => (9, 10),
-        // Oxidiser (O2): intermediate.
-        Substance::Oxidiser => (5, 10),
-        // CO2: heaviest tracked atmospheric gas.
-        Substance::CO2 => (2, 10),
-        // Other substances aren't atmospheric — return zero weight
-        // so the iteration naturally skips them when called with a
-        // non-atmospheric variant.
-        _ => (0, 10),
-    }
-}
-
-/// Molecular mass in atomic mass units (AMU) for each atmospheric
-/// substance. Used by [`jeans_factor`] to compute the physical
-/// Jeans-escape exponent `λ = m × v_esc² / (2 × k_B × T)`. Values
-/// reflect the canonical species the channel represents:
-///
-/// - `Methane` → CH4, M ≈ 16 amu.
-/// - `Vapour` → H2O, M ≈ 18 amu.
-/// - `Oxidiser` → O2, M ≈ 32 amu.
-/// - `CO2` → CO2, M ≈ 44 amu.
-///
-/// Non-atmospheric substances return zero so calling
-/// [`escape_rate_for`] on a non-atmospheric variant short-circuits
-/// cleanly (matches the previous `substance_weight = 0` behaviour).
-#[must_use]
-pub const fn molecular_mass_amu(substance: Substance) -> Real {
-    match substance {
-        Substance::Methane => Real::from_int(16),
-        Substance::Vapour => Real::from_int(18),
-        Substance::Oxidiser => Real::from_int(32),
-        Substance::CO2 => Real::from_int(44),
-        _ => Real::ZERO,
-    }
-}
-
-/// Hypothetical atomic-hydrogen mass (1 amu) for the H-vs-He
-/// fractionation test. Hydrogen isn't a tracked `Substance` variant
-/// — it appears as a photolysis product of `Vapour` / `Methane`,
-/// not as a discretely-tracked gas — but exposing the constant
-/// lets us calibrate the Jeans factor against the canonical
-/// hydrogen-vs-helium escape ratio (~10⁴ on Earth).
-pub const HYDROGEN_MASS_AMU: i64 = 1;
-
-/// Hypothetical helium mass (4 amu) for the H-vs-He fractionation
-/// test. Same rationale as [`HYDROGEN_MASS_AMU`].
-pub const HELIUM_MASS_AMU: i64 = 4;
-
-/// The four atmospheric substances iterated by `atmospheric_escape_step`,
-/// ordered light-first so composition shifts emerge naturally: if
-/// the per-tick loss budget runs out (e.g. via the per-cell density
-/// floor), light species have already taken their share.
-pub const ATMOSPHERIC_SUBSTANCES: [Substance; 4] = [
-    Substance::Methane,
-    Substance::Vapour,
-    Substance::Oxidiser,
-    Substance::CO2,
-];
-
-/// Per-cell Jeans-escape factor `exp(-λ)` with
-/// `λ = C × m_amu × v_esc² / T`, the canonical Jeans dimensionless
-/// escape parameter
-/// (`λ = m × v_esc² / (2 × k_B × T)` in SI units).
-///
-/// Inputs:
-/// - `escape_velocity_km_s`: planet surface escape velocity in km/s.
-/// - `temperature_k`: temperature in K. T4: callers in
-///   [`escape_rate_for`] pass the *exobase* temperature via
-///   [`exobase_temperature`] rather than the surface T, since
-///   real Jeans escape happens at the exobase (~1000 K on Earth).
-///   The function itself is temperature-agnostic so tests can
-///   probe it with whatever T they need.
-/// - `mass_amu`: molecular mass in atomic mass units. Heavier
-///   species give exponentially smaller Jeans factors — the whole
-///   point of switching off the old gentle linear weight.
-///
-/// Clamping: `λ` is clamped to `[0, JEANS_LAMBDA_MAX]` before the
-/// `exp(-λ)` call. The upper clamp keeps `exp(-λ)` strictly above
-/// the Q32.32 smallest-positive floor (~2.33e-10) so retention
-/// ratios between heavy and very-heavy species stay finite rather
-/// than collapsing both to zero. The lower clamp guards against
-/// the unphysical "negative λ" that would only ever appear via a
-/// transient negative-temperature bug.
-#[must_use]
-pub fn jeans_factor(escape_velocity_km_s: Real, temperature_k: Real, mass_amu: Real) -> Real {
-    // Use `T.max(floor)` (not additive) so warm cells keep their
-    // full temperature for the discrimination signal — adding a
-    // floor to every T would dilute the H/He fractionation ratio
-    // at Earth-like temperatures.
-    let t_floored = temperature_k.max(Real::from_int(JEANS_T_FLOOR_K));
-    // λ = C × m_amu × v_km_s² / T_K. Working in km/s units keeps
-    // the intermediate products well inside Q32.32 (max integer
-    // ≈ 2.1e9): mass × v² is bounded by ~44 × ~30² ≈ 4e4 for the
-    // planets the sim simulates, and the coefficient `C = 6`
-    // pushes the numerator to ~3e5 before the division by T.
-    let v_sq = escape_velocity_km_s * escape_velocity_km_s;
-    let coeff = Real::from_int(JEANS_COEFFICIENT);
-    let lambda_raw = mass_amu * v_sq * coeff / t_floored;
-    let lambda_clamped = lambda_raw
-        .max(Real::ZERO)
-        .min(Real::from_int(JEANS_LAMBDA_MAX));
-    exp(-lambda_clamped)
-}
-
-/// Per-cell hydrodynamic thermal factor. `T / T_ref` — linear
-/// scaling with temperature so a warmer atmosphere blows off more
-/// dramatically. Clamped at zero for completeness; no upper cap so
-/// truly hot atmospheres can lose mass without bound (the per-cell
-/// density floor still applies).
-#[must_use]
-pub fn hydrodynamic_thermal_factor(temperature_k: Real) -> Real {
-    let ratio = temperature_k / Real::from_int(HYDRODYNAMIC_T_REF_K);
-    ratio.max(Real::ZERO)
-}
-
-/// Per-channel loss rate per tick for one substance at one cell.
-/// Returned as a fraction of current density — the integrate pass
-/// multiplies by the cell's density and clamps to the available
-/// mass. Returned as four separate channels so tests can probe
-/// each independently.
-#[derive(Debug, Clone, Copy)]
-pub struct EscapeChannels {
-    pub jeans: Real,
-    pub hydrodynamic: Real,
-    pub photochemical: Real,
-    pub ion: Real,
-}
-
-impl EscapeChannels {
-    /// Total fractional loss rate this tick. Sum of the four
-    /// channels. Tests assert "Mars analog hits non-trivial total
-    /// loss" via this scalar.
-    #[must_use]
-    pub fn total(&self) -> Real {
-        self.jeans + self.hydrodynamic + self.photochemical + self.ion
-    }
-}
-
-/// Per-cell magnetic shielding factor used by the ion-escape and
-/// photochemical channels (P3.5). Reads the local shielding
-/// strength — which combines the global dipole with crustal
-/// remanence — rather than the planet-wide
-/// `PlanetEscapeParams::magnetic_strength` scalar. The canonical
-/// magnetosphere shielding form `1 / (1 + B_local)` applied to
-/// the per-cell field: at `B_local = 0` factor = 1.0 (no
-/// shielding); at `B_local = 1.0` (Earth baseline) = 0.5; at
-/// `B_local = 1.5` (strong crustal-remanence umbrella ceiling) ≈
-/// 0.4. The function is exposed so callers and tests can verify
-/// the per-cell coupling without going through the full
-/// `escape_rate_for` path.
-#[must_use]
-pub fn ion_escape_factor(local_magnetic_strength: Real) -> Real {
-    Real::ONE / (Real::ONE + local_magnetic_strength)
-}
 
 /// Compute the four-channel fractional escape rate per tick for a
 /// single substance at a single cell. The returned rates are
@@ -574,7 +85,7 @@ pub fn ion_escape_factor(local_magnetic_strength: Real) -> Real {
 /// `params.magnetic_strength` as the local shielding strength
 /// (pre-P3.5 behaviour). Tests calling this directly retain the
 /// uniform-shielding semantics. The per-cell pass driven by
-/// `atmospheric_escape_step` calls the explicit variant so the
+/// [`atmospheric_escape_step`] calls the explicit variant so the
 /// per-cell `state.magnetic_field_local()` is honoured.
 #[must_use]
 pub fn escape_rate_for(
@@ -702,8 +213,7 @@ pub fn escape_rate_for_with_local_field(
     // field (so a crustal-remanence umbrella shields its own
     // patch of photochem too).
     let photochem_base = Real::from_ratio(PHOTOCHEMICAL_BASE_NUM, PHOTOCHEMICAL_BASE_DEN);
-    let uv_ref = Real::from_int(PHOTOCHEMICAL_UV_REF_W_M2);
-    let uv_factor = params.uv_flux_w_m2 / uv_ref;
+    let uv_factor = photochemical_uv_factor(params.uv_flux_w_m2);
     let ozone_shield = ion_escape_factor(local_magnetic_strength);
     let photochemical = photochem_base
         * uv_factor
