@@ -25,6 +25,7 @@ mod phases;
 mod run_tick;
 mod setup;
 mod territory;
+mod tick_steps;
 
 pub use config::{rng_from_seed, Rng, RunConfig};
 pub use constants::{
