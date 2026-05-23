@@ -102,7 +102,10 @@ pub const COMM_TIER_LABELS: [&str; 3] = ["noisy", "clear", "precise"];
 // ── label functions (pure mappings) ──
 
 /// Planet-type archetype noun derived from the metabolic
-/// substrate. Card line 1 reads as `"{planet_type} · {badge}"`.
+/// substrate **alone**. Kept on the wire as the substrate-keyed
+/// `RunMetadata::planet_type_labels` table for legacy consumers,
+/// but the viewport renders via `planet_archetype` so the label
+/// actually reflects the planet's surface.
 #[must_use]
 pub fn planet_type(substrate: &str) -> &'static str {
     match substrate {
@@ -112,6 +115,89 @@ pub fn planet_type(substrate: &str) -> &'static str {
         "silicate" => "lava world",
         _ => "unknown world",
     }
+}
+
+/// Surface-aware planet archetype. The substrate-only `planet_type`
+/// labels every aqueous-biology planet "ocean world" even when 0 % of
+/// its surface holds liquid water — call this instead from any
+/// renderer that has the `PlanetMap` (water-depth grid) in hand.
+///
+/// Inputs:
+/// - `substrate`        — `aqueous` / `ammoniacal` / `hydrocarbon` / `silicate`
+/// - `mean_t_k`         — planet-mean surface temperature (K)
+/// - `freeze_k`, `boil_k` — substrate solvent freeze/boil (already
+///   perturbed via `Planet::substrate_perturbation_q32`)
+/// - `terrain_peak_m`   — 0 → no rocky surface (gas giant)
+/// - `ocean_frac`       — fraction of cells with `water_depth > 0`,
+///   in `[0, 1]`. (For non-aqueous substrates the renderer still
+///   threads water depth as a generic surface-liquid proxy.)
+///
+/// Decision: substrate × thermal regime (frozen / liquid / vapor
+/// relative to its own solvent) × ocean coverage band.
+#[must_use]
+pub fn planet_archetype(
+    substrate: &str,
+    mean_t_k: f64,
+    freeze_k: f64,
+    boil_k: f64,
+    terrain_peak_m: f64,
+    ocean_frac: f64,
+) -> &'static str {
+    if terrain_peak_m <= 0.0 {
+        return "gas giant";
+    }
+    let frozen = freeze_k > 0.0 && mean_t_k < freeze_k;
+    let vapor = boil_k > 0.0 && mean_t_k > boil_k;
+    let cover = if ocean_frac >= 0.50 {
+        Cover::Dominant
+    } else if ocean_frac >= 0.15 {
+        Cover::Significant
+    } else if ocean_frac >= 0.02 {
+        Cover::Sparse
+    } else {
+        Cover::Dry
+    };
+    match (substrate, frozen, vapor, cover) {
+        // ── aqueous (water solvent) ──
+        ("aqueous", true, _, _) => "ice world",
+        ("aqueous", _, true, _) => "hothouse world",
+        ("aqueous", false, false, Cover::Dominant) => "ocean world",
+        ("aqueous", false, false, Cover::Significant) => "continental world",
+        ("aqueous", false, false, Cover::Sparse) => "arid world",
+        ("aqueous", false, false, Cover::Dry) => "desert world",
+        // ── hydrocarbon (methane/ethane solvent) ──
+        ("hydrocarbon", true, _, _) => "frozen methane world",
+        ("hydrocarbon", _, true, _) => "scorched hydrocarbon world",
+        ("hydrocarbon", false, false, Cover::Dominant) => "methane sea world",
+        ("hydrocarbon", false, false, Cover::Significant) => "methane-lake world",
+        ("hydrocarbon", false, false, Cover::Sparse) => "frigid arid world",
+        ("hydrocarbon", false, false, Cover::Dry) => "frigid desert",
+        // ── ammoniacal (ammonia solvent) ──
+        ("ammoniacal", true, _, _) => "frozen ammonia world",
+        ("ammoniacal", _, true, _) => "scorched ammonia world",
+        ("ammoniacal", false, false, Cover::Dominant) => "ammonia sea world",
+        ("ammoniacal", false, false, Cover::Significant) => "ammonia-lake world",
+        ("ammoniacal", false, false, Cover::Sparse) => "cold arid world",
+        ("ammoniacal", false, false, Cover::Dry) => "cold desert",
+        // ── silicate (molten-rock solvent) ──
+        // Silicate freeze ≈ 1687 K — anything below is solid rock,
+        // which a human reader will recognise as "rocky world"
+        // regardless of what the biology runs on. Liquid silicate
+        // (any cover) is the textbook lava world. Vapor (T > 3500 K)
+        // is exotic territory.
+        ("silicate", true, _, _) => "rocky world",
+        ("silicate", _, true, _) => "vaporised silicate world",
+        ("silicate", false, false, _) => "lava world",
+        _ => "unknown world",
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Cover {
+    Dominant,
+    Significant,
+    Sparse,
+    Dry,
 }
 
 /// Biochemistry implied by the substrate. Aqueous /
@@ -426,6 +512,139 @@ mod tests {
         assert_eq!(
             host_species_status("silicate", "none", 2600.0, 1687.0, 3538.0),
             "thriving"
+        );
+    }
+
+    /// Substrate-only `planet_type` over-labelled every aqueous-
+    /// biology planet "ocean world" — seed 42 surfaces with 0 wet
+    /// cells but still got the label. `planet_archetype` consults
+    /// the surface water-coverage fraction + thermal regime, so the
+    /// label tracks geography instead of biology.
+    #[test]
+    fn planet_archetype_matrix_aqueous() {
+        let (fz, bo, peak) = (273.15, 373.15, 14060.0);
+        // Earth-like: 70 % ocean coverage in liquid range → ocean
+        assert_eq!(
+            planet_archetype("aqueous", 288.0, fz, bo, peak, 0.70),
+            "ocean world"
+        );
+        // Earth's actual 0.71 — boundary check
+        assert_eq!(
+            planet_archetype("aqueous", 288.0, fz, bo, peak, 0.50),
+            "ocean world"
+        );
+        // Continental, 30 % seas
+        assert_eq!(
+            planet_archetype("aqueous", 288.0, fz, bo, peak, 0.30),
+            "continental world"
+        );
+        // Arid (a few inland seas)
+        assert_eq!(
+            planet_archetype("aqueous", 288.0, fz, bo, peak, 0.08),
+            "arid world"
+        );
+        // Seed-42 regression: 0 wet cells, mid-band temperature
+        assert_eq!(
+            planet_archetype("aqueous", 366.0, fz, bo, peak, 0.0),
+            "desert world"
+        );
+        // Mars-like: below freeze → ice world regardless of water-frac
+        assert_eq!(
+            planet_archetype("aqueous", 210.0, fz, bo, peak, 0.0),
+            "ice world"
+        );
+        // Europa: aqueous biology, frozen surface
+        assert_eq!(
+            planet_archetype("aqueous", 100.0, fz, bo, peak, 0.0),
+            "ice world"
+        );
+        // Venus-like: above boil → hothouse regardless of water-frac
+        assert_eq!(
+            planet_archetype("aqueous", 735.0, fz, bo, peak, 0.0),
+            "hothouse world"
+        );
+    }
+
+    #[test]
+    fn planet_archetype_matrix_hydrocarbon() {
+        let (fz, bo, peak) = (90.7, 111.7, 8000.0);
+        // Titan: methane in liquid range, small north-polar lakes
+        assert_eq!(
+            planet_archetype("hydrocarbon", 94.0, fz, bo, peak, 0.03),
+            "frigid arid world"
+        );
+        // Methane ocean world (hypothetical)
+        assert_eq!(
+            planet_archetype("hydrocarbon", 100.0, fz, bo, peak, 0.65),
+            "methane sea world"
+        );
+        // Below methane freeze
+        assert_eq!(
+            planet_archetype("hydrocarbon", 50.0, fz, bo, peak, 0.0),
+            "frozen methane world"
+        );
+        // Above methane boil
+        assert_eq!(
+            planet_archetype("hydrocarbon", 200.0, fz, bo, peak, 0.0),
+            "scorched hydrocarbon world"
+        );
+    }
+
+    #[test]
+    fn planet_archetype_matrix_ammoniacal() {
+        let (fz, bo, peak) = (195.4, 239.8, 9000.0);
+        assert_eq!(
+            planet_archetype("ammoniacal", 220.0, fz, bo, peak, 0.55),
+            "ammonia sea world"
+        );
+        assert_eq!(
+            planet_archetype("ammoniacal", 220.0, fz, bo, peak, 0.05),
+            "cold arid world"
+        );
+        assert_eq!(
+            planet_archetype("ammoniacal", 150.0, fz, bo, peak, 0.0),
+            "frozen ammonia world"
+        );
+        assert_eq!(
+            planet_archetype("ammoniacal", 300.0, fz, bo, peak, 0.0),
+            "scorched ammonia world"
+        );
+    }
+
+    #[test]
+    fn planet_archetype_matrix_silicate() {
+        let (fz, bo, peak) = (1687.0, 3538.0, 12000.0);
+        // Cool silicate → just rock; no liquid medium for biology
+        assert_eq!(
+            planet_archetype("silicate", 600.0, fz, bo, peak, 0.0),
+            "rocky world"
+        );
+        // Mid silicate-melt range → lava world regardless of cover
+        assert_eq!(
+            planet_archetype("silicate", 2500.0, fz, bo, peak, 0.0),
+            "lava world"
+        );
+        assert_eq!(
+            planet_archetype("silicate", 2500.0, fz, bo, peak, 0.80),
+            "lava world"
+        );
+        // Above silicate boil
+        assert_eq!(
+            planet_archetype("silicate", 4000.0, fz, bo, peak, 0.0),
+            "vaporised silicate world"
+        );
+    }
+
+    #[test]
+    fn planet_archetype_gas_giant_short_circuits() {
+        // terrain_peak == 0 → gas giant regardless of any other field
+        assert_eq!(
+            planet_archetype("aqueous", 288.0, 273.15, 373.15, 0.0, 0.70),
+            "gas giant"
+        );
+        assert_eq!(
+            planet_archetype("ammoniacal", 130.0, 195.4, 239.8, 0.0, 0.0),
+            "gas giant"
         );
     }
 }
