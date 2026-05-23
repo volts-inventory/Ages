@@ -107,17 +107,53 @@ with precedence: centroid → multi-owner `#` → single-owner cell
 
 | Glyph | Meaning | 256-color (`use_color`) |
 |---|---|---|
-| `≈` | Deep water (`water_depth > 100 m`) | 27 deep blue |
-| `~` | Shallow water (`water_depth > 0`) | 39 sky blue |
+| `≈` | Deep water (`water_depth > 100 m`) — Earthlike phase | 27 deep blue |
+| `~` | Shallow water (`water_depth > 0`) — Earthlike phase | 39 sky blue |
 | `░` | Coastal land (axial neighbour is water) | 143 sand |
 | `▒` | Inland land (lower 55% of land range) | 34 forest green |
 | `△` | Hill (next 30% of land range) | 94 brown |
 | `▲` | Peak (top 15% of land range) | 15 bright white |
+| `*` | Magma plain (Lava phase: silicate biology in molten range) | 208 orange |
+| `+` | Ice sheet (IceCap phase: aqueous world below water freeze, `water_depth > 0`) | 159 light cyan |
 | `≡` | Gaseous shell (`terrain_peak == 0`) | 222 light yellow |
 | `·` | Featureless rocky / sub-surface ocean / oceanic basin | 244 gray |
 
 The terrain colour table lives in
 [`frame.rs:terrain_color_code`](../sim/report/src/frame.rs).
+
+### Surface phase
+
+The glyph picker is parameterised by a `SurfacePhase` enum
+([`render/planet.rs:surface_phase`](../sim/report/src/render/planet.rs))
+derived once per planet from substrate + mean temperature vs the
+substrate's solvent freeze/boil:
+
+| Phase | Trigger | Glyph remap |
+|---|---|---|
+| **Earthlike** | Anything not below — temperate aqueous, non-molten silicate, hydrocarbon/ammoniacal | Historical glyph set (`▲△▒░~≈`) |
+| **Lava** | Silicate biology, `freeze_k ≤ T ≤ boil_k` (silicate-melt range) | Every cell → `*`; peaks/outcrops still `▲`/`△` |
+| **IceCap** | Aqueous biology, `T < water_freeze` (Europa, Mars, snowball Earth) | `water_depth > 0` cells → `+`; land cells unchanged |
+
+`SurfacePhase` is plumbed through `FrameStyle::phase` so the
+viewport, the post-run report's ASCII map, the per-civ territory
+map, and the density frame all see the same phase.
+
+### Planet archetype label
+
+The first line of the planet card (e.g. `ocean world · scorching`)
+comes from [`labels::planet_archetype`](../sim/report/src/labels.rs).
+Unlike the legacy substrate-only `planet_type`, it consults the
+actual surface water coverage and thermal regime so the label
+tracks geography:
+
+| Substrate | Frozen (T < freeze) | Liquid + ocean ≥ 50% | Liquid + ocean 15–50% | Liquid + ocean 2–15% | Liquid + ocean < 2% | Vapor (T > boil) |
+|---|---|---|---|---|---|---|
+| aqueous | ice world | ocean world | continental world | arid world | desert world | hothouse world |
+| hydrocarbon | frozen methane world | methane sea world | methane-lake world | frigid arid world | frigid desert | scorched hydrocarbon world |
+| ammoniacal | frozen ammonia world | ammonia sea world | ammonia-lake world | cold arid world | cold desert | scorched ammonia world |
+| silicate | rocky world | lava world | lava world | lava world | lava world | vaporised silicate world |
+
+`terrain_peak == 0` short-circuits the whole table to `gas giant`.
 
 ### Civ / population glyphs
 
@@ -142,13 +178,18 @@ Three sub-blocks, each separated by a blank line.
 ### Legend
 
 Three lines, mode-aware
-([`sidebar.rs:67-88`](../sim/report/src/viewport/sidebar.rs)):
+([`sidebar.rs:67-114`](../sim/report/src/viewport/sidebar.rs)):
 
 - **Colour mode, digit:** `1-9=fill% · white=nomad · #=war`
 - **Colour mode, density:** `dim/bold=fill% · white=nomad · #=war`
 - **Mono mode:** `1-9=civ-id · *=civ≥10` / `0=nomad · #=war · ~sea · ≈deep`
 
-Terrain glyphs in line 2 + 3.
+Lines 2 and 3 carry the terrain glyph key and **adapt to the
+surface phase**:
+
+- **Earthlike:** `~sea · ≈deep · ▲peak · △hill` / `▒land · ░coast · ·=plain`
+- **Lava:** `* magma · ▲peak · △outcrop` / `(rocky peaks exposed above magma sea)`
+- **IceCap:** `+ ice sheet · ▲peak · △hill` / `▒land · ░coast · ·=plain`
 
 ### Species panel
 

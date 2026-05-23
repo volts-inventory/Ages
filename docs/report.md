@@ -40,6 +40,15 @@ Captures the deterministic world-gen sample:
 - Mean temperature + equator-pole gradient
 - Moon count + moon eccentricities
 
+The ASCII map underneath is rendered with the planet's
+[`SurfacePhase`](viewport.md#surface-phase) (Earthlike / Lava /
+IceCap), derived via `render::surface_phase_for_digest` from the
+captured `Digest::metadata` (substrate freeze/boil) + the planet
+event's `substrate_perturbation`. The legend line above the map
+adapts to the phase — `▒ inland · ░ coast · ~ shallow · ≈ deep`
+for Earthlike, `* magma plain` for Lava, `+ ice sheet` for
+IceCap.
+
 ### 2. Highlights (`highlights.rs`)
 
 Scored event picks — the digest doesn't dump every event; it ranks

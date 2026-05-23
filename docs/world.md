@@ -301,11 +301,42 @@ stays at 1 tick = 1 month.
 - **Silicate lava world** (`lava_world_runs_with_silicate_substrate`)
   — Silicate substrate, `Atmosphere::None` admitted, 1500 K.
 
+## User overrides (`--config`)
+
+`sample_planet_with_overrides(seed, &PlanetOverrides)` wraps the
+substrate-first pipeline with optional per-field replacements
+from the `ages --config` interactive prompt. Every field on
+`PlanetOverrides` is `Option<T>`; `None` keeps the seed value.
+
+**Map geography is not overridable** — elevation, water depth,
+sea level, terrain peak and the per-cell layout always come from
+`--seed`. Only planet-level scalars are exposed: substrate,
+atmosphere, mean temperature, gravity, spectral type, axial tilt,
+day length, year length (orbital months), moon count, magneto-
+sphere, crust, biosphere richness.
+
+Coherence: when the user overrides substrate or atmosphere, the
+substrate-conditional fields (`atmospheric_composition`,
+`crustal_composition`) re-sample from a salted RNG substream
+(`OVERRIDE_SALT`) so the planet stays internally consistent
+without disturbing the main worldgen draw order. An aqueous→
+hydrocarbon substrate flip on seed 42 gets a methane-rich air
+mix even though the user only picked the substrate.
+
+Gravity override: setting `gravity_g_x100 = g × 100` sets `mass
+= g_relative` and `radius = 1.0`, so the derived `g = M / R²`
+matches the requested value exactly (Earth-relative units).
+
+Spectral type override rebuilds `Star::with_age` at the chosen
+type while preserving the sampled bolometric irradiance + age,
+so HZ calculations stay consistent.
+
 ## Run-start order
 
 Deterministic flow at run start:
 
-1. Sample planet from seed (substrate-first via `sample_planet`).
+1. Sample planet from seed (substrate-first via `sample_planet`
+   or `sample_planet_with_overrides` when `--config` was used).
 2. Build hex-grid map.
 3. Initialise physics with planet inputs and per-cell substances
    (`init_planet`).

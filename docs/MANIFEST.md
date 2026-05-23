@@ -17,7 +17,7 @@ docs your task explicitly cites.
 | Path | When to read |
 |------|--------------|
 | `README.md` | Public-facing entry: what the project is + how to run it. Read once for orientation. |
-| `docs/getting-started.md` | Ten-minute walkthrough from a fresh clone to a finished run with a written history. Where to go if "I just want to see it work" is the first ask. |
+| `docs/getting-started.md` | Ten-minute walkthrough from a fresh clone to a finished run with a written history. Where to go if "I just want to see it work" is the first ask. Includes `--config` interactive planet builder. |
 | `CHANGELOG.md` | Reverse-chronological user-visible changes. Versions are retroactive; first release is `1.0.0`. |
 | `CONTRIBUTING.md` | Human-readable contributor summary: build, test, lint, doc rules, commit conventions. (`AGENTS.md` is the operational equivalent for agents.) |
 
@@ -44,7 +44,7 @@ rationale see `docs/decisions/INDEX.md` (archive only).
 
 | Path | Topic |
 |------|-------|
-| `docs/world.md` | Planet sampling, terrain, atmosphere, climate, habitability. |
+| `docs/world.md` | Planet sampling, terrain, atmosphere, climate, habitability, `--config` user overrides (`PlanetOverrides` + `sample_planet_with_overrides`). |
 | `docs/physics.md` | Heat / fluid / hydrology / magnetism / Lorentz / Coriolis / tides / radiation / vertical convection / tectonics / tidal heating / atmospheric escape. |
 | `docs/recognition.md` | Templates, signatures, fields, perceivable vs latent, emergent templates. |
 | `docs/discovery.md` | Form vocabulary, fits, hypothesizer lifecycle, theory hierarchy, rivals, mythologization, experiments. |
@@ -54,7 +54,7 @@ rationale see `docs/decisions/INDEX.md` (archive only).
 | `docs/tech.md` | 58-tool tree, prereqs, effects, serendipitous unlocks, sensorium tools, experiment apparatus, emergent tools. |
 | `docs/population.md` | Cohorts, substrate-derived demographics, nomads, habitat-priority diffusion, migration. |
 | `docs/catastrophes.md` | Five catastrophe kinds, severity scaling, tech shielding. |
-| `docs/viewport.md` | Live ASCII viewport layout, glyphs, civ panels, frame paint, dedup. |
+| `docs/viewport.md` | Live ASCII viewport layout, glyphs (Earthlike + Lava + IceCap surface phases, magma `*` + ice `+`), surface-aware planet archetype labels, civ panels, frame paint, dedup. |
 | `docs/report.md` | Post-run markdown report sections; `narrate.py` prose narrator; in-binary `--narration` flag; shared label vocabulary. |
 
 ## On-demand: per-crate READMEs

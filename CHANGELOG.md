@@ -7,7 +7,36 @@ sign-off landed.
 
 ## Unreleased
 
-- Nothing yet.
+### Viewport
+- **Surface-aware planet labels.** The planet card now reads the
+  actual surface water coverage instead of mapping
+  substrate→noun. A seed-42 aqueous world with zero wet cells
+  reads `desert world · hot` instead of the wrong `ocean world ·
+  scorching`. The label matrix covers all four substrates ×
+  frozen/liquid/vapor regimes × ocean-coverage bands (`ocean
+  world` / `continental world` / `arid world` / `desert world`
+  for aqueous; `methane sea world` / `methane-lake world` /
+  `frigid arid world` / `frigid desert` for hydrocarbon; analogous
+  for ammoniacal; `lava world` / `rocky world` / `vaporised
+  silicate world` for silicate). Gas giants short-circuit to `gas
+  giant`.
+- **Lava + ice terrain glyphs.** New `SurfacePhase` enum
+  (Earthlike / Lava / IceCap) drives terrain glyph selection so a
+  silicate molten world renders as a magma sea (`*`) with peaks
+  poking through (`▲`/`△`) and a frozen aqueous world renders
+  water cells as ice sheets (`+`). The viewport sidebar legend
+  and post-run report map legend adapt automatically.
+
+### CLI
+- **`--config` interactive planet builder.** New flag runs an
+  ASCII GM persona through 12 numbered prompts (substrate,
+  atmosphere, temperature, gravity, star, tilt, day length, year
+  length, moons, magnetosphere, crust, biosphere) before the sim
+  starts. Option `0` on any prompt keeps the seed default. Map
+  geography always comes from `--seed`; only planet-level scalars
+  are overridable. Substrate/atmosphere changes trigger automatic
+  re-sampling of atmospheric and crustal compositions so the
+  resulting planet stays internally consistent.
 
 ## 1.0.0 (2026-05-23) — Ship-It
 

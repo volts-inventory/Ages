@@ -131,6 +131,46 @@ different style:
 Pure stdlib Python 3; no dependencies. Useful if you want to pipe
 the prose somewhere the Rust binary can't go.
 
+## Build your own planet (`--config`)
+
+By default the seed picks every planet attribute. If you want to
+hand-build a world — silicate biology on a lava sea, ammonia
+seas under a K-dwarf, Earth-mass at Titan temperature — pass
+`--config` and answer the 12 prompts:
+
+```sh
+cargo run --release -- --seed 42 --years 100 --config --cli viewport
+```
+
+The cosmic-loom GM walks through:
+
+1. Substrate (aqueous / ammoniacal / hydrocarbon / silicate)
+2. Atmosphere (none / thin / oxidising / reducing / hazy)
+3. Mean surface temperature (Pluto … Mars … Earth … Venus … molten)
+4. Surface gravity (Moon … Mars … Earth … super-Earth … crushing)
+5. Stellar host (M / K / G / F / A)
+6. Axial tilt (0° … Earth 23° … Uranus 90°)
+7. Day length (breakneck 6 h … Earth 24 h … Venus 2800 h)
+8. Year length (8–16 months)
+9. Moon count (0–4)
+10. Magnetosphere (none / weak / strong)
+11. Crust mineral (basaltic / hydrocarbon / piezoelectric / ferrous / rare-earth)
+12. Biosphere richness (sparse / lush / hyperbiodiverse)
+
+On every prompt, option `0` (or empty Enter) keeps the seed
+default. **Map geography always comes from `--seed`** — the
+prompt only overrides planet-level scalars, so the terrain
+layout stays varied across `--config` runs on the same seed.
+
+Substrate/atmosphere overrides automatically re-sample the
+atmospheric and crustal compositions, so the resulting planet
+stays internally consistent (a hydrocarbon biosphere will have
+methane-rich air even if the user only picked the substrate).
+
+After-pick warnings surface when choices fight: picking
+aqueous + 40 K logs `⚠ outside the Aqueous liquid window` but
+still proceeds.
+
 ## Reading the post-run report
 
 Every run produces an NDJSON event log. To render that into a
