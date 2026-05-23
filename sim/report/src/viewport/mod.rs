@@ -18,8 +18,13 @@
 //! write a refreshing frame to stdout.
 
 mod ansi;
+mod cards;
 mod config;
 mod emitter;
+mod layout;
+mod log;
+mod sidebar;
+mod state;
 
 pub use config::{TempUnit, ViewportConfig};
 pub use emitter::ViewportEmitter;
