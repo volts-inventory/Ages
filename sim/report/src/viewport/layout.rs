@@ -75,6 +75,7 @@ impl<W: Write> ViewportEmitter<W> {
                 use_color: self.cfg.use_color,
                 compact: self.cfg.compact,
                 density: self.cfg.density_mode,
+                phase: self.surface_phase(),
             },
         );
         // Build the entire frame into an in-memory Vec<u8>, then

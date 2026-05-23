@@ -118,6 +118,7 @@ impl Digest {
             ages_version: String::new(),
             planet: None,
             planet_map: None,
+            metadata: None,
             species: None,
             run_end: None,
             civs: BTreeMap::new(),
@@ -535,10 +536,12 @@ impl Digest {
             // Measurement relations land in the report through a
             // dedicated measurement-section follow-up; no-op for the
             // M3 digest pipeline.
+            Event::RunMetadata(m) => {
+                self.metadata = Some(m.clone());
+            }
             Event::Tick(_)
             | Event::Snapshot(_)
             | Event::MeasurementConfirmed(_)
-            | Event::RunMetadata(_)
             | Event::SpeciesNomadsChanged(_)
             | Event::SpeciesCosmologyBias(_)
             | Event::SpeciesDrift(_)

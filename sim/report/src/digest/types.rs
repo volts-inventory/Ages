@@ -1,7 +1,7 @@
 //! Record types fed by the event-stream digest. The `Digest::build`
 //! walker lives in `build`; this file holds the data shapes.
 
-use protocol::{Event, PlanetDerived, PlanetMap, SpeciesDerived};
+use protocol::{Event, PlanetDerived, PlanetMap, RunMetadata, SpeciesDerived};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
@@ -11,6 +11,11 @@ pub struct Digest {
     pub ages_version: String,
     pub planet: Option<PlanetDerived>,
     pub planet_map: Option<PlanetMap>,
+    /// Per-run metadata table — substrate freeze/boil ranges,
+    /// label dictionaries. Needed by the renderer to derive the
+    /// planet's surface phase (Earthlike / Lava / IceCap) for the
+    /// terrain glyph picker.
+    pub metadata: Option<RunMetadata>,
     pub species: Option<SpeciesDerived>,
     pub run_end: Option<RunEnd>,
     /// Civ chapters keyed by `civ_id`, walked in founding-tick order.

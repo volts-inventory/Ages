@@ -11,10 +11,42 @@ use crate::labels::{
     host_species_status, planet_archetype, short_manip, short_modality, sociality_label,
     substrate_biochem,
 };
+use crate::render::SurfacePhase;
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
 
 impl<W: Write> ViewportEmitter<W> {
+    /// Perturbed substrate freeze/boil range for the active planet.
+    /// Combines the nominal table from the captured `RunMetadata`
+    /// with the per-seed perturbation on the `Planet` event. Returns
+    /// `(0.0, 0.0)` when either source is missing — callers treat
+    /// that as "fall back to the Earthlike defaults".
+    fn substrate_range_k(&self) -> (f64, f64) {
+        use crate::q32::q32_to_f64;
+        let Some(p) = &self.planet else { return (0.0, 0.0) };
+        let Some(m) = &self.metadata else { return (0.0, 0.0) };
+        let perturb = q32_to_f64(p.substrate_perturbation_q32);
+        let f = m
+            .substrate_freeze_k
+            .get(&p.metabolic_substrate)
+            .copied()
+            .unwrap_or(0.0);
+        let b = m
+            .substrate_boil_k
+            .get(&p.metabolic_substrate)
+            .copied()
+            .unwrap_or(0.0);
+        (f * (1.0 + perturb), b * (1.0 + perturb))
+    }
+
+    /// Coarse surface-physics state for the active planet — used by
+    /// `layout::render` to pick the right terrain glyph set
+    /// (Earthlike / Lava / IceCap).
+    pub(super) fn surface_phase(&self) -> SurfacePhase {
+        let (freeze_k, boil_k) = self.substrate_range_k();
+        crate::render::surface_phase(self.planet.as_ref(), freeze_k, boil_k)
+    }
+
     /// Format the planet card for the top of the viewport. Two
     /// short lines of compact stats, each ≤ 32 chars so the card
     /// fits on portrait phone terminals (iPhone Termius narrowest
@@ -40,23 +72,7 @@ impl<W: Write> ViewportEmitter<W> {
         // actually wired into the run's physics. Without this the
         // card showed water freezing at 273.15 K every seed even
         // though seed-42's effective freeze point might be 271.7 K.
-        let perturb = q32_to_f64(p.substrate_perturbation_q32);
-        let (freeze_k, boil_k) = self.metadata.as_ref().map_or((0.0, 0.0), |m| {
-            let nominal_freeze = m
-                .substrate_freeze_k
-                .get(&p.metabolic_substrate)
-                .copied()
-                .unwrap_or(0.0);
-            let nominal_boil = m
-                .substrate_boil_k
-                .get(&p.metabolic_substrate)
-                .copied()
-                .unwrap_or(0.0);
-            (
-                nominal_freeze * (1.0 + perturb),
-                nominal_boil * (1.0 + perturb),
-            )
-        });
+        let (freeze_k, boil_k) = self.substrate_range_k();
         let badge = host_species_status(
             &p.metabolic_substrate,
             &p.atmosphere,

@@ -62,8 +62,9 @@ pub struct WorldFrame {
     pub nomad_cells: Vec<u32>,
 }
 
-/// Style flags for `render_world_frame_styled`. All-false is the
-/// monochrome non-compact digit-glyph default (`render_world_frame`).
+/// Style flags for `render_world_frame_styled`. All-false +
+/// `SurfacePhase::Earthlike` is the monochrome non-compact digit-
+/// glyph default (`render_world_frame`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStyle {
     /// Emit 256-color ANSI escapes around per-civ identity symbols.
@@ -76,6 +77,11 @@ pub struct FrameStyle {
     /// (░ ▒ ▓ █) sized by per-cell pop fill-%. Centroid letters,
     /// disputed `#`, and nomad markers are unchanged.
     pub density: bool,
+    /// Coarse surface-physics state. `Earthlike` is the historical
+    /// glyph set; `Lava` remaps every non-peak cell to `*`; `IceCap`
+    /// remaps water cells to `+`. Callers compute this once per
+    /// planet via `render::surface_phase`.
+    pub phase: crate::render::SurfacePhase,
 }
 
 /// Render a `WorldFrame` as an ASCII grid. The output is a single
@@ -123,6 +129,7 @@ pub fn render_world_frame_styled(
         use_color,
         compact,
         density: density_mode,
+        phase,
     } = style;
     let mut s = String::new();
     if pm.grid_width == 0 || pm.grid_height == 0 {
@@ -293,7 +300,7 @@ pub fn render_world_frame_styled(
                     } else {
                         "2;"
                     };
-                    crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                    crate::render::terrain_symbol(pm, r, q, terrain_peak, phase)
                 } else if use_color {
                     // Colored mode: civ identity is conveyed by
                     // colour, so the digit is freed up to encode
@@ -319,7 +326,7 @@ pub fn render_world_frame_styled(
                         // saturation but keeps digits readable.
                         .unwrap_or(frame_max_pop);
                     pop_digit(pop, cap)
-                        .unwrap_or_else(|| crate::render::terrain_symbol(pm, r, q, terrain_peak))
+                        .unwrap_or_else(|| crate::render::terrain_symbol(pm, r, q, terrain_peak, phase))
                 } else {
                     // Monochrome mode (markdown post-run report):
                     // keep the civ-id digit so civs are still
@@ -337,13 +344,13 @@ pub fn render_world_frame_styled(
                 // there's no colour to carry identity, so keep the
                 // legacy `0` glyph as the nomad marker.
                 let sym = if use_color {
-                    crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                    crate::render::terrain_symbol(pm, r, q, terrain_peak, phase)
                 } else {
                     '0'
                 };
                 (sym, None)
             } else {
-                (crate::render::terrain_symbol(pm, r, q, terrain_peak), None)
+                (crate::render::terrain_symbol(pm, r, q, terrain_peak, phase), None)
             };
             if use_color {
                 if let Some(civ_id) = color_civ {
@@ -425,6 +432,8 @@ fn terrain_color_code(c: char) -> Option<u8> {
         '\u{2591}' => Some(143), // ░ coastal — sand / khaki
         '\u{2261}' => Some(222), // ≡ gas band — light yellow
         '\u{00B7}' => Some(244), // · featureless — gray
+        '*' => Some(208),        // magma — orange (silicate hot world)
+        '+' => Some(159),        // ice sheet — light cyan (frozen aqueous)
         _ => None,
     }
 }
@@ -539,6 +548,7 @@ pub fn render_density_frame(
     planet: Option<&protocol::PlanetDerived>,
     frame: &WorldFrame,
     caption: &str,
+    phase: crate::render::SurfacePhase,
 ) -> String {
     let mut s = String::new();
     if pm.grid_width == 0 || pm.grid_height == 0 {
@@ -595,7 +605,7 @@ pub fn render_density_frame(
             } else if let Some(&pop) = cell_pop.get(&cell) {
                 density_symbol(pop / max_pop)
             } else {
-                crate::render::terrain_symbol(pm, r, q, terrain_peak)
+                crate::render::terrain_symbol(pm, r, q, terrain_peak, phase)
             };
             line.push(symbol);
             line.push(' ');
