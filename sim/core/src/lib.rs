@@ -599,7 +599,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 // cosmology — surviving founders attribute the
                 // catastrophe to gods/punishment, ritual hardens,
                 // sacred-time goes eschatological.
-                civ.apply_religion_push(&sim_civ::religion::push_for_civ_collapsed(), Real::ONE);
+                civ.apply_religion_push(&sim_civ::push_for_civ_collapsed(), Real::ONE);
                 collapse_events.push(CivCollapsed {
                     tick,
                     civ_id,
@@ -664,12 +664,12 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 sim_arith::Real::ZERO
             };
             let at_war_count = at_war_counts.get(&civ.id).copied().unwrap_or(0);
-            sim_civ::economy::step_surplus(civ, utilisation, at_war_count);
+            sim_civ::step_surplus(civ, utilisation, at_war_count);
             // Emit a CivSurplusChanged event when the absolute
             // delta crosses the emit floor, OR when this is the
             // civ's first non-zero emission so the founding state
             // surfaces in the log.
-            let emit_floor = sim_arith::Real::from_int(sim_civ::economy::SURPLUS_EMIT_DELTA_FLOOR);
+            let emit_floor = sim_arith::Real::from_int(sim_civ::SURPLUS_EMIT_DELTA_FLOOR);
             let delta = civ.surplus - civ.last_emitted_surplus;
             if delta.abs() >= emit_floor {
                 surplus_events.push(protocol::CivSurplusChanged {
@@ -795,7 +795,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 // M8: catastrophes consume stored surplus first —
                 // grain reserves feed the displaced, the polity
                 // diverts public works to rescue + repair.
-                sim_civ::economy::drain_surplus_on_catastrophe(civ);
+                sim_civ::drain_surplus_on_catastrophe(civ);
                 cat_events.push((civ_id, rec));
             }
         }
@@ -1630,7 +1630,7 @@ pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error>
                 let (left, right) = civs.split_at_mut(hi);
                 let civ_lo = &mut left[lo];
                 let civ_hi = &mut right[0];
-                sim_civ::economy::trade_flow_between(civ_lo, civ_hi);
+                sim_civ::trade_flow_between(civ_lo, civ_hi);
             }
         }
 

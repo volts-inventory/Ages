@@ -316,24 +316,24 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
                 *had_discovery_by_civ.entry(*civ_id).or_insert(false) = true;
                 Some((
                     cosmology::push_for_relation_confirmed(),
-                    sim_civ::religion::push_for_relation_confirmed(),
+                    sim_civ::push_for_relation_confirmed(),
                 ))
             }
             HypothesisEvent::RefinementProposed { .. } => Some((
                 cosmology::push_for_refinement_proposed(),
-                sim_civ::religion::push_for_refinement_proposed(),
+                sim_civ::push_for_refinement_proposed(),
             )),
             HypothesisEvent::RefinementConfirmed { .. } => {
                 *had_discovery_by_civ.entry(*civ_id).or_insert(false) = true;
                 *had_refinement_by_civ.entry(*civ_id).or_insert(false) = true;
                 Some((
                     cosmology::push_for_refinement_confirmed(),
-                    sim_civ::religion::push_for_refinement_confirmed(),
+                    sim_civ::push_for_refinement_confirmed(),
                 ))
             }
             HypothesisEvent::RefinementRejected { .. } => Some((
                 cosmology::push_for_refinement_rejected(),
-                sim_civ::religion::push_for_refinement_rejected(),
+                sim_civ::push_for_refinement_rejected(),
             )),
             HypothesisEvent::MeasurementConfirmed(_) => {
                 // A measurement confirmation is a discovery
@@ -343,7 +343,7 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
                 *had_discovery_by_civ.entry(*civ_id).or_insert(false) = true;
                 Some((
                     cosmology::push_for_relation_confirmed(),
-                    sim_civ::religion::push_for_relation_confirmed(),
+                    sim_civ::push_for_relation_confirmed(),
                 ))
             }
             HypothesisEvent::Falsified { .. } => {
@@ -354,7 +354,7 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
                 // plateau detection.
                 Some((
                     cosmology::push_for_refinement_proposed(),
-                    sim_civ::religion::push_for_refinement_proposed(),
+                    sim_civ::push_for_refinement_proposed(),
                 ))
             }
             HypothesisEvent::Revalidated { .. } => {
@@ -366,7 +366,7 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
                 *had_discovery_by_civ.entry(*civ_id).or_insert(false) = true;
                 Some((
                     cosmology::push_for_relation_confirmed(),
-                    sim_civ::religion::push_for_relation_confirmed(),
+                    sim_civ::push_for_relation_confirmed(),
                 ))
             }
             HypothesisEvent::Lapsed { .. } => {
@@ -376,7 +376,7 @@ pub(crate) fn discovery_emission_phase<E: Emitter>(
                 // holds; not a new finding).
                 Some((
                     cosmology::push_for_refinement_rejected(),
-                    sim_civ::religion::push_for_refinement_rejected(),
+                    sim_civ::push_for_refinement_rejected(),
                 ))
             }
         };
