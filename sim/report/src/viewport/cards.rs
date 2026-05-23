@@ -8,7 +8,7 @@
 use super::emitter::ViewportEmitter;
 use crate::labels::{
     atmosphere_descriptor, cog_tier, comm_label, format_atmospheric_composition, friendly_badge,
-    host_species_status, planet_type, short_manip, short_modality, sociality_label,
+    host_species_status, planet_archetype, short_manip, short_modality, sociality_label,
     substrate_biochem,
 };
 use std::fmt::Write as FmtWrite;
@@ -65,10 +65,32 @@ impl<W: Write> ViewportEmitter<W> {
             boil_k,
         );
         let badge_friendly = friendly_badge(badge);
-        let ptype = planet_type(p.metabolic_substrate.as_str());
-        // Line 1: planet-type noun · friendly badge — leads with
-        // the type archetype and follows with a one-word
-        // habitability descriptor (e.g. `ocean world · scorching`).
+        // Compute actual surface ocean fraction from the per-cell
+        // water-depth grid; substrate alone over-labels every aqueous-
+        // biology planet as "ocean world" even when 0 % of its
+        // surface holds liquid water (e.g. seed 42).
+        let ocean_frac = self.planet_map.as_ref().map_or(0.0, |pm| {
+            let total = pm.water_depth_q32.len();
+            if total == 0 {
+                0.0
+            } else {
+                let wet = pm.water_depth_q32.iter().filter(|&&d| d > 0).count();
+                wet as f64 / total as f64
+            }
+        });
+        let terrain_peak_m = q32_to_f64(p.terrain_peak_q32);
+        let ptype = planet_archetype(
+            p.metabolic_substrate.as_str(),
+            mean_t_k,
+            freeze_k,
+            boil_k,
+            terrain_peak_m,
+            ocean_frac,
+        );
+        // Line 1: archetype noun · friendly badge — leads with the
+        // surface-aware archetype (`ocean world` only when there
+        // really is one) and follows with a one-word habitability
+        // descriptor (e.g. `desert world · scorching`).
         let _ = writeln!(s, "{ptype} · {badge_friendly}");
         // Line 2 (climate): atmosphere · temperature ·
         // magnetosphere — the three "what's the air / sky like"
