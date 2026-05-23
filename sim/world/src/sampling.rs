@@ -56,6 +56,119 @@ pub fn planet_name_from_seed(seed: u64) -> String {
     format!("{}-{}", STEMS[stem_idx], SUFFIX[suffix_idx])
 }
 
+/// User-supplied overrides applied on top of the seed-sampled
+/// `Planet`. Each field is `Option`; `None` keeps the seed-driven
+/// value. Map geography (terrain elevation, water depth, sea level,
+/// terrain peak) is **not** overridable — it always comes from the
+/// seed so a `--config` run still produces a varied landscape.
+///
+/// Coherence: when `substrate` is overridden, the downstream
+/// substrate-conditional fields (atmospheric_composition,
+/// crustal_composition) re-sample from a deterministic salt-stream
+/// keyed on the seed + override pair, so the planet card and physics
+/// still agree internally.
+#[derive(Debug, Clone, Default)]
+pub struct PlanetOverrides {
+    pub substrate: Option<MetabolicSubstrate>,
+    pub atmosphere: Option<Atmosphere>,
+    pub mean_temperature_k: Option<i64>,
+    /// Gravity in Earth-g × 100 (so 100 = 1.0 g, 250 = 2.5 g).
+    /// Implemented by setting `mass = g_x100/100` and `radius = 1.0`,
+    /// which gives the requested derived gravity (`g = M/R²` in
+    /// Earth-relative units).
+    pub gravity_g_x100: Option<i64>,
+    pub spectral_type: Option<crate::SpectralType>,
+    pub axial_tilt_deg: Option<i64>,
+    pub day_length_hours: Option<i64>,
+    pub orbital_period_months: Option<u32>,
+    pub moon_count: Option<u8>,
+    pub magnetosphere: Option<crate::Magnetosphere>,
+    pub crust: Option<Crust>,
+    pub biosphere: Option<BiosphereClass>,
+}
+
+/// Salt for the override re-sample RNG stream. Distinct from
+/// `LOCKING_SALT` so the locking decision stays bit-identical when
+/// `--config` only changes substrate.
+const OVERRIDE_SALT: u64 = 0x436F_6E66_6967_2121; // "Config!!" ASCII
+
+/// Sample a planet from `seed`, then apply user overrides on top.
+/// Same semantics as [`sample_planet`] but with the per-field
+/// overrides from a `--config` interactive run.
+#[must_use]
+pub fn sample_planet_with_overrides(seed: u64, overrides: &PlanetOverrides) -> Planet {
+    let mut planet = sample_planet(seed);
+    apply_overrides(&mut planet, seed, overrides);
+    planet
+}
+
+fn apply_overrides(planet: &mut Planet, seed: u64, o: &PlanetOverrides) {
+    let substrate_changed = o.substrate.is_some_and(|s| s != planet.metabolic_substrate);
+    let atmosphere_changed = o.atmosphere.is_some_and(|a| a != planet.atmosphere);
+
+    if let Some(s) = o.substrate {
+        planet.metabolic_substrate = s;
+    }
+    if let Some(a) = o.atmosphere {
+        planet.atmosphere = a;
+    }
+    if let Some(t_k) = o.mean_temperature_k {
+        planet.mean_temperature = Real::from_int(t_k);
+    }
+    if let Some(g_x100) = o.gravity_g_x100 {
+        // g = M / R²; set R=1 so g = M directly. Earth-relative.
+        planet.mass = Real::from_ratio(g_x100, 100);
+        planet.radius = Real::ONE;
+    }
+    if let Some(tilt) = o.axial_tilt_deg {
+        planet.axial_tilt_deg = Real::from_int(tilt);
+    }
+    if let Some(d) = o.day_length_hours {
+        planet.day_length_hours = Real::from_int(d);
+    }
+    if let Some(m) = o.orbital_period_months {
+        planet.orbital_period_months = m;
+    }
+    if let Some(mc) = o.moon_count {
+        planet.moon_count = mc;
+        planet.moons.truncate(mc as usize);
+    }
+    if let Some(mag) = o.magnetosphere {
+        planet.magnetosphere = mag;
+    }
+    if let Some(c) = o.crust {
+        planet.crust = c;
+    }
+    if let Some(b) = o.biosphere {
+        planet.biosphere = b;
+    }
+    if let Some(spec) = o.spectral_type {
+        // Rebuild the star at the new spectral type, keeping the
+        // sampled bolometric irradiance + age intact so the rest of
+        // the physics still has consistent inputs.
+        let lifetime_gyr = spec.nominal_lifetime_gyr();
+        let age_gyr = planet.star.main_sequence_age_gyr;
+        planet.star = crate::Star::with_age(spec, planet.stellar_luminosity, age_gyr, lifetime_gyr);
+    }
+
+    // Substrate-conditional re-sampling. Atmospheric + crustal
+    // composition baselines are keyed on the (atmosphere, substrate)
+    // pair; if either changed, regenerate them from a salted RNG
+    // substream so the planet stays internally consistent without
+    // disturbing the main worldgen draw sequence.
+    if substrate_changed || atmosphere_changed {
+        let salt = splitmix64(seed.wrapping_add(OVERRIDE_SALT));
+        let mut rng = ChaCha20Rng::seed_from_u64(salt);
+        planet.atmospheric_composition = sample_atmospheric_composition(
+            planet.atmosphere,
+            planet.metabolic_substrate,
+            &mut rng,
+        );
+        planet.crustal_composition =
+            sample_crustal_composition(planet.crust, planet.metabolic_substrate, &mut rng);
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn sample_planet(seed: u64) -> Planet {
     let name = planet_name_from_seed(seed);

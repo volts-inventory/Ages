@@ -31,7 +31,9 @@ use sim_species::{
     EcosystemRole, Fission, Lifecycle, ModalityKind, MutualismKind, ParasiteKind,
     ProducerMetabolism, SpeciesId,
 };
-use sim_world::{init_planet, sample_planet, Atmosphere, Composition, Magnetosphere};
+use sim_world::{
+    init_planet, sample_planet_with_overrides, Atmosphere, Composition, Magnetosphere,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn emit_nomads_changed<E: Emitter>(
@@ -232,7 +234,7 @@ pub(crate) fn setup_run<E: Emitter>(
     let grid = HexGrid::new(cfg.grid_width, cfg.grid_height);
     let mut state = PhysicsState::new(grid);
     let orch_state = OrchestratorState::new();
-    let mut planet = sample_planet(cfg.seed);
+    let mut planet = sample_planet_with_overrides(cfg.seed, &cfg.planet_overrides);
     emitter.emit(&Event::Planet(planet_to_event(&planet)))?;
     init_planet(&mut state, &planet);
 
