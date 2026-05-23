@@ -1,18 +1,22 @@
 use super::*;
+use protocol::Phase;
+use sim_ecosystem::PlanetEcosystem;
 use sim_events::{CountingEmitter, JsonLinesEmitter};
 use std::io::Cursor;
 
 use sim_arith::Real;
 use sim_ecosystem::{step_hgt, LocalConditions};
 use sim_species::{
-    CognitionAxes, CognitionTopology, Habitat, PopulationBiology, Species, ToleranceEnvelope,
+    CognitionAxes, CognitionTopology, EcosystemRole, Fission, Habitat, Lifecycle, ModalityKind,
+    MutualismKind, ParasiteKind, PopulationBiology, ProducerMetabolism, Species, SpeciesId,
+    ToleranceEnvelope,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::laws::build_laws;
 use sim_world::{
-    AtmosphericComposition, BiosphereClass, Composition, Crust, CrustalComposition, LockingState,
-    MetabolicSubstrate, Planet, SpectralType, Star,
+    Atmosphere, AtmosphericComposition, BiosphereClass, Composition, Crust, CrustalComposition,
+    LockingState, Magnetosphere, MetabolicSubstrate, Planet, SpectralType, Star,
 };
 
 #[test]
