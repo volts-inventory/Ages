@@ -24,22 +24,22 @@ pub mod apparatus;
 pub mod catastrophe;
 pub mod conflict;
 pub mod cosmology;
-pub mod culture_hooks;
+pub(crate) mod culture_hooks;
 mod demographics;
 pub mod discovery;
 pub mod figures;
 pub mod fit;
 pub mod forms;
 mod naming;
-pub mod religion;
+pub(crate) mod religion;
 mod succession;
 pub mod tech;
 pub mod transmission;
 
 mod capacity;
 mod drift;
-pub mod economy;
-pub mod environmental_drift;
+pub(crate) mod economy;
+pub(crate) mod environmental_drift;
 mod founding;
 mod lifecycle;
 mod observation;
@@ -56,7 +56,14 @@ pub use demographics::{
     tech_augmented_migration_threshold,
 };
 pub use drift::COLLECTIVE_QUORUM_POP;
+pub use economy::{
+    drain_surplus_on_catastrophe, step_surplus, trade_flow_between, SURPLUS_EMIT_DELTA_FLOOR,
+};
 pub use naming::civ_name_from_seed;
+pub use religion::{
+    push_for_civ_collapsed, push_for_refinement_confirmed, push_for_refinement_proposed,
+    push_for_refinement_rejected, push_for_relation_confirmed, Religion,
+};
 pub use succession::pick_successor_centroid;
 
 use figures::{NameGrammar, NamedFigure};
