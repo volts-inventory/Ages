@@ -422,7 +422,7 @@ pub fn render_world_frame_styled(
 /// featureless surface. Returns `None` for glyphs that should
 /// stay terminal-default (claim digits, disputes, blanks). Civ
 /// markers go through `civ_color_code` separately and are bolded.
-fn terrain_color_code(c: char) -> Option<u8> {
+pub(crate) fn terrain_color_code(c: char) -> Option<u8> {
     match c {
         '~' => Some(39),         // shallow water — sky blue
         '\u{2248}' => Some(27),  // ≈ deep water — deep blue
