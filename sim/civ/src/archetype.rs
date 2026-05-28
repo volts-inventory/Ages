@@ -190,6 +190,106 @@ pub struct ArchetypeProfile {
     pub cognition: CognitionMode,
 }
 
+impl ArchetypeLabel {
+    /// The single lever that defines this label's fate — the pure
+    /// lever, the leading half of a hybrid, or the dominant dimension
+    /// of an emergent signature.
+    pub fn dominant_lever(self) -> Lever {
+        match self {
+            ArchetypeLabel::Pure(l) => l,
+            ArchetypeLabel::Hybrid(a, _) => a,
+            ArchetypeLabel::Emergent { dominant, .. } => dominant,
+        }
+    }
+}
+
+/// An archetype's divergent endpoint: a stable machine tag plus the
+/// narrated fate.
+#[derive(Debug, Clone)]
+pub struct ArchetypeEndpointInfo {
+    pub mode: &'static str,
+    pub description: String,
+}
+
+/// Resolve the divergent fate a civilization reaches at the
+/// transcendence threshold from its (realized) archetype. Each lever
+/// reaches a *different* endpoint — there is no single shared
+/// "singularity". The cognition overlay can bend the fate inward
+/// toward silence (a collective or substrate-distributed mind stops
+/// broadcasting outward).
+pub fn endpoint_for(profile: &ArchetypeProfile) -> ArchetypeEndpointInfo {
+    let (mode, base): (&'static str, &'static str) = match profile.label.dominant_lever() {
+        Lever::Combustion => (
+            "combustion_industrial_apex",
+            "an industrial-combustion apex — mastery bought on a finite fuel endowment, its \
+             future a crossroads between expansion and exhaustion rather than a guarantee",
+        ),
+        Lever::FieldResonance => (
+            "field_resonance_matter_transition",
+            "a matter-transition threshold — the civilization learns to restructure matter \
+             through resonance fields, a transformation that does not go unnoticed by whatever \
+             attends the field",
+        ),
+        Lever::Biochemical => (
+            "biochemical_biosphere_merge",
+            "a biosphere-merge — minds and living world fuse into one metabolism, and life \
+             begins seeding itself outward as panspermia",
+        ),
+        Lever::Cryogenic => (
+            "cryogenic_deep_time",
+            "a cryogenic deep-time civilization — slow, patient, and durable, built to outlast \
+             the dimming of its own star",
+        ),
+        Lever::Mechanical => (
+            "mechanical_crossover",
+            "a mechanical-computational crossover — gears and engines give way to a constructed \
+             successor intelligence",
+        ),
+        Lever::Hydraulic => (
+            "hydraulic_world_engineering",
+            "planet-scale fluid and thermal engineering — the civilization reshapes its oceans \
+             and climate as a single machine",
+        ),
+        Lever::ExoticChemistry => (
+            "exotic_synthesis",
+            "an exotic-solvent synthesis path — a chemistry alien to water-life, mastering \
+             reactions no carbon-aqueous world would attempt",
+        ),
+        Lever::PlasmaEm => (
+            "plasma_magnetospheric_ascendance",
+            "a magnetospheric ascendance — the civilization taps its planet's plasma and field \
+             energy at industrial scale",
+        ),
+        Lever::Gravitational => (
+            "gravitational_engineering",
+            "tidal and gravitational megastructure engineering — orbital mechanics become a tool \
+             rather than a constraint",
+        ),
+        Lever::Photonic => (
+            "photonic_uplift",
+            "a photonic uplift — starlight harvested and shaped into the civilization's primary \
+             medium of work and thought",
+        ),
+        Lever::Nuclear => (
+            "nuclear_epoch",
+            "a radiogenic nuclear epoch — a civilization that came up under hard radiation and \
+             made decay its power source",
+        ),
+    };
+    let description = match profile.cognition {
+        CognitionMode::Collective => format!(
+            "{base}. As a collective mind it turns increasingly inward, its outward signal \
+             thinning toward silence."
+        ),
+        CognitionMode::SubstrateDistributed => format!(
+            "{base}. Being substrate-distributed, it dissolves into its own medium, leaving \
+             little for outside observers to read."
+        ),
+        CognitionMode::Individual => format!("{base}."),
+    };
+    ArchetypeEndpointInfo { mode, description }
+}
+
 // Classification thresholds (tuned so the canonical fixtures land on
 // their intended attractor; see tests). Expressed as Real ratios so
 // the whole path stays fixed-point.
@@ -620,6 +720,57 @@ mod tests {
         ];
         let refined = refine_with_run(&prior, &channels, &tools);
         assert_eq!(classify(&refined), ArchetypeLabel::Pure(Lever::Biochemical));
+    }
+
+    fn profile_with(label: ArchetypeLabel, cognition: CognitionMode) -> ArchetypeProfile {
+        ArchetypeProfile {
+            scores: LeverScores::zero(),
+            label,
+            cognition,
+        }
+    }
+
+    #[test]
+    fn every_lever_has_a_distinct_nonempty_endpoint() {
+        let mut modes = std::collections::BTreeSet::new();
+        for lever in Lever::ALL {
+            let profile = profile_with(ArchetypeLabel::Pure(lever), CognitionMode::Individual);
+            let ep = endpoint_for(&profile);
+            assert!(!ep.mode.is_empty(), "{lever:?} endpoint mode empty");
+            assert!(!ep.description.is_empty(), "{lever:?} description empty");
+            assert!(modes.insert(ep.mode), "duplicate endpoint mode {}", ep.mode);
+        }
+        assert_eq!(modes.len(), Lever::ALL.len());
+    }
+
+    #[test]
+    fn collective_cognition_bends_endpoint_toward_silence() {
+        let indiv = endpoint_for(&profile_with(
+            ArchetypeLabel::Pure(Lever::FieldResonance),
+            CognitionMode::Individual,
+        ));
+        let collective = endpoint_for(&profile_with(
+            ArchetypeLabel::Pure(Lever::FieldResonance),
+            CognitionMode::Collective,
+        ));
+        // Same machine tag, but the collective fate adds the inward /
+        // silence flavor.
+        assert_eq!(indiv.mode, collective.mode);
+        assert!(collective.description.contains("silence"));
+        assert!(!indiv.description.contains("silence"));
+    }
+
+    #[test]
+    fn hybrid_and_emergent_endpoints_follow_the_dominant_lever() {
+        let hybrid = endpoint_for(&profile_with(
+            ArchetypeLabel::Hybrid(Lever::Biochemical, Lever::Mechanical),
+            CognitionMode::Individual,
+        ));
+        let pure = endpoint_for(&profile_with(
+            ArchetypeLabel::Pure(Lever::Biochemical),
+            CognitionMode::Individual,
+        ));
+        assert_eq!(hybrid.mode, pure.mode);
     }
 
     #[test]

@@ -151,6 +151,9 @@ pub enum Event {
     /// run start from the world+species prior. The realized archetype
     /// refines as civs confirm relations and unlock tools.
     ArchetypeDerived(ArchetypeDerived),
+    /// Archetype-specific civilizational endpoint at transcendence —
+    /// different levers reach different fates.
+    ArchetypeEndpoint(ArchetypeEndpoint),
     /// Per-civ species trait drift snapshot. Emitted at civ
     /// founding (refound, breakaway, or post-collapse emergent) when
     /// the inherited drift exceeds a half-step threshold on at

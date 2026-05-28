@@ -182,6 +182,10 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // Archetype declaration is run-start metadata; rendered in
         // the report's planet/species framing, not pinned to the reel.
         | Event::ArchetypeDerived(_)
+        // Archetype endpoint is the run's climactic fate; the narrator
+        // renders it and the live stream pins it — it is excluded from
+        // the scored long tail rather than competing for a slot.
+        | Event::ArchetypeEndpoint(_)
         // Drift snapshot is per-civ-founding metadata;
         // shown in chapters but not pinned to highlights.
         | Event::SpeciesDrift(_)

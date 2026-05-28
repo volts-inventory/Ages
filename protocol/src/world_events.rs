@@ -224,6 +224,27 @@ pub struct ArchetypeDerived {
     pub lever_scores_q32: Vec<i64>,
 }
 
+/// Archetype-specific civilizational endpoint, emitted when a civ
+/// reaches the transcendence threshold (all tier-5 tools sustained).
+/// Different foundational levers reach *different* fates: a
+/// field-resonance civ a matter-transition that draws watchers, a
+/// biochemical one a biosphere-merge that seeds panspermia, a
+/// combustion one an uncertain industrial apex, and so on. The
+/// `endpoint_mode` is a stable machine tag; `description` is the
+/// narrated divergent fate. Cognition overlay (collective /
+/// substrate-distributed) can bend the fate inward toward silence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArchetypeEndpoint {
+    pub tick: u64,
+    pub civ_id: u32,
+    pub civ_name: String,
+    pub label: String,
+    pub dominant_lever: String,
+    pub cognition_mode: String,
+    pub endpoint_mode: String,
+    pub description: String,
+}
+
 /// Cause of a `SpeciesExtinct` event. Sprint 2 Item 6a emits
 /// `PopulationCollapse` only — biomass dropped below the threshold
 /// for the confirmation window. `KeystoneCascade` and `Catastrophe`
