@@ -52,6 +52,11 @@ pub enum Field {
     /// templates (downwind shadow, leeward) need a separate
     /// signature variant once those land.
     WindMagnitude,
+    /// Per-cell resonance field (`state.resonance()`). The
+    /// "field-and-resonance" archetype's primary substrate signal —
+    /// field-sensing species perceive it directly and civ science
+    /// fits laws over it.
+    Resonance,
 }
 
 impl Field {
@@ -68,6 +73,7 @@ impl Field {
                 let r = vr[cell];
                 sqrt(q * q + r * r)
             }
+            Field::Resonance => state.resonance()[cell],
         }
     }
 }

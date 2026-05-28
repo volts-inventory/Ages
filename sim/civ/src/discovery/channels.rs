@@ -40,13 +40,18 @@ pub enum Channel {
     /// Sits at discriminant 9; well under the 16-cap from the
     /// `template_id × 16 + channel` relation-id encoding.
     MagneticField = 9,
+    /// Per-cell resonance field (`PhysicsState::resonance()`). The
+    /// substrate signal field-sensing species fit laws over. Sits
+    /// at discriminant 10; still under the 16-cap from the
+    /// `template_id × 16 + channel` relation-id encoding.
+    Resonance = 10,
 }
 
 impl Channel {
     /// All channels available to the discovery pipeline. Used for
     /// the cross-product candidate generation (template × channel)
     /// — see `Hypothesizer::candidates_for`.
-    pub const ALL: [Channel; 10] = [
+    pub const ALL: [Channel; 11] = [
         Channel::Temperature,
         Channel::WaterDepth,
         Channel::ChargeMagnitude,
@@ -57,6 +62,7 @@ impl Channel {
         Channel::Ice,
         Channel::Fossil,
         Channel::MagneticField,
+        Channel::Resonance,
     ];
 }
 
@@ -117,8 +123,8 @@ pub fn channels_for_modality(modality: sim_species::ModalityKind) -> &'static [C
         MK::AcousticAir | MK::AcousticWater | MK::Seismic => {
             &[Channel::WaterDepth, Channel::Elevation, Channel::Temperature]
         }
-        MK::ElectricField => &[Channel::ChargeMagnitude],
-        MK::MagneticSense | MK::RadioNative => &[Channel::MagneticField],
+        MK::ElectricField => &[Channel::ChargeMagnitude, Channel::Resonance],
+        MK::MagneticSense | MK::RadioNative => &[Channel::MagneticField, Channel::Resonance],
         // Tactile is contact-only: it can tell the cell's
         // thermal state and surface relief but not the bulk
         // substance composition at distance. Earlier the fallback
@@ -195,6 +201,10 @@ impl Channel {
             // earth-like equator ~1 unit; pole-peaked enhancement);
             // unit-scale keeps fits inside Q32.32 range.
             Channel::MagneticField => Real::ONE,
+            // Resonance field sits in low single digits like the
+            // magnetic field; unit-scale keeps fits inside Q32.32
+            // range.
+            Channel::Resonance => Real::ONE,
             // Substance densities sit in low single digits;
             // unit-scale leaves them unchanged.
             Channel::Fuel
@@ -222,6 +232,9 @@ impl Channel {
             // species now read the actual planetary field strength
             // rather than the misappropriated `ChargeMagnitude`.
             Channel::MagneticField => state.magnetic_field_magnitude(cell),
+            // Per-cell resonance field — the substrate signal
+            // field-sensing species fit laws over.
+            Channel::Resonance => state.resonance()[cell],
         };
         raw / self.scale()
     }
@@ -238,6 +251,7 @@ impl Channel {
             Channel::Ice => "ice",
             Channel::Fossil => "fossil",
             Channel::MagneticField => "magnetic_field",
+            Channel::Resonance => "resonance",
         }
     }
 }

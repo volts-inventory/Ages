@@ -99,6 +99,7 @@ fn channel_to_field(channel: Channel) -> Option<Field> {
         Channel::WaterDepth => Some(Field::WaterDepth),
         Channel::ChargeMagnitude => Some(Field::Charge),
         Channel::MagneticField => Some(Field::MagneticMagnitude),
+        Channel::Resonance => Some(Field::Resonance),
         Channel::Fuel => Some(Field::Substance(sim_physics::Substance::Fuel)),
         Channel::Oxidiser => Some(Field::Substance(sim_physics::Substance::Oxidiser)),
         Channel::Vapour => Some(Field::Substance(sim_physics::Substance::Vapour)),
@@ -124,6 +125,11 @@ fn natural_channels(field: Field) -> Vec<ChannelKind> {
         Field::Substance(_) => vec![ChannelKind::ChemicalTaste],
         Field::MagneticMagnitude => vec![ChannelKind::MagneticSense],
         Field::WindMagnitude => vec![ChannelKind::Tactile, ChannelKind::AcousticAir],
+        Field::Resonance => vec![
+            ChannelKind::ElectricField,
+            ChannelKind::MagneticSense,
+            ChannelKind::RadioNative,
+        ],
     }
 }
 
@@ -332,6 +338,7 @@ fn field_label(field: Field) -> &'static str {
         },
         Field::MagneticMagnitude => "magnetic_magnitude",
         Field::WindMagnitude => "wind_magnitude",
+        Field::Resonance => "resonance",
     }
 }
 

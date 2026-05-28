@@ -123,8 +123,11 @@ impl Channel {
             // civ can't reshape them within an experiment window.
             // MagneticField: the planetary dipole isn't clampable
             // either — civs can't reshape `|B|` inside an
-            // experiment window.
-            Channel::Elevation | Channel::Fossil | Channel::MagneticField => None,
+            // experiment window. Resonance is the same — the field
+            // is physics-law-driven, not directly clampable.
+            Channel::Elevation | Channel::Fossil | Channel::MagneticField | Channel::Resonance => {
+                None
+            }
         }
     }
 }
@@ -227,7 +230,7 @@ fn write_channel_at_cell(state: &mut PhysicsState, channel: Channel, cell: usize
         Channel::Vapour => state.substance_mut(Substance::Vapour.idx())[cell] = value,
         Channel::Ice => state.substance_mut(Substance::Ice.idx())[cell] = value,
         // Not clampable; covered by `clamp_ladder() == None`.
-        Channel::Elevation | Channel::Fossil | Channel::MagneticField => {}
+        Channel::Elevation | Channel::Fossil | Channel::MagneticField | Channel::Resonance => {}
     }
 }
 

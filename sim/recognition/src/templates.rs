@@ -881,6 +881,44 @@ impl RecognitionLibrary {
                         ChannelKind::VisualLight,
                     ],
                 },
+                // ============================================
+                // Resonance-field templates. The new per-cell
+                // resonance field (`state.resonance()`) surfaces as
+                // the "field-and-resonance" archetype's primary
+                // substrate signal. Field-sensing species perceive
+                // it via the electric / magnetic / radio channels.
+                // ============================================
+                // Resonance field active — the field is present at
+                // an appreciable level. Low floor (1 unit) mirrors
+                // the way `magnetic_field_strong` gates on a modest
+                // |B| threshold.
+                RecognitionTemplate {
+                    id: 54,
+                    name: "resonance_field_active",
+                    signature: Signature::Above(Field::Resonance, Real::from_int(1)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[
+                        ChannelKind::ElectricField,
+                        ChannelKind::MagneticSense,
+                        ChannelKind::RadioNative,
+                    ],
+                },
+                // Attention coherence — strong resonance, the
+                // sustained high-field state field-sensing species
+                // read as coherent attention. Higher floor (5
+                // units) distinguishes it from the everyday
+                // background `resonance_field_active`.
+                RecognitionTemplate {
+                    id: 55,
+                    name: "attention_coherence",
+                    signature: Signature::Above(Field::Resonance, Real::from_int(5)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[
+                        ChannelKind::ElectricField,
+                        ChannelKind::MagneticSense,
+                        ChannelKind::RadioNative,
+                    ],
+                },
             ],
         }
     }

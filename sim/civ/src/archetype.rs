@@ -401,7 +401,7 @@ pub fn classify_world_species(planet: &Planet, species: &Species) -> ArchetypePr
 fn channel_lever(channel: Channel) -> Option<Lever> {
     match channel {
         Channel::Fuel | Channel::Oxidiser | Channel::Fossil => Some(Lever::Combustion),
-        Channel::ChargeMagnitude => Some(Lever::FieldResonance),
+        Channel::ChargeMagnitude | Channel::Resonance => Some(Lever::FieldResonance),
         Channel::MagneticField => Some(Lever::PlasmaEm),
         Channel::WaterDepth | Channel::Vapour => Some(Lever::Hydraulic),
         Channel::Ice => Some(Lever::Cryogenic),
