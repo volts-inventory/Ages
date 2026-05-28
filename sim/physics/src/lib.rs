@@ -29,6 +29,7 @@ pub mod magnetism;
 pub mod mechanics;
 pub mod orchestration;
 pub mod radiation;
+pub mod resonance;
 pub mod state;
 pub mod tectonics;
 pub mod tidal_heating;
@@ -68,6 +69,7 @@ pub use magnetism::{DipoleState, MagneticReversal, Magnetism};
 pub use mechanics::Mechanics;
 pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorState};
 pub use radiation::{LockingMode, Radiation};
+pub use resonance::ResonanceField;
 pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tectonics::{CrustType, Plate, Tectonics};
 pub use tidal_heating::{

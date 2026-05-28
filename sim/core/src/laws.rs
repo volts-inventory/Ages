@@ -81,6 +81,13 @@ pub(crate) struct Laws {
     /// rapid rotators get four-or-more. Vacuum planets short-circuit
     /// via the law's `has_atmosphere` flag.
     pub hadley: sim_physics::HadleyCirculation,
+    /// Field-and-resonance vision extension: the speculative
+    /// resonance / attention field. Couplings derive from the crust's
+    /// piezoelectric fraction (gain), the magnetosphere class
+    /// (field coupling), and atmosphere density (propagation), so the
+    /// field is prominent on field-and-resonance archetype worlds and
+    /// near-zero on basaltic no-dipole ones.
+    pub resonance: sim_physics::ResonanceField,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -402,6 +409,31 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         },
     };
 
+    // Field-and-resonance vision extension. Gain from the crust's
+    // piezoelectric fraction; field coupling from the magnetosphere
+    // class (None 0 / Weak 1 / Strong 3); propagation from atmosphere
+    // density (denser air carries the resonance farther, floored low
+    // for thin atmospheres and zero in vacuum). The resonance law is
+    // installed on every run (vision boundary moved): on a basaltic,
+    // no-dipole world the field stays near zero, so it is harmless
+    // there and prominent only on field-and-resonance archetypes.
+    let piezo_fraction = planet.crustal_composition.piezoelectric;
+    let field_factor = match planet.magnetosphere {
+        Magnetosphere::None => Real::ZERO,
+        Magnetosphere::Weak => Real::ONE,
+        Magnetosphere::Strong => Real::from_int(3),
+    };
+    let density_x100 = planet.atmosphere.density_x100();
+    let propagation = if density_x100 > 0 {
+        (Real::percent(2) * Real::from_int(density_x100) / Real::from_int(122))
+            .min(Real::percent(10))
+            .max(Real::from_ratio(1, 1000))
+    } else {
+        Real::ZERO
+    };
+    let resonance =
+        sim_physics::ResonanceField::for_coupling(piezo_fraction, field_factor, propagation);
+
     Laws {
         fluid,
         heat,
@@ -425,6 +457,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         planet_radius_earth_units,
         atmospheric_escape,
         hadley,
+        resonance,
     }
 }
 

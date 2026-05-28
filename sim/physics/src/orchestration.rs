@@ -459,6 +459,12 @@ pub fn integrate_civ_step(
     // law no-ops on vacuum planets (its `has_atmosphere` flag is
     // false) so call sites can pass `Some(&laws.hadley)` unconditionally.
     hadley: Option<&crate::hadley::HadleyCirculation>,
+    // Field-and-resonance vision extension: the speculative
+    // resonance / attention field. Runs after Magnetism so it reads
+    // the freshest |B| and post-EM charge. `None` is a no-op (the
+    // field stays zero), so tests and minimal call sites that don't
+    // model it pay nothing and stay bit-identical.
+    resonance: Option<&crate::resonance::ResonanceField>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -714,6 +720,13 @@ pub fn integrate_civ_step(
         if let Some(m) = magnetism {
             m.integrate(state, cfg.em_dt);
         }
+        // Speculative resonance / attention field. Runs after
+        // Magnetism (freshest |B|) and after EM (post-charge); no
+        // legacy law reads `state.resonance`, so this only feeds the
+        // new recognition / discovery consumers.
+        if let Some(r) = resonance {
+            r.integrate(state, cfg.em_dt);
+        }
         // Lorentz coupling. Runs after Magnetism (so it
         // reads the freshest |B|) and after Wind (so it reads
         // and modifies the post-pressure-gradient velocity).
@@ -829,11 +842,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -886,7 +899,7 @@ mod tests {
         for _ in 0..1000 {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
-                None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);

@@ -96,6 +96,9 @@ pub(crate) fn physics_phase<E: Emitter>(
         // it after vertical convection so the jets spin up against
         // a coherent surface-vs-upper temperature gradient.
         Some(&laws.hadley),
+        // Field-and-resonance vision extension: speculative resonance
+        // / attention field, built per-planet in `build_laws`.
+        Some(&laws.resonance),
     );
     Ok(prev_state_for_measurements)
 }

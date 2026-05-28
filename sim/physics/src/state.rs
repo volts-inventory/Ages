@@ -60,6 +60,15 @@ pub struct PhysicsState {
     substances: Vec<Vec<Real>>,
     /// Electric charge per cell. Signed; mutated by EM law (M1b).
     charge: Vec<Real>,
+    /// Speculative resonance / attention field `Ψ` per cell
+    /// (field-and-resonance vision extension). Driven by `|B|` +
+    /// `|charge|` scaled by crust piezoelectricity, diffuses to
+    /// neighbours, relaxes toward equilibrium. Mutated only by
+    /// `ResonanceField`; read by recognition (`Field::Resonance`) and
+    /// the discovery hypothesizer (`Channel::Resonance`). No legacy
+    /// law reads it, so its presence leaves every other channel
+    /// bit-identical.
+    resonance: Vec<Real>,
     /// Planetary magnetic field as a vector — `(B_q, B_r)`
     /// per cell in axial coordinates. Previously this was a scalar
     /// magnitude with no direction; promoting to a vector lets the
@@ -310,6 +319,7 @@ impl PhysicsState {
             fluid_v_w: vec![Real::ZERO; n],
             substances: vec![vec![Real::ZERO; n]; N_SUBSTANCES],
             charge: vec![Real::ZERO; n],
+            resonance: vec![Real::ZERO; n],
             magnetic_b_q: vec![Real::ZERO; n],
             magnetic_b_r: vec![Real::ZERO; n],
             magnetic_b_z: vec![Real::ZERO; n],
@@ -499,6 +509,16 @@ impl PhysicsState {
 
     pub fn charge_mut(&mut self) -> &mut [Real] {
         &mut self.charge
+    }
+
+    /// Speculative resonance / attention field `Ψ` per cell. Written
+    /// by `ResonanceField`; read by recognition + discovery.
+    pub fn resonance(&self) -> &[Real] {
+        &self.resonance
+    }
+
+    pub fn resonance_mut(&mut self) -> &mut [Real] {
+        &mut self.resonance
     }
 
     /// Vector magnetic field — `(B_q, B_r)` slices in axial

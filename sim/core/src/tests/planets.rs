@@ -218,6 +218,7 @@ fn super_earth_run_with_2g_gravity_does_not_overflow() {
             Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
             Some(&laws.atmospheric_escape),
             Some(&laws.hadley),
+            Some(&laws.resonance),
         );
         let _ = ecosystem.step_with_biogeochem_at_tick(&mut state, solar, tick);
     }
@@ -919,6 +920,7 @@ fn hot_jupiter_extreme_params_do_not_overflow() {
             Some((laws.planet_radius_earth_units, laws.moon_heating.as_slice())),
             Some(&laws.atmospheric_escape),
             Some(&laws.hadley),
+            Some(&laws.resonance),
         );
     }
 
