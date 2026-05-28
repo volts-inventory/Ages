@@ -123,7 +123,7 @@ fn draw_footer(f: &mut Frame, area: Rect) {
 fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(8)])
+        .constraints([Constraint::Min(6), Constraint::Length(4), Constraint::Length(8)])
         .split(area);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -131,7 +131,8 @@ fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
         .split(rows[0]);
     draw_map(f, cols[0], model, ui);
     draw_civ_list(f, cols[1], model, ui);
-    draw_log(f, rows[1], model, ui);
+    draw_legend(f, rows[1], model);
+    draw_log(f, rows[2], model, ui);
 }
 
 fn draw_civilizations(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
@@ -177,6 +178,7 @@ fn phase_label(phase: SurfacePhase) -> &'static str {
         SurfacePhase::Earthlike => "temperate",
         SurfacePhase::Lava => "molten",
         SurfacePhase::IceCap => "frozen",
+        SurfacePhase::Scorched => "scorched",
     }
 }
 
@@ -361,6 +363,7 @@ fn draw_legend(f: &mut Frame, area: Rect, model: &Model) {
         SurfacePhase::Earthlike => "~ sea  ≈ deep  ▲ peak  △ hill  ▒ land  ░ coast  · plain",
         SurfacePhase::Lava => "* magma  ▲ peak  △ outcrop",
         SurfacePhase::IceCap => "+ ice  ▲ peak  △ hill  ▒ land  ░ coast  · plain",
+        SurfacePhase::Scorched => "· dry basin  ▲ peak  △ hill  ▒ land  ░ coast",
     };
     let lines = vec![
         Line::from("A–Z = capital · 1–9 = fill% · # = disputed · bright = nomad"),

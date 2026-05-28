@@ -90,6 +90,10 @@ impl<W: Write> ViewportEmitter<W> {
                     "~sea · ≈deep · ▲peak · △hill".to_string(),
                     "▒land · ░coast · ·=plain".to_string(),
                 ),
+                crate::render::SurfacePhase::Scorched => (
+                    "·dry basin · ▲peak · △hill".to_string(),
+                    "▒land · ░coast (oceans boiled off)".to_string(),
+                ),
             };
             vec![density_line.to_string(), terrain1, terrain2]
         } else {
@@ -105,6 +109,10 @@ impl<W: Write> ViewportEmitter<W> {
                 crate::render::SurfacePhase::Earthlike => (
                     "0=nomad · #=war · ~sea · ≈deep".to_string(),
                     "▲peak · △hill · ▒land · ░coast · ·=plain".to_string(),
+                ),
+                crate::render::SurfacePhase::Scorched => (
+                    "0=nomad · #=war · ·dry basin".to_string(),
+                    "▲peak · △hill · ▒land · ░coast".to_string(),
                 ),
             };
             vec!["1-9=civ-id · *=civ≥10".to_string(), line2, line3]

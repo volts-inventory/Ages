@@ -152,12 +152,17 @@ fn substrate_range_for(d: &crate::digest::Digest) -> (f64, f64) {
 ///   sheet) since the water is solid. Land cells stay as normal
 ///   terrain glyphs (cold continents look like continents at this
 ///   zoom; in colour mode the palette can convey the cold).
+/// - `Scorched`  — mean temperature above the solvent boil point;
+///   the liquid has boiled off, so cells with `water_depth > 0`
+///   become `·` (dry basin) instead of reading as a temperate blue
+///   sea. Keeps a "scorching" world from rendering as a calm ocean.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SurfacePhase {
     #[default]
     Earthlike,
     Lava,
     IceCap,
+    Scorched,
 }
 
 /// Derive the surface phase from the planet's substrate and mean
@@ -177,6 +182,14 @@ pub fn surface_phase(
         return SurfacePhase::Earthlike;
     };
     let t = q32_to_f64(p.mean_temperature_q32);
+    // Above the solvent boil point the liquid has boiled off — no
+    // oceans, whatever the substrate. Checked before the per-substrate
+    // arms so a scorching world renders as a dry, baked surface rather
+    // than a temperate blue seascape. Mirrors the card's "scorching"
+    // badge, which is likewise keyed on `t > boil_k`.
+    if substrate_boil_k > 0.0 && t > substrate_boil_k {
+        return SurfacePhase::Scorched;
+    }
     match p.metabolic_substrate.as_str() {
         "silicate"
             if substrate_freeze_k > 0.0
@@ -252,6 +265,13 @@ pub(crate) fn terrain_symbol(
         // (frozen continents look like continents; colour mode
         // conveys cold via cyan tint).
         return '+';
+    }
+    if matches!(phase, SurfacePhase::Scorched) && depth > 0.0 {
+        // Above the solvent boil point: what the PlanetMap still
+        // records as ocean basins hold no liquid — render the
+        // dried, baked floor (`·`) rather than blue water. Land
+        // cells fall through to the normal peak/hill/coast logic.
+        return '\u{00B7}'; // · dry basin
     }
     if depth > 100.0 {
         return '\u{2248}'; // deep water
@@ -364,6 +384,9 @@ fn render_ascii_map(
         }
         SurfacePhase::Earthlike => {
             "Planet map. ▲ peak  △ mtn  ▒ inland  ░ coast  ~ shallow  ≈ deep"
+        }
+        SurfacePhase::Scorched => {
+            "Planet map (scorched world). ▲ peak  △ mtn  ▒ inland  ░ coast  · dry basin"
         }
     };
     let _ = writeln!(s, "{legend} ({}x{} hex)", pm.grid_width, pm.grid_height);
@@ -726,6 +749,34 @@ mod tests {
         // Land cell falls through to inland-land glyph
         assert_eq!(
             terrain_symbol(&land, 0, 0, 10_000.0, SurfacePhase::IceCap),
+            '\u{2592}' // ▒
+        );
+    }
+
+    /// Any substrate above its solvent boil point classifies as
+    /// `Scorched` so a hothouse world stops rendering as a temperate
+    /// blue sea. Keyed on `t > boil_k`, matching the planet card badge.
+    #[test]
+    fn surface_phase_scorched_above_boil() {
+        let hothouse = planet("aqueous", 378.0); // ~221°F, above 373 K boil
+        assert_eq!(
+            surface_phase(Some(&hothouse), 273.15, 373.15),
+            SurfacePhase::Scorched
+        );
+    }
+
+    /// `terrain_symbol` in `Scorched` phase dries would-be ocean
+    /// basins to `·` and leaves land glyphs intact.
+    #[test]
+    fn terrain_symbol_scorched_dries_basins() {
+        let dry_basin = pm_with(200.0, 0.0); // recorded depth, no liquid
+        let land = pm_with(0.0, 5_000.0);
+        assert_eq!(
+            terrain_symbol(&dry_basin, 0, 0, 10_000.0, SurfacePhase::Scorched),
+            '\u{00B7}' // ·
+        );
+        assert_eq!(
+            terrain_symbol(&land, 0, 0, 10_000.0, SurfacePhase::Scorched),
             '\u{2592}' // ▒
         );
     }
