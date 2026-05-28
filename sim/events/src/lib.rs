@@ -325,27 +325,37 @@ impl PaceControl {
     }
 
     /// Ask the sim to stop at the next tick boundary. Idempotent.
+    /// Doesn't tear the sim down — `wait_tick` returns promptly and the
+    /// caller's tick loop breaks cleanly so a final `RunEnd` is still
+    /// emitted (see `sim-core`'s `run_interruptible`).
     pub fn quit(&self) {
         let mut s = self.inner.lock().unwrap();
         s.quit = true;
         self.cv.notify_all();
     }
 
+    /// Whether the UI has requested the sim stop. The sim's tick loop
+    /// polls this to break gracefully.
+    #[must_use]
+    pub fn is_quit(&self) -> bool {
+        self.inner.lock().unwrap().quit
+    }
+
     /// Called by the sim-side emitter once per tick (on `TickEnd`).
     /// Blocks while paused (until resumed, a step is released, or a
     /// quit is requested); otherwise sleeps the configured delay,
-    /// staying responsive to pause / quit / speed changes via the
-    /// condvar. Returns `false` when the UI has asked the sim to stop.
-    #[must_use]
-    pub fn wait_tick(&self) -> bool {
+    /// staying responsive to pause / speed changes via the condvar.
+    /// Returns promptly when a quit is requested so the current tick
+    /// completes and the run loop can break cleanly.
+    pub fn wait_tick(&self) {
         let mut s = self.inner.lock().unwrap();
         loop {
             if s.quit {
-                return false;
+                return;
             }
             if s.steps > 0 {
                 s.steps -= 1;
-                return true;
+                return;
             }
             if s.paused {
                 s = self.cv.wait(s).unwrap();
@@ -353,12 +363,12 @@ impl PaceControl {
             }
             let delay = s.delay;
             if delay.is_zero() {
-                return true;
+                return;
             }
             let (guard, res) = self.cv.wait_timeout(s, delay).unwrap();
             s = guard;
             if res.timed_out() {
-                return !s.quit;
+                return;
             }
             // Woken early by a state change (pause / speed / quit) —
             // loop to re-evaluate rather than releasing the tick.
@@ -399,13 +409,8 @@ impl Emitter for ChannelEmitter {
                 "tui receiver closed",
             )));
         }
-        if matches!(event, Event::Tick(t) if matches!(t.phase, protocol::Phase::TickEnd))
-            && !self.pace.wait_tick()
-        {
-            return Err(EmitError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "tui requested stop",
-            )));
+        if matches!(event, Event::Tick(t) if matches!(t.phase, protocol::Phase::TickEnd)) {
+            self.pace.wait_tick();
         }
         Ok(())
     }

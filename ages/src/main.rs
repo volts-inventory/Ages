@@ -6,7 +6,7 @@
 //! reproduces the same run bit-for-bit.
 
 use anyhow::{Context, Result};
-use sim_core::{run, RunConfig};
+use sim_core::{run, run_interruptible, RunConfig};
 use sim_events::{
     is_highlight_event, ChannelEmitter, FilterEmitter, JsonLinesEmitter, PaceControl, TeeEmitter,
     ThrottledEmitter,
@@ -199,22 +199,26 @@ fn run_tui(
     // (backpressure) rather than buffering an unbounded backlog.
     let (tx, rx) = sync_channel::<protocol::Event>(8192);
     let sim_pace = Arc::clone(&pace);
+    let stop_pace = Arc::clone(&pace);
     let sim = thread::spawn(move || {
         let mut emitter = TeeEmitter {
             a: file_emitter,
             b: ChannelEmitter::new(tx, sim_pace),
         };
-        // A `BrokenPipe` error here is the expected unwinding when the
-        // user quits the UI early; real file IO errors propagate too,
-        // but the live path treats the NDJSON log as best-effort.
-        let _ = run(&cfg, &mut emitter);
+        // Stop at the next tick boundary once the UI sets the quit
+        // flag. `run_interruptible` still emits a final `RunEnd` and
+        // the BufWriter flushes on drop, so an early quit leaves a
+        // well-formed NDJSON log for the post-run report.
+        let _ = run_interruptible(&cfg, &mut emitter, move || !stop_pace.is_quit());
     });
 
     let tui_res = run_interactive_tui(&rx, &pace, &opts);
 
-    // Stop the sim and unblock any parked `send`, then join.
+    // Signal the stop, then keep draining so the sim's final tick +
+    // `RunEnd` aren't blocked on a full channel; the loop ends when
+    // the sim thread drops its sender. Then join.
     pace.quit();
-    drop(rx);
+    while rx.recv().is_ok() {}
     let _ = sim.join();
     tui_res.context("interactive TUI failed")
 }
