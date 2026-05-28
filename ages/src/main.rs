@@ -543,9 +543,10 @@ fn print_help() {
                                     viewport   = interactive TUI dashboard (tabbed World /\n  \
                                     Civilizations / Planet, live colour map, civ panels,\n  \
                                     event log) with keyboard controls: q quit · space pause ·\n  \
-                                    s step · ←/→ speed · ↑/↓ select civ · Tab switch view ·\n  \
-                                    d density · PgUp/PgDn scroll log. Piped output falls back\n  \
-                                    to a plain frame dump.\n  \
+                                    s step · ←/→ speed · ↑/↓ select civ · [ ] scroll civ list ·\n  \
+                                    Tab switch view · d density · PgUp/PgDn scroll log (or the\n  \
+                                    civ-detail pane on the Civilizations tab). Piped output\n  \
+                                    falls back to a plain frame dump.\n  \
                                     viewport-density = same dashboard, map starts in density\n  \
                                     mode (block-shaded fill-% instead of pop-fill digits)\n  \
              --tick-rate-ms <u64>   wall-clock sleep per tick on stdout streaming\n  \

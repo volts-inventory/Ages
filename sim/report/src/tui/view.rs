@@ -30,7 +30,7 @@ use std::io::Sink;
 /// null sink (it never writes ANSI; it only accumulates state).
 type Model = ViewportEmitter<Sink>;
 
-pub(super) fn draw(f: &mut Frame, model: &Model, ui: &UiState, pace: &PaceControl) {
+pub(super) fn draw(f: &mut Frame, model: &Model, ui: &mut UiState, pace: &PaceControl) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -110,7 +110,7 @@ fn draw_status(f: &mut Frame, area: Rect, model: &Model, ui: &UiState, pace: &Pa
 }
 
 fn draw_footer(f: &mut Frame, area: Rect) {
-    let controls = "q quit · space pause · s step · ←/→ speed · ↑/↓ civ · Tab view · d density · PgUp/Dn log";
+    let controls = "q quit · space pause · s step · ←/→ speed · ↑/↓ civ · [ ] list · Tab view · d density · PgUp/Dn log/detail";
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             controls,
@@ -120,7 +120,7 @@ fn draw_footer(f: &mut Frame, area: Rect) {
     );
 }
 
-fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
+fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(6), Constraint::Length(8)])
@@ -134,7 +134,7 @@ fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
     draw_log(f, rows[1], model, ui);
 }
 
-fn draw_civilizations(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
+fn draw_civilizations(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(34), Constraint::Min(20)])
@@ -206,7 +206,7 @@ fn draw_map(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
     }
 }
 
-fn draw_civ_list(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
+fn draw_civ_list(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     let panels = model.civ_panels();
     let block = Block::default()
         .borders(Borders::ALL)
@@ -214,16 +214,19 @@ fn draw_civ_list(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     let height = inner.height as usize;
+    // Cache the row count so keyboard paging / selection-follow (in
+    // `UiState`) can reason about a screenful.
+    ui.civ_rows = height;
     if height == 0 {
         return;
     }
-    // Keep the selected civ in view: scroll so the selection sits
-    // within the visible window (selection near the bottom edge).
-    let start = if ui.selected_civ >= height {
-        ui.selected_civ + 1 - height
-    } else {
-        0
-    };
+    // `civ_scroll` is the persistent top index, moved by `[`/`]` and
+    // nudged by selection. Clamp it against the list length here.
+    let max_start = panels.len().saturating_sub(height);
+    if ui.civ_scroll > max_start {
+        ui.civ_scroll = max_start;
+    }
+    let start = ui.civ_scroll;
     let items: Vec<ListItem> = panels
         .iter()
         .enumerate()
@@ -258,7 +261,7 @@ fn draw_civ_list(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
     f.render_widget(List::new(items), inner);
 }
 
-fn draw_civ_detail(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
+fn draw_civ_detail(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     let panels = model.civ_panels();
     let block = Block::default()
         .borders(Borders::ALL)
@@ -304,7 +307,19 @@ fn draw_civ_detail(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
     if let Some((axis, v)) = p.religion_axis {
         lines.push(Line::from(format!("religion: {axis} {v:+.2}")));
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+    // Scrollable for small terminals: clamp the offset against the
+    // content that overflows the pane, then render with that scroll.
+    let height = inner.height as usize;
+    let max_scroll = lines.len().saturating_sub(height);
+    if ui.detail_scroll > max_scroll {
+        ui.detail_scroll = max_scroll;
+    }
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .scroll((ui.detail_scroll as u16, 0)),
+        inner,
+    );
 }
 
 fn draw_legend(f: &mut Frame, area: Rect, model: &Model) {

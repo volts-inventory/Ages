@@ -104,6 +104,16 @@ impl Tab {
 struct UiState {
     tab: Tab,
     selected_civ: usize,
+    /// Index of the first civ shown in the list pane. Moved by `[`/`]`
+    /// independently of the selection, and nudged by selection moves
+    /// so the cursor stays in view. Clamped against the pane height at
+    /// render time.
+    civ_scroll: usize,
+    /// Visible row count of the civ-list pane, cached each frame so
+    /// keyboard scrolling can page by a screenful.
+    civ_rows: usize,
+    /// Lines scrolled down from the top of the civ-detail pane.
+    detail_scroll: usize,
     /// Lines scrolled up from the bottom of the event log. `0` =
     /// following the newest line.
     log_scroll: usize,
@@ -119,6 +129,9 @@ impl UiState {
         Self {
             tab: Tab::World,
             selected_civ: 0,
+            civ_scroll: 0,
+            civ_rows: 0,
+            detail_scroll: 0,
             log_scroll: 0,
             density: opts.density_mode,
             use_color: opts.use_color,
@@ -145,16 +158,50 @@ impl UiState {
     fn select_next(&mut self, civ_count: usize) {
         if civ_count > 0 {
             self.selected_civ = (self.selected_civ + 1) % civ_count;
+            self.detail_scroll = 0;
+            self.follow_selection();
         }
     }
 
     fn select_prev(&mut self, civ_count: usize) {
         if civ_count > 0 {
             self.selected_civ = (self.selected_civ + civ_count - 1) % civ_count;
+            self.detail_scroll = 0;
+            self.follow_selection();
         }
     }
 
+    /// Nudge the civ-list scroll offset so the current selection stays
+    /// within the visible window (using the last-rendered row count).
+    fn follow_selection(&mut self) {
+        let rows = self.civ_rows;
+        if rows == 0 {
+            return;
+        }
+        if self.selected_civ < self.civ_scroll {
+            self.civ_scroll = self.selected_civ;
+        } else if self.selected_civ >= self.civ_scroll + rows {
+            self.civ_scroll = self.selected_civ + 1 - rows;
+        }
+    }
+
+    /// Page the civ list up/down independently of the selection.
+    /// Down is clamped at render time against the civ count.
+    fn civ_page(&mut self, down: bool) {
+        let page = self.civ_rows.max(1);
+        self.civ_scroll = if down {
+            self.civ_scroll.saturating_add(page)
+        } else {
+            self.civ_scroll.saturating_sub(page)
+        };
+    }
+
     fn handle_key(&mut self, key: KeyEvent, civ_count: usize, pace: &PaceControl) {
+        // On the Civilizations tab, PgUp/PgDn/Home/End drive the
+        // detail pane (there's no log there); elsewhere they drive the
+        // event log. This keeps a single, intuitive key set without a
+        // separate pane-focus mode.
+        let detail_focus = self.tab == Tab::Civilizations;
         match (key.code, key.modifiers) {
             (KeyCode::Char('q') | KeyCode::Esc, _)
             | (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => self.should_quit = true,
@@ -164,16 +211,42 @@ impl UiState {
             (KeyCode::Left | KeyCode::Char('-' | '_'), _) => self.slower(pace),
             (KeyCode::Down | KeyCode::Char('j'), _) => self.select_next(civ_count),
             (KeyCode::Up | KeyCode::Char('k'), _) => self.select_prev(civ_count),
+            (KeyCode::Char('['), _) => self.civ_page(false),
+            (KeyCode::Char(']'), _) => self.civ_page(true),
             (KeyCode::Tab, _) => self.tab = self.tab.next(),
             (KeyCode::BackTab, _) => self.tab = self.tab.prev(),
             (KeyCode::Char('1'), _) => self.tab = Tab::World,
             (KeyCode::Char('2'), _) => self.tab = Tab::Civilizations,
             (KeyCode::Char('3'), _) => self.tab = Tab::Planet,
             (KeyCode::Char('d'), _) => self.density = !self.density,
-            (KeyCode::PageUp, _) => self.log_scroll = self.log_scroll.saturating_add(5),
-            (KeyCode::PageDown, _) => self.log_scroll = self.log_scroll.saturating_sub(5),
-            (KeyCode::Home, _) => self.log_scroll = usize::MAX,
-            (KeyCode::End, _) => self.log_scroll = 0,
+            (KeyCode::PageUp, _) => {
+                if detail_focus {
+                    self.detail_scroll = self.detail_scroll.saturating_sub(5);
+                } else {
+                    self.log_scroll = self.log_scroll.saturating_add(5);
+                }
+            }
+            (KeyCode::PageDown, _) => {
+                if detail_focus {
+                    self.detail_scroll = self.detail_scroll.saturating_add(5);
+                } else {
+                    self.log_scroll = self.log_scroll.saturating_sub(5);
+                }
+            }
+            (KeyCode::Home, _) => {
+                if detail_focus {
+                    self.detail_scroll = 0;
+                } else {
+                    self.log_scroll = usize::MAX;
+                }
+            }
+            (KeyCode::End, _) => {
+                if detail_focus {
+                    self.detail_scroll = usize::MAX;
+                } else {
+                    self.log_scroll = 0;
+                }
+            }
             _ => {}
         }
     }
