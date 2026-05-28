@@ -289,9 +289,9 @@ fn draw_civ_detail(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     if let Some(tool) = &p.last_tool {
         lines.push(Line::from(format!("last unlock: {tool}")));
     }
-    if let Some(c) = p.cohesion_pct {
-        lines.push(Line::from(format!("cohesion {c}%")));
-    }
+    // Always show the meter; a civ with no cohesion event yet is
+    // assumed fully cohesive (matches the legacy sidebar default).
+    lines.push(cohesion_bar(p.cohesion_pct.unwrap_or(100)));
     if let Some(l) = p.life_years {
         lines.push(Line::from(format!("life expectancy {l:.0}y")));
     }
@@ -307,6 +307,20 @@ fn draw_civ_detail(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     if let Some((axis, v)) = p.religion_axis {
         lines.push(Line::from(format!("religion: {axis} {v:+.2}")));
     }
+    let tools = model.civ_tools(p.id);
+    if !tools.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("tools ({})", tools.len()),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        // One wrapped paragraph line; `Wrap` flows the comma-joined
+        // list across the pane width.
+        lines.push(Line::from(Span::styled(
+            tools.join(", "),
+            Style::default().fg(Color::Gray),
+        )));
+    }
     // Scrollable for small terminals: clamp the offset against the
     // content that overflows the pane, then render with that scroll.
     let height = inner.height as usize;
@@ -320,6 +334,26 @@ fn draw_civ_detail(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
             .scroll((ui.detail_scroll as u16, 0)),
         inner,
     );
+}
+
+/// A 10-cell cohesion meter coloured by level (red below the
+/// civil-war floor, amber in the breakaway band, green when stable).
+fn cohesion_bar(pct: i64) -> Line<'static> {
+    let pct = pct.clamp(0, 100);
+    let filled = ((pct as f64 / 100.0) * 10.0).round() as usize;
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
+    let color = if pct < 20 {
+        Color::Red
+    } else if pct < 50 {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
+    Line::from(vec![
+        Span::raw("cohesion "),
+        Span::styled(bar, Style::default().fg(color)),
+        Span::raw(format!(" {pct}%")),
+    ])
 }
 
 fn draw_legend(f: &mut Frame, area: Rect, model: &Model) {
@@ -340,21 +374,30 @@ fn draw_legend(f: &mut Frame, area: Rect, model: &Model) {
 }
 
 fn draw_log(f: &mut Frame, area: Rect, model: &Model, ui: &UiState) {
-    let block = Block::default().borders(Borders::ALL).title(" Events ");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
     let log = model.log_lines();
     let n = log.len();
-    let height = inner.height as usize;
-    if height == 0 || n == 0 {
-        return;
-    }
+    // Inner height is the bordered area minus the top + bottom rules.
+    let height = (area.height.saturating_sub(2)) as usize;
     // `log_scroll` counts lines up from the newest; clamp so we never
     // scroll past the top.
     let max_scroll = n.saturating_sub(height);
     let scroll = ui.log_scroll.min(max_scroll);
+    // Title doubles as a scroll affordance: how many older lines sit
+    // above the current view.
+    let title = if scroll > 0 {
+        format!(" Events  ↑{scroll} more ")
+    } else {
+        " Events ".to_string()
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let h = inner.height as usize;
+    if h == 0 || n == 0 {
+        return;
+    }
     let end = n - scroll;
-    let start = end.saturating_sub(height);
+    let start = end.saturating_sub(h);
     let lines: Vec<Line> = log
         .iter()
         .skip(start)
@@ -409,11 +452,16 @@ impl Widget for MapWidget<'_> {
         }
         let nomad_set: BTreeSet<u32> = self.frame.nomad_cells.iter().copied().collect();
 
-        // Centre the grid in the pane; clip from the top-left when the
-        // grid is larger than the available area.
-        let draw_w = w.min(area.width as usize);
+        // Terminal cells are ~twice as tall as wide, so 1 char/cell
+        // renders a stretched, vertically-elongated map that also
+        // leaves large horizontal voids on wide panes. Use 2 chars per
+        // cell when they fit — roughly square aspect, fills the pane —
+        // and fall back to 1 char on narrow terminals.
+        let area_w = area.width as usize;
+        let cell_w = if w * 2 <= area_w { 2 } else { 1 };
+        let draw_w = w.min(area_w / cell_w.max(1));
         let draw_h = h.min(area.height as usize);
-        let off_x = (area.width as usize - draw_w) / 2;
+        let off_x = (area_w - draw_w * cell_w) / 2;
         let off_y = (area.height as usize - draw_h) / 2;
 
         for r in 0..draw_h {
@@ -433,11 +481,23 @@ impl Widget for MapWidget<'_> {
                     self.density,
                     self.use_color,
                 );
-                let x = area.x + (off_x + q) as u16;
+                let style = Style::default().fg(color).add_modifier(modifier);
+                let x = area.x + (off_x + q * cell_w) as u16;
                 let y = area.y + (off_y + r) as u16;
-                buf[(x, y)]
-                    .set_char(ch)
-                    .set_style(Style::default().fg(color).add_modifier(modifier));
+                buf[(x, y)].set_char(ch).set_style(style);
+                if cell_w == 2 {
+                    // Solid fill: terrain/region glyphs double up so
+                    // land/water/territory read as contiguous masses;
+                    // single markers (capital letters, pop digits, the
+                    // dispute `#`) get a trailing space so they stay
+                    // legible rather than reading as "AA" / "99".
+                    let second = if ch.is_ascii_alphanumeric() || ch == '#' {
+                        ' '
+                    } else {
+                        ch
+                    };
+                    buf[(x + 1, y)].set_char(second).set_style(style);
+                }
             }
         }
     }

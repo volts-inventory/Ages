@@ -165,6 +165,17 @@ impl<W: Write> ViewportEmitter<W> {
         &self.recent_events
     }
 
+    /// Names of the tools a civ has unlocked, sorted (the `BTreeSet`
+    /// order). Borrowed so the detail pane can list them for the
+    /// selected civ without cloning every civ's tool set per frame.
+    #[must_use]
+    pub fn civ_tools(&self, id: u32) -> Vec<&str> {
+        self.civ_state
+            .get(&id)
+            .map(|s| s.tools_unlocked.iter().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
     /// Snapshot of all active civs at this tick. Order doesn't
     /// matter to the renderer; the TUI re-sorts as it sees fit.
     #[must_use]
