@@ -88,8 +88,9 @@ fn draw_status(f: &mut Frame, area: Rect, model: &Model, ui: &UiState, pace: &Pa
             Style::default().fg(Color::Black).bg(Color::Green),
         )
     };
+    let temp = model.mean_temp_display().unwrap_or_else(|| "—".to_string());
     let info = format!(
-        "  Y{year} M{month}  ·  {} civ  ·  {}F/{}C  ·  pop {}  ·  nomad {}",
+        "  Y{year} M{month}  ·  {temp}  ·  {} civ (↑{} ↓{})  ·  pop {}  ·  nomad {}",
         model.active_civ_count(),
         model.founded_count(),
         model.collapsed_count(),

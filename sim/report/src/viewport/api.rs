@@ -81,6 +81,18 @@ impl<W: Write> ViewportEmitter<W> {
         self.planet.as_ref().map(|p| p.name.as_str())
     }
 
+    /// Planet mean surface temperature formatted in the configured
+    /// unit (e.g. `221F`), or `None` until the `Planet` event lands.
+    /// Mirrors the planet card's climate line so the status bar and
+    /// card agree.
+    #[must_use]
+    pub fn mean_temp_display(&self) -> Option<String> {
+        let p = self.planet.as_ref()?;
+        let k = crate::q32::q32_to_f64(p.mean_temperature_q32);
+        let value = self.cfg.temperature_unit.from_kelvin(k);
+        Some(format!("{value:.0}{}", self.cfg.temperature_unit.suffix()))
+    }
+
     #[must_use]
     pub fn species_name(&self) -> Option<&str> {
         self.species.as_ref().map(|s| s.name.as_str())
