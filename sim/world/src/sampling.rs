@@ -169,6 +169,47 @@ fn apply_overrides(planet: &mut Planet, seed: u64, o: &PlanetOverrides) {
     }
 }
 
+/// Reconcile a sampled `composition` with the sampled mean surface
+/// temperature so the planet *type* and its *climate* can't contradict
+/// each other — the source of nonsensical worlds like a 378 K
+/// "sub-surface ocean". Keyed on the substrate's reference freeze/boil
+/// points (pressure-independent here — composition only sets the
+/// terrain-morphology ranges; the pressure-accurate liquid-vs-dry state
+/// of individual cells is decided later by `surface_solvent_boiled` /
+/// `terrain_glyph_at`):
+///
+///   * **Above boil** — the surface solvent has boiled off, so a
+///     standing-liquid surface is impossible. `OceanWorld` /
+///     `SubSurfaceOcean` collapse to a dry `Rocky` surface (which still
+///     samples a normal sea_level, so any sub-boil cells stay wet).
+///     Gas shells have no surface liquid to lose and are left alone.
+///   * **Sub-surface ocean needs a frozen lid** — a sub-surface ocean
+///     is liquid *beneath an ice shell*, which only forms when the
+///     surface is frozen (mean temp below freeze). A warm
+///     `SubSurfaceOcean` sample is incoherent (the ocean would sit at
+///     the surface), so it is promoted to a surface `OceanWorld`.
+///
+/// Consumes no RNG — applied between temperature sampling and the
+/// composition-keyed terrain draws — so only genuinely-inconsistent
+/// seeds shift; every other seed's planet is byte-identical.
+fn reconcile_composition_with_temperature(
+    composition: Composition,
+    substrate: MetabolicSubstrate,
+    mean_temperature: Real,
+) -> Composition {
+    let (freeze_k, boil_k) = sim_physics::chemistry::substrate_phase_thresholds(substrate.tag());
+    if mean_temperature > boil_k {
+        return match composition {
+            Composition::OceanWorld | Composition::SubSurfaceOcean => Composition::Rocky,
+            other => other,
+        };
+    }
+    if matches!(composition, Composition::SubSurfaceOcean) && mean_temperature >= freeze_k {
+        return Composition::OceanWorld;
+    }
+    composition
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn sample_planet(seed: u64) -> Planet {
     let name = planet_name_from_seed(seed);
@@ -245,6 +286,14 @@ pub fn sample_planet(seed: u64) -> Planet {
     // chemistry is biochemically viable on this planet.
     let (t_lo_k, t_hi_k) = metabolic_substrate.temperature_range();
     let mean_temperature = Real::from_int(rng.gen_range(t_lo_k..=t_hi_k));
+
+    // Reconcile the planet type with the just-sampled temperature so
+    // terrain and climate agree (e.g. a hothouse "sub-surface ocean").
+    // Done before the composition-keyed sea_level / terrain_peak draws
+    // so the corrected type drives the terrain ranges; consumes no RNG
+    // so unaffected seeds stay byte-identical.
+    let composition =
+        reconcile_composition_with_temperature(composition, metabolic_substrate, mean_temperature);
 
     // Equator-to-pole temperature spread in K, weakly
     // correlated with axial tilt. High-tilt worlds have wider

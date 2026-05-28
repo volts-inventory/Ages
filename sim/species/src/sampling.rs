@@ -516,8 +516,16 @@ pub(crate) fn derive_habitat(
         planet.composition,
         Composition::SubSurfaceOcean | Composition::OceanWorld
     );
+    // A water-native *composition* is only a real, liquid ocean while
+    // its solvent stays below the boil point. A scorching ocean world
+    // (e.g. a hot sub-surface-ocean sample) has boiled dry, so its
+    // species should derive toward land habits rather than be stranded
+    // in water that no longer exists. `boiled` also suppresses the
+    // generic acoustic-water aquatic path on any boiled-dry world.
+    let boiled = sim_world::surface_solvent_boiled(planet);
+    let liquid_ocean = water_native && !boiled;
 
-    if water_native && has(ModalityKind::AcousticWater) && !has(ModalityKind::AcousticAir) {
+    if liquid_ocean && has(ModalityKind::AcousticWater) && !has(ModalityKind::AcousticAir) {
         return Habitat::Aquatic;
     }
     if has(ModalityKind::AcousticWater) && has(ModalityKind::AcousticAir) {
@@ -526,8 +534,23 @@ pub(crate) fn derive_habitat(
     if has_manip(ManipulationKind::LimbGrasp) && has_manip(ManipulationKind::FluidJet) {
         return Habitat::Amphibious;
     }
-    if has(ModalityKind::AcousticWater)
+    if !boiled
+        && has(ModalityKind::AcousticWater)
         && (has_manip(ManipulationKind::FluidJet) || has_manip(ManipulationKind::Tentacle))
+        && !has(ModalityKind::AcousticAir)
+    {
+        return Habitat::Aquatic;
+    }
+    // Reconcile habitat with an all-water surface: a genuine liquid
+    // ocean world whose species manipulates by tentacle or fluid-jet
+    // belongs in the water even without water-acoustic sensing — it
+    // navigates by touch / electric field / seismic cues. Without this
+    // a tentacled ocean species derived to Terrestrial and then found
+    // zero habitable cells on its ocean-covered world (0 pop, no civ).
+    // Gated on `liquid_ocean` so a boiled-dry ocean world keeps land
+    // habits instead.
+    if liquid_ocean
+        && (has_manip(ManipulationKind::Tentacle) || has_manip(ManipulationKind::FluidJet))
         && !has(ModalityKind::AcousticAir)
     {
         return Habitat::Aquatic;
