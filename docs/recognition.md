@@ -94,8 +94,8 @@ which are a *different* enum living next to recognition's
 - **Discovery `Channel`** — what the hypothesizer reads from
   physics state:
   `Temperature`, `WaterDepth`, `ChargeMagnitude`, `Elevation`,
-  `Fuel`, `Oxidiser`, `Vapour`, `Ice`, `Fossil`, `MagneticField`
-  (see [discovery.md#channels](discovery.md#channels)).
+  `Fuel`, `Oxidiser`, `Vapour`, `Ice`, `Fossil`, `MagneticField`,
+  `Resonance` (see [discovery.md#channels](discovery.md#channels)).
 
 The `channels_for_modality` table in
 [`sim/civ/src/discovery/channels.rs:107`](../sim/civ/src/discovery/channels.rs)
@@ -124,9 +124,19 @@ small enum of matchable shapes:
 `Field` ([`lib.rs:33`](../sim/recognition/src/lib.rs)) selects what
 physics scalar the signature reads:
 `Temperature`, `Charge`, `WaterDepth`, `Substance(Substance)`,
-`MagneticMagnitude`, `WindMagnitude`. The last two derive
-on-the-fly from per-cell vector components
-(`sqrt(B_q² + B_r²)` / `sqrt(v_q² + v_r²)`).
+`MagneticMagnitude`, `WindMagnitude`, `Resonance`. `MagneticMagnitude`
+and `WindMagnitude` derive on-the-fly from per-cell vector components
+(`sqrt(B_q² + B_r²)` / `sqrt(v_q² + v_r²)`); `Resonance` reads the
+speculative per-cell resonance field (see below).
+
+`Field::Resonance` reads the per-cell resonance field added for the
+field/resonance civilizational lever. Two templates gate on it —
+`resonance_field_active` (id 54, fires above 1 unit) and
+`attention_coherence` (id 55, the sustained high-field state above 5
+units) — both read through the `ElectricField` / `MagneticSense` /
+`RadioNative` channels, so a field-sensing biology on a resonance-rich
+world does genuine resonance science. See
+[archetype.md](archetype.md).
 
 ## ModalityKind gating
 

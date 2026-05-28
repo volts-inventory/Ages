@@ -223,6 +223,7 @@ names what the hypothesizer reads from physics state:
 | `Ice` | `Substance::Ice` density | 1 |
 | `Fossil` | `Substance::Fossil` density (geological hydrocarbon deposits) | 1 |
 | `MagneticField` | `|B|` from the magnetism kernel (the dipole, not local charge) | 1 |
+| `Resonance` | Per-cell resonance field `Ψ` (the field/resonance lever substrate; see [archetype.md](archetype.md)) | 1 |
 
 Samples are stored in **fit-space** (raw value `/ Channel::scale()`)
 so the `Σϕ(x)ϕ(x)ᵀ` accumulator stays inside Q32.32 range even with
@@ -242,8 +243,8 @@ reachable through it:
 | `InfraredThermal` | `Temperature` |
 | `ChemicalTaste` / `ChemicalPheromone` | `Vapour`, `Oxidiser` |
 | `AcousticAir` / `AcousticWater` / `Seismic` | `WaterDepth`, `Elevation`, `Temperature` |
-| `ElectricField` | `ChargeMagnitude` |
-| `MagneticSense` / `RadioNative` | `MagneticField` |
+| `ElectricField` | `ChargeMagnitude`, `Resonance` |
+| `MagneticSense` / `RadioNative` | `MagneticField`, `Resonance` |
 | `Tactile` | `Temperature`, `Elevation` |
 | `Bioluminescent` / `Gestural` / `Postural` | (empty — pure-output modalities) |
 
@@ -263,7 +264,7 @@ Three disjoint namespaces ([`channels.rs:69`](../sim/civ/src/discovery/channels.
 
 - **Firing** — `relation_id_for(template_id, channel) =
   template_id × 16 + (channel as u32)`. Caps under 16 channels;
-  current 10 channels leave room for 6 more.
+  current 11 channels leave room for 5 more.
 - **Measurement (direct)** — `measurement_relation_id(y, x) =
   1_000_000 + y.discriminant × 256 + x.discriminant`.
 - **Measurement (residual)** — `2_000_000 + (mixed % 1_000_000)`

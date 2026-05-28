@@ -646,6 +646,13 @@ are species-level: extinction, stagnation, transcendence, fixed
 horizon. See
 [architecture.md#run-end-taxonomy](architecture.md#run-end-taxonomy).
 
+At the transcendence threshold a civ also reaches a divergent
+**archetype endpoint** (one fate per developmental lever, not a
+shared singularity) emitted as an additive `ArchetypeEndpoint` event;
+the `transcendence` run-end reason itself is unchanged. The run's
+developmental archetype is classified at run start over an open
+11-lever space. See [archetype.md](archetype.md).
+
 ## Ages (emergent labels only)
 
 Age labels are computed post-hoc from civ knowledge state and

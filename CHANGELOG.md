@@ -7,6 +7,48 @@ sign-off landed.
 
 ## Unreleased
 
+### Civilizational archetypes
+- **Open developmental-path framework.** A run's developmental path
+  is no longer implicitly a combustion (fire → industry) story with
+  field/resonance as a special case. Every run is scored across 11
+  peer "levers" — combustion, field_resonance, biochemical,
+  cryogenic, mechanical, hydraulic, exotic_chemistry, plasma_em,
+  gravitational, photonic, nuclear — with no privileged default and
+  no fallback. The classifier is open: one dominant lever reads as a
+  pure archetype (`combustion`), two co-dominant as a named hybrid
+  (`field_resonance/cryogenic`), and a novel mix with no clear winner
+  as a signature-named emergent archetype (`emergent_x_y_z`), so
+  paths nobody authored are still detected and labelled. A score is a
+  world+species prior (atmosphere, crust, substrate, magnetosphere,
+  biosphere, luminosity, moons, gravity, sensorium, cognition) refined
+  by the realized run trajectory (the discovery channels a civ
+  confirms relations on and the tool clusters it unlocks).
+- **Cognition overlay.** Orthogonal to the resource lever, a species'
+  cognition topology yields an overlay — individual, collective
+  (eusocial hive), or substrate-distributed (slime-mold / acentric,
+  the information/substrate path) — that can sit on any lever.
+- **Resonance field + science.** A new additive per-cell resonance
+  field was added to the physics state (legacy channels stay
+  bit-identical). Recognition gained `Field::Resonance` plus the
+  `resonance_field_active` and `attention_coherence` templates, and
+  discovery gained a resonance channel, so field-sensing species on
+  resonance-rich worlds do genuine resonance science.
+- **Divergent endpoints.** At transcendence each archetype reaches a
+  *different* fate rather than one shared singularity — e.g.
+  field_resonance → a matter-transition that draws watchers,
+  biochemical → a biosphere-merge that seeds panspermia, combustion →
+  an uncertain industrial apex, mechanical → a computational
+  crossover, cryogenic → deep-time patience. A collective or
+  substrate-distributed mind bends its fate inward toward silence.
+- **Wire + narration.** Two additive events surface it:
+  `ArchetypeDerived` at run start (label, levers, cognition, per-lever
+  scores) and `ArchetypeEndpoint` at transcendence (label, dominant
+  lever, endpoint tag, narrated fate). Both the in-binary prose
+  narrator and `narrate.py` open the run by stating the developmental
+  archetype and close it by rendering the endpoint. The
+  `transcendence` run-end reason is unchanged. See
+  [`docs/archetype.md`](docs/archetype.md).
+
 ### Viewport
 - **Surface-aware planet labels.** The planet card now reads the
   actual surface water coverage instead of mapping
