@@ -14,6 +14,13 @@
 //!   `≥ exp(-1)` confirmation gate. **Wired in M4-min** —
 //!   the discovery pipeline reads the multiplier directly.
 
+// Staged cultural-influence hooks: some are wired now, some are
+// forward-looking stubs for later milestones (M4 v2), and a couple
+// are exercised only by this module's unit tests. They're kept
+// deliberately as the staged API surface, so suppress dead-code
+// warnings for the as-yet-unwired ones rather than deleting scaffolding.
+#![allow(dead_code)]
+
 use crate::cosmology::{form_distance, Cosmology};
 use crate::fit::Sample;
 use crate::forms::Form;

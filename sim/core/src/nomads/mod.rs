@@ -41,22 +41,28 @@ pub(crate) mod observation;
 // unchanged.
 pub(crate) use absorption::{FOUNDING_ABSORB_LOSS, absorb_into_civ};
 pub(crate) use emergence::{
-    AMBIENT_NOMAD_CHECK_TICKS, AMBIENT_NOMAD_SEED_POP, EMERGENT_CLUSTER_DEN,
-    EMERGENT_CLUSTER_MIN_NEIGHBOURS, EMERGENT_CLUSTER_NUM, EMERGENT_FOUNDING_COOLDOWN_TICKS,
-    EMERGENT_FOUNDING_POP, EMERGENT_FOUNDING_TECH, EMERGENT_PRESSURE_DEN, EMERGENT_PRESSURE_NUM,
-    EMERGENT_SUSTAINED_TICKS, ambient_emergence, drain_observations_for_cells, scan_for_emergence,
-    update_pressure_streak,
+    ambient_emergence, drain_observations_for_cells, scan_for_emergence, update_pressure_streak,
+    EMERGENT_FOUNDING_COOLDOWN_TICKS,
 };
+pub(crate) use growth::step_growth;
+pub(crate) use init::init_pops;
+pub(crate) use observation::accumulate_observation;
+
+// Template / threshold constants consumed only by the nomad unit
+// tests (reached via `use super::*` in `tests.rs`); their submodules
+// use them through the direct const path. Gated behind `cfg(test)` so
+// neither a normal build nor the test build flags the re-export as
+// unused. Constants used solely within their defining submodule are
+// not re-exported here at all.
+#[cfg(test)]
 pub(crate) use growth::{
     GROWTH_FERTILE_TEMPLATE_ID, GROWTH_FERTILE_THRESHOLD, GROWTH_FIRE_TEMPLATE_ID,
     GROWTH_FIRE_THRESHOLD, GROWTH_SEASONAL_TEMPLATE_ID, GROWTH_SEASONAL_THRESHOLD,
     GROWTH_SOLVENT_TEMPLATE_ID, GROWTH_SOLVENT_THRESHOLD, GROWTH_THERMAL_TEMPLATE_ID,
-    GROWTH_THERMAL_THRESHOLD, NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS, NOMAD_DIFFUSION_DEN,
-    NOMAD_DIFFUSION_NUM, NOMAD_GROWTH_DEN, NOMAD_GROWTH_NUM, NOMAD_PER_CELL_CAP,
-    TRANSIT_TIER_1_TECH, TRANSIT_TIER_2_TECH, TRANSIT_TIER_3_TECH, step_growth,
+    GROWTH_THERMAL_THRESHOLD, NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS,
 };
-pub(crate) use init::{INITIAL_NOMAD_TOTAL, NOMAD_ORIGIN_CELL_COUNT, init_pops};
-pub(crate) use observation::accumulate_observation;
+#[cfg(test)]
+pub(crate) use init::{INITIAL_NOMAD_TOTAL, NOMAD_ORIGIN_CELL_COUNT};
 
 /// Whether `cell`'s terrain matches the species' native habitat.
 /// Water glyphs for aquatic, land for terrestrial, both for

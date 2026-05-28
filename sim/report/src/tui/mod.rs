@@ -286,6 +286,13 @@ pub fn run_interactive_tui(
     execute!(stdout, EnterAlternateScreen, Hide)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    // Force a full clear before the first frame. ratatui's diff
+    // renderer otherwise assumes a blank screen and skips writing
+    // cells it considers unchanged (spaces), which lets whatever was
+    // already on the terminal — the `cargo build` output that run.sh
+    // prints just before launching — show through the gaps in the
+    // layout. Clearing gives a known-blank canvas to diff against.
+    terminal.clear()?;
 
     let res = run_loop(&mut terminal, &mut model, &mut ui, rx, pace);
 
