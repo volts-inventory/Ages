@@ -691,6 +691,16 @@ mod tests {
     }
 
     #[test]
+    fn emergent_name_is_signature_of_top_three() {
+        let label = ArchetypeLabel::Emergent {
+            dominant: Lever::Mechanical,
+            secondary: Lever::Hydraulic,
+            tertiary: Lever::Photonic,
+        };
+        assert_eq!(label.name(), "emergent_mechanical_hydraulic_photonic");
+    }
+
+    #[test]
     fn realized_refinement_can_override_a_flat_prior() {
         use crate::discovery::Channel;
         use crate::tech::ToolKind;

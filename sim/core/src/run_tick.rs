@@ -440,7 +440,18 @@ pub(crate) fn run_tick<E: Emitter>(
                     .iter()
                     .all(|t| c.unlocked_tools.contains(t))
             }) {
-                let tools: Vec<tech::ToolKind> = civ.unlocked_tools.iter().copied().collect();
+                // Exclude the tier-5 transcendence set itself: every
+                // transcending civ holds those three tools, so they are
+                // non-discriminating and would bias every endpoint
+                // toward the same lever. Refining on the *rest* of the
+                // roster lets the fate reflect the civ's distinguishing
+                // archetype.
+                let tools: Vec<tech::ToolKind> = civ
+                    .unlocked_tools
+                    .iter()
+                    .copied()
+                    .filter(|t| !tech::ToolKind::TIER_FIVE.contains(t))
+                    .collect();
                 let profile =
                     sim_civ::archetype::classify_realized(&rs.planet, &rs.species, &[], &tools);
                 let endpoint = sim_civ::archetype::endpoint_for(&profile);

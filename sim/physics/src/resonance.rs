@@ -76,6 +76,10 @@ impl ResonanceField {
         base.piezo_gain = piezo_fraction.max(Real::from_ratio(1, 100)).min(Real::ONE);
         base.field_coupling = base.field_coupling * field_factor;
         base.propagation = propagation;
+        // `charge_coupling` is left at the earth baseline on purpose:
+        // ambient charge build-up is roughly world-independent, so the
+        // per-planet variation is carried entirely by `piezo_gain` and
+        // the dipole-scaled `field_coupling`.
         base
     }
 }
