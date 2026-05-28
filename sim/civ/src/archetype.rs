@@ -516,6 +516,8 @@ fn channel_lever(channel: Channel) -> Option<Lever> {
         Channel::Fuel | Channel::Oxidiser | Channel::Fossil => Some(Lever::Combustion),
         Channel::ChargeMagnitude | Channel::Resonance => Some(Lever::FieldResonance),
         Channel::Optics => Some(Lever::Photonic),
+        Channel::Tidal => Some(Lever::Gravitational),
+        Channel::Radiogenic => Some(Lever::Nuclear),
         Channel::MagneticField => Some(Lever::PlasmaEm),
         Channel::WaterDepth | Channel::Vapour => Some(Lever::Hydraulic),
         Channel::Ice => Some(Lever::Cryogenic),

@@ -102,6 +102,10 @@ pub(crate) fn physics_phase<E: Emitter>(
         // Photonic vision extension: diagnostic stellar-insolation
         // field, built per-planet in `build_laws`.
         Some(&laws.insolation),
+        // Gravitational + nuclear vision extensions: diagnostic
+        // tidal-stress and surface-radiation fields.
+        Some(&laws.tidal_stress),
+        Some(&laws.surface_radiation),
     );
     Ok(prev_state_for_measurements)
 }

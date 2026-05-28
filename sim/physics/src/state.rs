@@ -76,6 +76,16 @@ pub struct PhysicsState {
     /// hypothesizer (`Channel::Optics`). No legacy law reads it, so its
     /// presence leaves every other channel bit-identical.
     insolation: Vec<Real>,
+    /// Diagnostic per-cell tidal stress (gravitational vision
+    /// extension). Rewritten each tick by `TidalStress`; read by
+    /// recognition (`Field::TidalStress`) and discovery
+    /// (`Channel::Tidal`). Additive — no legacy law reads it.
+    tidal_stress: Vec<Real>,
+    /// Diagnostic per-cell ionizing surface radiation (nuclear vision
+    /// extension). Rewritten each tick by `SurfaceRadiation`; read by
+    /// recognition (`Field::Radiation`) and discovery
+    /// (`Channel::Radiogenic`). Additive — no legacy law reads it.
+    surface_radiation: Vec<Real>,
     /// Planetary magnetic field as a vector — `(B_q, B_r)`
     /// per cell in axial coordinates. Previously this was a scalar
     /// magnitude with no direction; promoting to a vector lets the
@@ -328,6 +338,8 @@ impl PhysicsState {
             charge: vec![Real::ZERO; n],
             resonance: vec![Real::ZERO; n],
             insolation: vec![Real::ZERO; n],
+            tidal_stress: vec![Real::ZERO; n],
+            surface_radiation: vec![Real::ZERO; n],
             magnetic_b_q: vec![Real::ZERO; n],
             magnetic_b_r: vec![Real::ZERO; n],
             magnetic_b_z: vec![Real::ZERO; n],
@@ -537,6 +549,26 @@ impl PhysicsState {
 
     pub fn insolation_mut(&mut self) -> &mut [Real] {
         &mut self.insolation
+    }
+
+    /// Diagnostic per-cell tidal stress. Written by `TidalStress`;
+    /// read by recognition + discovery.
+    pub fn tidal_stress(&self) -> &[Real] {
+        &self.tidal_stress
+    }
+
+    pub fn tidal_stress_mut(&mut self) -> &mut [Real] {
+        &mut self.tidal_stress
+    }
+
+    /// Diagnostic per-cell ionizing surface radiation. Written by
+    /// `SurfaceRadiation`; read by recognition + discovery.
+    pub fn surface_radiation(&self) -> &[Real] {
+        &self.surface_radiation
+    }
+
+    pub fn surface_radiation_mut(&mut self) -> &mut [Real] {
+        &mut self.surface_radiation
     }
 
     /// Vector magnetic field — `(B_q, B_r)` slices in axial

@@ -50,13 +50,21 @@ pub enum Channel {
     /// discriminant 11; still under the 16-cap from the
     /// `template_id × 16 + channel` relation-id encoding.
     Optics = 11,
+    /// Per-cell tidal stress (`PhysicsState::tidal_stress()`). The
+    /// substrate signal ground/motion-sensing species fit laws over.
+    /// Discriminant 12; under the 16-cap.
+    Tidal = 12,
+    /// Per-cell ionizing surface radiation
+    /// (`PhysicsState::surface_radiation()`). Discriminant 13; under
+    /// the 16-cap.
+    Radiogenic = 13,
 }
 
 impl Channel {
     /// All channels available to the discovery pipeline. Used for
     /// the cross-product candidate generation (template × channel)
     /// — see `Hypothesizer::candidates_for`.
-    pub const ALL: [Channel; 12] = [
+    pub const ALL: [Channel; 14] = [
         Channel::Temperature,
         Channel::WaterDepth,
         Channel::ChargeMagnitude,
@@ -69,6 +77,8 @@ impl Channel {
         Channel::MagneticField,
         Channel::Resonance,
         Channel::Optics,
+        Channel::Tidal,
+        Channel::Radiogenic,
     ];
 }
 
@@ -122,13 +132,19 @@ pub fn channels_for_modality(modality: sim_species::ModalityKind) -> &'static [C
         MK::VisualLight | MK::VisualPolarization => {
             &[Channel::Temperature, Channel::Elevation, Channel::Optics]
         }
-        MK::InfraredThermal => &[Channel::Temperature],
+        MK::InfraredThermal => &[Channel::Temperature, Channel::Radiogenic],
         MK::ChemicalTaste | MK::ChemicalPheromone => {
             &[Channel::Vapour, Channel::Oxidiser]
         }
-        MK::AcousticAir | MK::AcousticWater | MK::Seismic => {
+        MK::AcousticAir | MK::AcousticWater => {
             &[Channel::WaterDepth, Channel::Elevation, Channel::Temperature]
         }
+        MK::Seismic => &[
+            Channel::WaterDepth,
+            Channel::Elevation,
+            Channel::Temperature,
+            Channel::Tidal,
+        ],
         MK::ElectricField => &[Channel::ChargeMagnitude, Channel::Resonance],
         MK::MagneticSense | MK::RadioNative => &[Channel::MagneticField, Channel::Resonance],
         // Tactile is contact-only: it can tell the cell's
@@ -214,6 +230,9 @@ impl Channel {
             // Insolation is pre-scaled (W/m² ÷ 300) into low single
             // digits by the law; unit-scale keeps fits in range.
             Channel::Optics => Real::ONE,
+            // Tidal stress and surface radiation sit in low single
+            // digits; unit-scale keeps fits in range.
+            Channel::Tidal | Channel::Radiogenic => Real::ONE,
             // Substance densities sit in low single digits;
             // unit-scale leaves them unchanged.
             Channel::Fuel
@@ -247,6 +266,9 @@ impl Channel {
             // Per-cell stellar insolation — the substrate signal
             // light-sensing species fit laws over.
             Channel::Optics => state.insolation()[cell],
+            // Per-cell tidal stress and ionizing surface radiation.
+            Channel::Tidal => state.tidal_stress()[cell],
+            Channel::Radiogenic => state.surface_radiation()[cell],
         };
         raw / self.scale()
     }
@@ -265,6 +287,8 @@ impl Channel {
             Channel::MagneticField => "magnetic_field",
             Channel::Resonance => "resonance",
             Channel::Optics => "optics",
+            Channel::Tidal => "tidal",
+            Channel::Radiogenic => "radiogenic",
         }
     }
 }

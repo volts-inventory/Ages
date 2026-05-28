@@ -23,6 +23,8 @@ pub mod heat;
 pub mod hemisphere;
 pub mod hydrology;
 pub mod insolation;
+pub mod surface_radiation;
+pub mod tidal_stress;
 pub mod isostasy;
 pub mod laws;
 pub mod lorentz;
@@ -72,6 +74,8 @@ pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorSta
 pub use radiation::{LockingMode, Radiation};
 pub use insolation::SolarInsolation;
 pub use resonance::ResonanceField;
+pub use surface_radiation::SurfaceRadiation;
+pub use tidal_stress::TidalStress;
 pub use state::{Cell, PhysicsState, N_SUBSTANCES};
 pub use tectonics::{CrustType, Plate, Tectonics};
 pub use tidal_heating::{

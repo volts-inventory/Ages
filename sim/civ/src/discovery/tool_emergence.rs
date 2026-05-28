@@ -75,7 +75,9 @@ fn channel_to_substance(channel: Channel) -> Option<Substance> {
         | Channel::Elevation
         | Channel::MagneticField
         | Channel::Resonance
-        | Channel::Optics => None,
+        | Channel::Optics
+        | Channel::Tidal
+        | Channel::Radiogenic => None,
     }
 }
 
@@ -158,6 +160,8 @@ fn channel_to_kind(channel: Channel) -> ChannelKind {
         Channel::Temperature => ChannelKind::InfraredThermal,
         Channel::ChargeMagnitude | Channel::Resonance => ChannelKind::ElectricField,
         Channel::Optics => ChannelKind::VisualLight,
+        Channel::Tidal => ChannelKind::Seismic,
+        Channel::Radiogenic => ChannelKind::InfraredThermal,
         Channel::MagneticField => ChannelKind::MagneticSense,
         Channel::WaterDepth => ChannelKind::AcousticWater,
         Channel::Elevation => ChannelKind::Tactile,
@@ -278,6 +282,17 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
         Channel::Optics => {
             effects.discovery_rate_bonus = Real::percent(8) * scale;
         }
+        // Tidal: gravimetry / tidal-prediction instrumentation. Lifts
+        // expansion (navigation, tide tables) and the science loop.
+        Channel::Tidal => {
+            effects.expansion_rate_bonus = Real::percent(5) * scale;
+            effects.discovery_rate_bonus = Real::percent(5) * scale;
+        }
+        // Radiogenic: radiation instrumentation — detection, shielding,
+        // and eventually decay-power. Accelerates the discovery loop.
+        Channel::Radiogenic => {
+            effects.discovery_rate_bonus = Real::percent(8) * scale;
+        }
     }
     effects
 }
@@ -296,6 +311,8 @@ fn channel_label(channel: Channel) -> &'static str {
         Channel::Fossil => "fossil",
         Channel::Resonance => "resonance",
         Channel::Optics => "optics",
+        Channel::Tidal => "tidal",
+        Channel::Radiogenic => "radiogenic",
     }
 }
 

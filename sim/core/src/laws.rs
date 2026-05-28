@@ -92,6 +92,13 @@ pub(crate) struct Laws {
     /// field. Scaled from the planet's sampled stellar irradiance, so
     /// it is strong on bright-star worlds and faint on dim ones.
     pub insolation: sim_physics::SolarInsolation,
+    /// Gravitational vision extension: diagnostic tidal-stress field.
+    /// Amplitude scales with the planet's moons and surface gravity.
+    pub tidal_stress: sim_physics::TidalStress,
+    /// Nuclear vision extension: diagnostic surface-radiation field.
+    /// Radiogenic floor from crustal heavy elements + magnetosphere-
+    /// shielded cosmic flux.
+    pub surface_radiation: sim_physics::SurfaceRadiation,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -440,6 +447,20 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // Photonic vision extension: diagnostic insolation scaled from the
     // sampled stellar irradiance.
     let insolation = sim_physics::SolarInsolation::for_planet(planet.stellar_luminosity);
+    // Gravitational vision extension: tidal stress from aggregate moon
+    // pull (one Earth-tide per moon, first-order) × surface gravity.
+    let gravity_g = planet.gravity() / Real::from_ratio(981, 100);
+    let tidal_coefficient = Real::from_int(i64::from(planet.moon_count));
+    let tidal_stress = sim_physics::TidalStress::for_planet(tidal_coefficient, gravity_g);
+    // Nuclear vision extension: radiogenic crust floor + cosmic flux
+    // gated by magnetospheric shielding.
+    let shielding = match planet.magnetosphere {
+        sim_world::Magnetosphere::None => Real::ZERO,
+        sim_world::Magnetosphere::Weak => Real::from_ratio(5, 10),
+        sim_world::Magnetosphere::Strong => Real::from_ratio(9, 10),
+    };
+    let surface_radiation =
+        sim_physics::SurfaceRadiation::for_planet(planet.crustal_composition.rare_earth, shielding);
 
     Laws {
         fluid,
@@ -466,6 +487,8 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         hadley,
         resonance,
         insolation,
+        tidal_stress,
+        surface_radiation,
     }
 }
 

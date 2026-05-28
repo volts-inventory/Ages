@@ -131,7 +131,9 @@ impl Channel {
             | Channel::Fossil
             | Channel::MagneticField
             | Channel::Resonance
-            | Channel::Optics => None,
+            | Channel::Optics
+            | Channel::Tidal
+            | Channel::Radiogenic => None,
         }
     }
 }
@@ -238,7 +240,9 @@ fn write_channel_at_cell(state: &mut PhysicsState, channel: Channel, cell: usize
         | Channel::Fossil
         | Channel::MagneticField
         | Channel::Resonance
-        | Channel::Optics => {}
+        | Channel::Optics
+        | Channel::Tidal
+        | Channel::Radiogenic => {}
     }
 }
 

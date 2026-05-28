@@ -61,6 +61,14 @@ pub enum Field {
     /// archetype's substrate signal — light-sensing species perceive it
     /// directly and civ science fits laws over it.
     Insolation,
+    /// Per-cell tidal stress (`state.tidal_stress()`). The
+    /// gravitational archetype's substrate signal — ground- and
+    /// motion-sensing species perceive it.
+    TidalStress,
+    /// Per-cell ionizing surface radiation (`state.surface_radiation()`).
+    /// The nuclear archetype's substrate signal — thermal-sensing and
+    /// radiation-hardened biologies perceive it.
+    Radiation,
 }
 
 impl Field {
@@ -79,6 +87,8 @@ impl Field {
             }
             Field::Resonance => state.resonance()[cell],
             Field::Insolation => state.insolation()[cell],
+            Field::TidalStress => state.tidal_stress()[cell],
+            Field::Radiation => state.surface_radiation()[cell],
         }
     }
 }
