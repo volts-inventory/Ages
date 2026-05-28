@@ -22,6 +22,8 @@
 //! lever ties break by `Lever::ALL` order so labels are stable across
 //! replays.
 
+use crate::discovery::Channel;
+use crate::tech::ToolKind;
 use sim_arith::Real;
 use sim_species::{CognitionTopology, ModalityKind, Species};
 use sim_world::{Atmosphere, BiosphereClass, Crust, Magnetosphere, MetabolicSubstrate, Planet};
@@ -393,6 +395,96 @@ pub fn classify_world_species(planet: &Planet, species: &Species) -> ArchetypePr
     }
 }
 
+/// Primary lever a confirmed-relation channel points at. The channel a
+/// civ actually fits laws over is direct evidence of the lever it is
+/// developing.
+fn channel_lever(channel: Channel) -> Option<Lever> {
+    match channel {
+        Channel::Fuel | Channel::Oxidiser | Channel::Fossil => Some(Lever::Combustion),
+        Channel::ChargeMagnitude => Some(Lever::FieldResonance),
+        Channel::MagneticField => Some(Lever::PlasmaEm),
+        Channel::WaterDepth | Channel::Vapour => Some(Lever::Hydraulic),
+        Channel::Ice => Some(Lever::Cryogenic),
+        Channel::Elevation => Some(Lever::Mechanical),
+        // Temperature is thermodynamically neutral — every lever reads
+        // it — so it points at no single archetype.
+        Channel::Temperature => None,
+    }
+}
+
+/// Primary lever a tool's unlock points at. A tool in a civ's roster
+/// is strong evidence the civ climbed that lever's branch of the DAG.
+fn tool_lever(tool: ToolKind) -> Option<Lever> {
+    use ToolKind as T;
+    match tool {
+        T::LocalisedCombustion | T::MaterialRefining | T::ChemicalSynthesis
+        | T::ChemicalProjectile | T::PowerGeneration => Some(Lever::Combustion),
+        T::FieldSensor | T::MagneticSensor | T::BioelectricResonator
+        | T::FieldPropulsionEngine | T::MetamaterialLattice => Some(Lever::FieldResonance),
+        T::AnimalSymbiosis | T::BiomimeticDesign | T::GeneCultureCoevolution
+        | T::GeneticManipulation | T::OrganicSynthesis | T::AdvancedMedicine
+        | T::EcosystemEngineering => Some(Lever::Biochemical),
+        T::CryogenicEngineering | T::EnergyStorage => Some(Lever::Cryogenic),
+        T::MechanicalAdvantage | T::WindPower | T::PrecisionTimekeeping
+        | T::AnalyticalEngines | T::Mechanisation | T::MotivePropulsion => Some(Lever::Mechanical),
+        T::HydraulicWorks | T::FluidControl | T::WatercraftConstruction => Some(Lever::Hydraulic),
+        T::DistanceImaging => Some(Lever::Photonic),
+        _ => None,
+    }
+}
+
+/// Refine the world+species prior with a civ's *realized* trajectory:
+/// the discovery channels it has confirmed relations on (`(channel,
+/// count)` pairs) and the tools it has unlocked. This is what turns
+/// the prior into the realized archetype — the branches the civ
+/// actually climbed, not just the ones its world made likely.
+pub fn refine_with_run(
+    prior: &LeverScores,
+    confirmed_by_channel: &[(Channel, u32)],
+    unlocked_tools: &[ToolKind],
+) -> LeverScores {
+    let mut s = *prior;
+
+    // Confirmed relations: small per-relation weight, capped so a
+    // flood on one channel can't peg a lever on its own.
+    let per_relation = Real::from_ratio(2, 100);
+    let channel_cap = Real::from_ratio(35, 100);
+    for &(channel, count) in confirmed_by_channel {
+        if let Some(lever) = channel_lever(channel) {
+            let contribution = (per_relation * Real::from_int(i64::from(count))).min(channel_cap);
+            s.add(lever, contribution);
+        }
+    }
+
+    // Unlocked tools: a flat membership bonus per tool on its lever's
+    // branch.
+    let per_tool = Real::from_ratio(10, 100);
+    for &tool in unlocked_tools {
+        if let Some(lever) = tool_lever(tool) {
+            s.add(lever, per_tool);
+        }
+    }
+
+    s
+}
+
+/// Realized profile: refine the prior with run signals, then classify.
+pub fn classify_realized(
+    planet: &Planet,
+    species: &Species,
+    confirmed_by_channel: &[(Channel, u32)],
+    unlocked_tools: &[ToolKind],
+) -> ArchetypeProfile {
+    let prior = score_world_species(planet, species);
+    let scores = refine_with_run(&prior, confirmed_by_channel, unlocked_tools);
+    let label = classify(&scores);
+    ArchetypeProfile {
+        scores,
+        label,
+        cognition: cognition_mode(species),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +575,50 @@ mod tests {
     fn hybrid_name_joins_levers() {
         let label = ArchetypeLabel::Hybrid(Lever::FieldResonance, Lever::Biochemical);
         assert_eq!(label.name(), "field_resonance/biochemical");
+    }
+
+    #[test]
+    fn realized_refinement_can_override_a_flat_prior() {
+        use crate::discovery::Channel;
+        use crate::tech::ToolKind;
+        // Start from a flat, ambiguous prior.
+        let prior = LeverScores::zero();
+        // A civ that confirmed many fuel/oxidiser relations and unlocked
+        // the combustion lineage should read Combustion.
+        let channels = [(Channel::Fuel, 12u32), (Channel::Oxidiser, 10u32)];
+        let tools = [
+            ToolKind::LocalisedCombustion,
+            ToolKind::MaterialRefining,
+            ToolKind::ChemicalSynthesis,
+        ];
+        let refined = refine_with_run(&prior, &channels, &tools);
+        assert_eq!(classify(&refined), ArchetypeLabel::Pure(Lever::Combustion));
+    }
+
+    #[test]
+    fn realized_refinement_reads_biochemical_from_bio_tools() {
+        use crate::discovery::Channel;
+        use crate::tech::ToolKind;
+        let prior = LeverScores::zero();
+        let channels: [(Channel, u32); 0] = [];
+        let tools = [
+            ToolKind::AnimalSymbiosis,
+            ToolKind::BiomimeticDesign,
+            ToolKind::GeneticManipulation,
+            ToolKind::EcosystemEngineering,
+            ToolKind::AdvancedMedicine,
+        ];
+        let refined = refine_with_run(&prior, &channels, &tools);
+        assert_eq!(classify(&refined), ArchetypeLabel::Pure(Lever::Biochemical));
+    }
+
+    #[test]
+    fn refinement_respects_score_ceiling() {
+        let prior = LeverScores::zero();
+        use crate::discovery::Channel;
+        // A huge confirmed-relation count must stay clamped to <= 1.0.
+        let channels = [(Channel::Fuel, 100_000u32)];
+        let refined = refine_with_run(&prior, &channels, &[]);
+        assert!(refined.get(Lever::Combustion) <= Real::ONE);
     }
 }
