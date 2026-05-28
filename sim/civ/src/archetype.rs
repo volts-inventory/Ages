@@ -410,14 +410,17 @@ pub fn score_world_species(planet: &Planet, species: &Species) -> LeverScores {
         s.add(Lever::Cryogenic, Real::from_ratio(12, 100));
     }
 
-    // --- Mechanical: no fire (low-O2) + abundant kinetic energy.
+    // --- Mechanical: abundant kinetic energy (tides/wind) on a world
+    // without fire. Absence of combustion is only a modest nudge — the
+    // real driver is a strong tidal source, so a no-fire world still
+    // needs moons to read mechanical rather than defaulting to it.
     if !oxidising {
-        s.add(Lever::Mechanical, Real::from_ratio(30, 100));
+        s.add(Lever::Mechanical, Real::from_ratio(15, 100));
     }
     if planet.moon_count >= 2 {
-        s.add(Lever::Mechanical, Real::from_ratio(18, 100));
+        s.add(Lever::Mechanical, Real::from_ratio(22, 100));
     } else if planet.moon_count == 1 {
-        s.add(Lever::Mechanical, Real::from_ratio(8, 100));
+        s.add(Lever::Mechanical, Real::from_ratio(12, 100));
     }
     if planet.metabolic_substrate == MetabolicSubstrate::Aqueous {
         s.add(Lever::Mechanical, Real::from_ratio(8, 100));
