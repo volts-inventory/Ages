@@ -21,6 +21,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod apparatus;
+pub mod archetype;
 pub mod catastrophe;
 pub mod conflict;
 pub mod cosmology;
