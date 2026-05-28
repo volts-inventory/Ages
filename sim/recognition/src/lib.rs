@@ -57,6 +57,10 @@ pub enum Field {
     /// field-sensing species perceive it directly and civ science
     /// fits laws over it.
     Resonance,
+    /// Per-cell stellar insolation (`state.insolation()`). The photonic
+    /// archetype's substrate signal — light-sensing species perceive it
+    /// directly and civ science fits laws over it.
+    Insolation,
 }
 
 impl Field {
@@ -74,6 +78,7 @@ impl Field {
                 sqrt(q * q + r * r)
             }
             Field::Resonance => state.resonance()[cell],
+            Field::Insolation => state.insolation()[cell],
         }
     }
 }

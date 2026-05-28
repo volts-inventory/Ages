@@ -100,6 +100,7 @@ fn channel_to_field(channel: Channel) -> Option<Field> {
         Channel::ChargeMagnitude => Some(Field::Charge),
         Channel::MagneticField => Some(Field::MagneticMagnitude),
         Channel::Resonance => Some(Field::Resonance),
+        Channel::Optics => Some(Field::Insolation),
         Channel::Fuel => Some(Field::Substance(sim_physics::Substance::Fuel)),
         Channel::Oxidiser => Some(Field::Substance(sim_physics::Substance::Oxidiser)),
         Channel::Vapour => Some(Field::Substance(sim_physics::Substance::Vapour)),
@@ -130,6 +131,7 @@ fn natural_channels(field: Field) -> Vec<ChannelKind> {
             ChannelKind::MagneticSense,
             ChannelKind::RadioNative,
         ],
+        Field::Insolation => vec![ChannelKind::VisualLight, ChannelKind::VisualPolarization],
     }
 }
 
@@ -339,6 +341,7 @@ fn field_label(field: Field) -> &'static str {
         Field::MagneticMagnitude => "magnetic_magnitude",
         Field::WindMagnitude => "wind_magnitude",
         Field::Resonance => "resonance",
+        Field::Insolation => "insolation",
     }
 }
 

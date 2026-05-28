@@ -88,6 +88,10 @@ pub(crate) struct Laws {
     /// field is prominent on field-and-resonance archetype worlds and
     /// near-zero on basaltic no-dipole ones.
     pub resonance: sim_physics::ResonanceField,
+    /// Photonic vision extension: the diagnostic stellar-insolation
+    /// field. Scaled from the planet's sampled stellar irradiance, so
+    /// it is strong on bright-star worlds and faint on dim ones.
+    pub insolation: sim_physics::SolarInsolation,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -433,6 +437,9 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     };
     let resonance =
         sim_physics::ResonanceField::for_coupling(piezo_fraction, field_factor, propagation);
+    // Photonic vision extension: diagnostic insolation scaled from the
+    // sampled stellar irradiance.
+    let insolation = sim_physics::SolarInsolation::for_planet(planet.stellar_luminosity);
 
     Laws {
         fluid,
@@ -458,6 +465,7 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         atmospheric_escape,
         hadley,
         resonance,
+        insolation,
     }
 }
 

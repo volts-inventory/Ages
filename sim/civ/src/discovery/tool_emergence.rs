@@ -74,7 +74,8 @@ fn channel_to_substance(channel: Channel) -> Option<Substance> {
         | Channel::ChargeMagnitude
         | Channel::Elevation
         | Channel::MagneticField
-        | Channel::Resonance => None,
+        | Channel::Resonance
+        | Channel::Optics => None,
     }
 }
 
@@ -156,6 +157,7 @@ fn channel_to_kind(channel: Channel) -> ChannelKind {
     match channel {
         Channel::Temperature => ChannelKind::InfraredThermal,
         Channel::ChargeMagnitude | Channel::Resonance => ChannelKind::ElectricField,
+        Channel::Optics => ChannelKind::VisualLight,
         Channel::MagneticField => ChannelKind::MagneticSense,
         Channel::WaterDepth => ChannelKind::AcousticWater,
         Channel::Elevation => ChannelKind::Tactile,
@@ -271,6 +273,11 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
         Channel::Resonance => {
             effects.discovery_rate_bonus = Real::percent(8) * scale;
         }
+        // Optics: photonic instrumentation — lenses, heliographs,
+        // light-based measurement. Accelerates the discovery loop.
+        Channel::Optics => {
+            effects.discovery_rate_bonus = Real::percent(8) * scale;
+        }
     }
     effects
 }
@@ -288,6 +295,7 @@ fn channel_label(channel: Channel) -> &'static str {
         Channel::Ice => "cryogenic",
         Channel::Fossil => "fossil",
         Channel::Resonance => "resonance",
+        Channel::Optics => "optics",
     }
 }
 

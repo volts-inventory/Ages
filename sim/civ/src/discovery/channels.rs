@@ -45,13 +45,18 @@ pub enum Channel {
     /// at discriminant 10; still under the 16-cap from the
     /// `template_id × 16 + channel` relation-id encoding.
     Resonance = 10,
+    /// Per-cell stellar insolation (`PhysicsState::insolation()`). The
+    /// substrate signal light-sensing species fit laws over. Sits at
+    /// discriminant 11; still under the 16-cap from the
+    /// `template_id × 16 + channel` relation-id encoding.
+    Optics = 11,
 }
 
 impl Channel {
     /// All channels available to the discovery pipeline. Used for
     /// the cross-product candidate generation (template × channel)
     /// — see `Hypothesizer::candidates_for`.
-    pub const ALL: [Channel; 11] = [
+    pub const ALL: [Channel; 12] = [
         Channel::Temperature,
         Channel::WaterDepth,
         Channel::ChargeMagnitude,
@@ -63,6 +68,7 @@ impl Channel {
         Channel::Fossil,
         Channel::MagneticField,
         Channel::Resonance,
+        Channel::Optics,
     ];
 }
 
@@ -114,7 +120,7 @@ pub fn channels_for_modality(modality: sim_species::ModalityKind) -> &'static [C
     use sim_species::ModalityKind as MK;
     match modality {
         MK::VisualLight | MK::VisualPolarization => {
-            &[Channel::Temperature, Channel::Elevation]
+            &[Channel::Temperature, Channel::Elevation, Channel::Optics]
         }
         MK::InfraredThermal => &[Channel::Temperature],
         MK::ChemicalTaste | MK::ChemicalPheromone => {
@@ -205,6 +211,9 @@ impl Channel {
             // magnetic field; unit-scale keeps fits inside Q32.32
             // range.
             Channel::Resonance => Real::ONE,
+            // Insolation is pre-scaled (W/m² ÷ 300) into low single
+            // digits by the law; unit-scale keeps fits in range.
+            Channel::Optics => Real::ONE,
             // Substance densities sit in low single digits;
             // unit-scale leaves them unchanged.
             Channel::Fuel
@@ -235,6 +244,9 @@ impl Channel {
             // Per-cell resonance field — the substrate signal
             // field-sensing species fit laws over.
             Channel::Resonance => state.resonance()[cell],
+            // Per-cell stellar insolation — the substrate signal
+            // light-sensing species fit laws over.
+            Channel::Optics => state.insolation()[cell],
         };
         raw / self.scale()
     }
@@ -252,6 +264,7 @@ impl Channel {
             Channel::Fossil => "fossil",
             Channel::MagneticField => "magnetic_field",
             Channel::Resonance => "resonance",
+            Channel::Optics => "optics",
         }
     }
 }

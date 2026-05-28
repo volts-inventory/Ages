@@ -69,6 +69,13 @@ pub struct PhysicsState {
     /// law reads it, so its presence leaves every other channel
     /// bit-identical.
     resonance: Vec<Real>,
+    /// Diagnostic per-cell stellar insolation (photonic vision
+    /// extension). Rewritten each tick by `SolarInsolation` from
+    /// stellar irradiance × latitude incidence × cloud clarity; read
+    /// by recognition (`Field::Insolation`) and the discovery
+    /// hypothesizer (`Channel::Optics`). No legacy law reads it, so its
+    /// presence leaves every other channel bit-identical.
+    insolation: Vec<Real>,
     /// Planetary magnetic field as a vector — `(B_q, B_r)`
     /// per cell in axial coordinates. Previously this was a scalar
     /// magnitude with no direction; promoting to a vector lets the
@@ -320,6 +327,7 @@ impl PhysicsState {
             substances: vec![vec![Real::ZERO; n]; N_SUBSTANCES],
             charge: vec![Real::ZERO; n],
             resonance: vec![Real::ZERO; n],
+            insolation: vec![Real::ZERO; n],
             magnetic_b_q: vec![Real::ZERO; n],
             magnetic_b_r: vec![Real::ZERO; n],
             magnetic_b_z: vec![Real::ZERO; n],
@@ -519,6 +527,16 @@ impl PhysicsState {
 
     pub fn resonance_mut(&mut self) -> &mut [Real] {
         &mut self.resonance
+    }
+
+    /// Diagnostic per-cell stellar insolation. Written by
+    /// `SolarInsolation`; read by recognition + discovery.
+    pub fn insolation(&self) -> &[Real] {
+        &self.insolation
+    }
+
+    pub fn insolation_mut(&mut self) -> &mut [Real] {
+        &mut self.insolation
     }
 
     /// Vector magnetic field — `(B_q, B_r)` slices in axial

@@ -125,9 +125,13 @@ impl Channel {
             // either — civs can't reshape `|B|` inside an
             // experiment window. Resonance is the same — the field
             // is physics-law-driven, not directly clampable.
-            Channel::Elevation | Channel::Fossil | Channel::MagneticField | Channel::Resonance => {
-                None
-            }
+            // Insolation is stellar-driven and not clampable inside an
+            // experiment window either.
+            Channel::Elevation
+            | Channel::Fossil
+            | Channel::MagneticField
+            | Channel::Resonance
+            | Channel::Optics => None,
         }
     }
 }
@@ -230,7 +234,11 @@ fn write_channel_at_cell(state: &mut PhysicsState, channel: Channel, cell: usize
         Channel::Vapour => state.substance_mut(Substance::Vapour.idx())[cell] = value,
         Channel::Ice => state.substance_mut(Substance::Ice.idx())[cell] = value,
         // Not clampable; covered by `clamp_ladder() == None`.
-        Channel::Elevation | Channel::Fossil | Channel::MagneticField | Channel::Resonance => {}
+        Channel::Elevation
+        | Channel::Fossil
+        | Channel::MagneticField
+        | Channel::Resonance
+        | Channel::Optics => {}
     }
 }
 

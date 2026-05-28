@@ -465,6 +465,10 @@ pub fn integrate_civ_step(
     // field stays zero), so tests and minimal call sites that don't
     // model it pay nothing and stay bit-identical.
     resonance: Option<&crate::resonance::ResonanceField>,
+    // Photonic vision extension: the diagnostic stellar-insolation
+    // field. `None` is a no-op (the field stays zero), so minimal call
+    // sites stay bit-identical.
+    insolation: Option<&crate::insolation::SolarInsolation>,
 ) {
     // In release builds the cumulative-drift mutations vanish under
     // `#[cfg(debug_assertions)]`, so `orch_state` would warn as
@@ -727,6 +731,13 @@ pub fn integrate_civ_step(
         if let Some(r) = resonance {
             r.integrate(state, cfg.em_dt);
         }
+        // Diagnostic stellar-insolation field. Runs late so it reads
+        // the freshest cloud cover; no legacy law reads
+        // `state.insolation`, so it only feeds the new photonic
+        // recognition / discovery consumers.
+        if let Some(i) = insolation {
+            i.integrate(state, cfg.em_dt);
+        }
         // Lorentz coupling. Runs after Magnetism (so it
         // reads the freshest |B|) and after Wind (so it reads
         // and modifies the post-pressure-gradient velocity).
@@ -842,11 +853,11 @@ mod tests {
         let mut orch_b = OrchestratorState::new();
         integrate_civ_step(
             &mut a, &mut orch_a, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
         integrate_civ_step(
             &mut b, &mut orch_b, &cfg, &fluid, &heat, &em, &chem, None, None, None, None, None,
-            None, None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None,
         );
 
         assert_eq!(a.temperature(), b.temperature());
@@ -900,6 +911,7 @@ mod tests {
             integrate_civ_step(
                 &mut state, &mut orch, &cfg, &fluid, &heat, &em, &chem, None, None, None, None,
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None,
             );
         }
         let tight_bound = Real::from_ratio(1, 1_000_000);

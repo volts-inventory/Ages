@@ -919,6 +919,30 @@ impl RecognitionLibrary {
                         ChannelKind::RadioNative,
                     ],
                 },
+                // ============================================
+                // Insolation templates. The diagnostic per-cell
+                // stellar-insolation field (`state.insolation()`)
+                // surfaces as the photonic archetype's substrate
+                // signal. Light-sensing species perceive it via the
+                // visual channels.
+                // ============================================
+                // Daylight present — insolation above a modest floor.
+                RecognitionTemplate {
+                    id: 56,
+                    name: "daylight_strong",
+                    signature: Signature::Above(Field::Insolation, Real::from_int(2)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::VisualLight, ChannelKind::VisualPolarization],
+                },
+                // Solar abundance — a brightly-lit cell, the
+                // high-irradiance state photonic civilizations build on.
+                RecognitionTemplate {
+                    id: 57,
+                    name: "solar_abundance",
+                    signature: Signature::Above(Field::Insolation, Real::from_int(5)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::VisualLight, ChannelKind::VisualPolarization],
+                },
             ],
         }
     }

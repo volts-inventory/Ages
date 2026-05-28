@@ -99,6 +99,9 @@ pub(crate) fn physics_phase<E: Emitter>(
         // Field-and-resonance vision extension: speculative resonance
         // / attention field, built per-planet in `build_laws`.
         Some(&laws.resonance),
+        // Photonic vision extension: diagnostic stellar-insolation
+        // field, built per-planet in `build_laws`.
+        Some(&laws.insolation),
     );
     Ok(prev_state_for_measurements)
 }
