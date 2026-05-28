@@ -137,6 +137,45 @@ fn no_atmosphere_means_no_oxidiser() {
     assert!(found, "no Atmosphere::None planet in first 100 seeds");
 }
 
+#[test]
+fn scorching_ocean_world_is_dry_and_habitable() {
+    // Seed 495 samples a sub-surface-ocean world at ~378 K — above
+    // water's boil point — so its grid floods to kilometres of "sea"
+    // that, physically, has boiled off. The boil-aware classifier must
+    // treat those cells as dry land (habitable) rather than
+    // uninhabitable deep ocean (`≈`, multiplier 0.0), or the world
+    // produces zero population for its land-evolved species.
+    let planet = sample_planet(495);
+    assert!(
+        surface_solvent_boiled(&planet),
+        "seed 495 (~378 K) should be above its solvent boil point"
+    );
+
+    let grid = HexGrid::new(8, 8);
+    let mut state = PhysicsState::new(grid);
+    init_planet(&mut state, &planet);
+
+    let n = state.water_depth().len() as u32;
+    let mut flooded = 0;
+    let mut habitable = 0;
+    let claim_floor = Real::from_ratio(5, 100);
+    for cell in 0..n {
+        if state.water_depth()[cell as usize] > Real::ZERO {
+            flooded += 1;
+            let g = terrain_glyph_at(&state, &planet, cell);
+            assert_ne!(g, '\u{2248}', "boiled basin must not read as deep ocean");
+            if habitability_multiplier(g) >= claim_floor {
+                habitable += 1;
+            }
+        }
+    }
+    assert!(flooded > 0, "seed 495 should flood its basins");
+    assert!(
+        habitable > 0,
+        "boiled-dry basins should be habitable land, not dead sea"
+    );
+}
+
 /// Build a minimal Planet for the (composition, crust, magnetosphere)
 /// regression test below. Other fields are set to neutral values
 /// that don't perturb the charge imprint paths under test.

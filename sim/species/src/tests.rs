@@ -127,6 +127,55 @@ fn perceivable_templates_intersects_modalities_with_channels() {
 }
 
 #[test]
+fn habitat_reconciles_with_boiled_vs_liquid_ocean() {
+    use crate::sampling::derive_habitat;
+    use crate::types::{
+        Habitat, Manipulation, ManipulationKind, Modality, ModalityKind,
+    };
+
+    // A water-native ocean world, a touch/tentacle species with no
+    // water-acoustic sensing (mirrors seed 495's Ylithar shape).
+    let modalities = vec![Modality {
+        kind: ModalityKind::Tactile,
+        range_m: Real::ZERO,
+        fidelity: Real::ZERO,
+        bandwidth: Real::ZERO,
+    }];
+    let manipulations = vec![Manipulation {
+        kind: ManipulationKind::Tentacle,
+        force_n: Real::ZERO,
+        precision_m: Real::ZERO,
+        dexterity_score: Real::ZERO,
+        dof_count: 0,
+    }];
+
+    let mut planet = sample_planet(42);
+    planet.composition = Composition::OceanWorld;
+    planet.metabolic_substrate = sim_world::MetabolicSubstrate::Aqueous;
+    planet.substrate_perturbation = Real::ZERO;
+    planet.surface_pressure = Real::from_int(101_325); // ~1 atm → boil ~373 K
+
+    // Liquid ocean (290 K): the tentacled species belongs in the
+    // water even without water-acoustic sensing.
+    planet.mean_temperature = Real::from_int(290);
+    assert_eq!(
+        derive_habitat(&planet, &modalities, &manipulations),
+        Habitat::Aquatic,
+        "tentacled species on a liquid ocean world should be aquatic"
+    );
+
+    // Boiled dry (500 K, above the ~373 K boil point): the surface
+    // ocean is gone, so the species keeps land habits instead of
+    // being stranded in nonexistent water.
+    planet.mean_temperature = Real::from_int(500);
+    assert_eq!(
+        derive_habitat(&planet, &modalities, &manipulations),
+        Habitat::Terrestrial,
+        "a boiled-dry ocean world should not force an aquatic habitat"
+    );
+}
+
+#[test]
 fn biosphere_none_yields_minimal_modality_count() {
     // `BiosphereClass::None` is no longer reachable through
     // `sample_planet` (every seed produces a habitable world of

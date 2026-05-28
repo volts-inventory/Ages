@@ -51,9 +51,9 @@ pub use hemisphere::{
 };
 pub use composition::{AtmosphericComposition, CrustalComposition, Moon};
 pub use habitability::{
-    cell_habitability, habitability_multiplier, hz_factor, is_claimable_multiplier, is_land_glyph,
-    is_water_glyph, terrain_glyph_at, CLAIM_HABITABILITY_THRESHOLD_DEN,
-    CLAIM_HABITABILITY_THRESHOLD_NUM,
+    cell_habitability, effective_boil_k, habitability_multiplier, hz_factor,
+    is_claimable_multiplier, is_land_glyph, is_water_glyph, surface_solvent_boiled,
+    terrain_glyph_at, CLAIM_HABITABILITY_THRESHOLD_DEN, CLAIM_HABITABILITY_THRESHOLD_NUM,
 };
 pub use init::{discharge_threshold_for, init_planet};
 pub use planet::Planet;
