@@ -25,7 +25,7 @@ use ratatui::crossterm::{
 };
 use ratatui::Terminal;
 use sim_events::PaceControl;
-use std::io::{self, Sink};
+use std::io::{self, Sink, Write};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
@@ -284,7 +284,13 @@ pub fn run_interactive_tui(
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, Hide)?;
-    let backend = CrosstermBackend::new(stdout);
+    // Pace frames through a chunking writer so multi-byte glyphs +
+    // escape sequences survive delivery over flaky mobile SSH (iOS
+    // Termius), which otherwise splits a 3-byte glyph mid-packet and
+    // renders `?` — corrupting the following cursor moves and shifting
+    // the rest of the frame. Mirrors the legacy viewport's per-row
+    // write + micro-sleep delivery.
+    let backend = CrosstermBackend::new(PacedWriter::new(stdout));
     let mut terminal = Terminal::new(backend)?;
     // Force a full clear before the first frame. ratatui's diff
     // renderer otherwise assumes a blank screen and skips writing
@@ -347,5 +353,119 @@ fn run_loop<B: Backend>(
         if ui.should_quit {
             return Ok(());
         }
+    }
+}
+
+/// Target bytes per paced chunk. Kept small enough to fit in a single
+/// SSH segment so a chunk is delivered intact (the legacy renderer
+/// targeted ≤300 B per row for the same reason).
+const PACE_CHUNK: usize = 240;
+/// Pause between chunks so the terminal's UTF-8 parser drains before
+/// the next chunk arrives.
+const PACE_SLEEP: Duration = Duration::from_micros(900);
+
+/// A `Write` wrapper that buffers a frame and, on flush, emits it in
+/// small chunks split only at *safe* boundaries — never inside a
+/// multi-byte UTF-8 character and never inside an ANSI escape
+/// sequence — with a brief pause between chunks.
+///
+/// ratatui writes a whole frame and flushes once; over flaky mobile
+/// SSH (iOS Termius) a single large write gets split mid-glyph or
+/// mid-escape, so the terminal renders `?` and mis-parses the next
+/// cursor move, shifting the rest of the frame. Pacing into intact
+/// chunks reproduces the legacy viewport's per-row delivery and keeps
+/// multi-byte glyphs whole. Harmless on capable terminals (adds a few
+/// ms per frame).
+struct PacedWriter<W: Write> {
+    inner: W,
+    buf: Vec<u8>,
+}
+
+impl<W: Write> PacedWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            buf: Vec::with_capacity(8192),
+        }
+    }
+}
+
+/// Minimal ANSI/UTF-8 boundary state machine: advancing one byte
+/// returns whether, *after* that byte, the stream sits at a position
+/// where a split is structurally safe (not mid-escape-sequence).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EscState {
+    Normal,
+    Esc,
+    Csi,
+    Osc,
+}
+
+impl EscState {
+    fn step(self, b: u8) -> Self {
+        match self {
+            EscState::Normal => {
+                if b == 0x1B {
+                    EscState::Esc
+                } else {
+                    EscState::Normal
+                }
+            }
+            EscState::Esc => match b {
+                b'[' => EscState::Csi,
+                b']' => EscState::Osc,
+                _ => EscState::Normal, // two-byte escape ends here
+            },
+            // CSI runs until a final byte in 0x40..=0x7E.
+            EscState::Csi => {
+                if (0x40..=0x7E).contains(&b) {
+                    EscState::Normal
+                } else {
+                    EscState::Csi
+                }
+            }
+            // OSC runs until BEL (0x07); good enough for our output.
+            EscState::Osc => {
+                if b == 0x07 {
+                    EscState::Normal
+                } else {
+                    EscState::Osc
+                }
+            }
+        }
+    }
+}
+
+impl<W: Write> Write for PacedWriter<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let data = std::mem::take(&mut self.buf);
+        let len = data.len();
+        let mut start = 0;
+        let mut state = EscState::Normal;
+        let mut i = 0;
+        while i < len {
+            state = state.step(data[i]);
+            let boundary = i + 1;
+            // A split at `boundary` is safe when we're not mid-escape
+            // and the next byte isn't a UTF-8 continuation byte.
+            let next_is_cont = boundary < len && (data[boundary] & 0xC0) == 0x80;
+            let safe = state == EscState::Normal && !next_is_cont;
+            if safe && boundary - start >= PACE_CHUNK {
+                self.inner.write_all(&data[start..boundary])?;
+                self.inner.flush()?;
+                start = boundary;
+                std::thread::sleep(PACE_SLEEP);
+            }
+            i += 1;
+        }
+        if start < len {
+            self.inner.write_all(&data[start..])?;
+        }
+        self.inner.flush()
     }
 }
