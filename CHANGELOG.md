@@ -27,12 +27,15 @@ sign-off landed.
   cognition topology yields an overlay — individual, collective
   (eusocial hive), or substrate-distributed (slime-mold / acentric,
   the information/substrate path) — that can sit on any lever.
-- **Resonance field + science.** A new additive per-cell resonance
-  field was added to the physics state (legacy channels stay
-  bit-identical). Recognition gained `Field::Resonance` plus the
-  `resonance_field_active` and `attention_coherence` templates, and
-  discovery gained a resonance channel, so field-sensing species on
-  resonance-rich worlds do genuine resonance science.
+- **Lever science substrates.** Four levers carry a dedicated additive
+  per-cell physics field (legacy channels stay bit-identical), each
+  wired through recognition templates and a discovery channel so an
+  attuned species does genuine science on it: field/resonance (the
+  resonance field `Ψ`, sensed electrically/magnetically), photonic
+  (stellar insolation, sensed visually), gravitational (tidal stress,
+  sensed seismically), and nuclear (surface radiation, sensed
+  thermally). The remaining levers are scored from the world+species
+  prior and existing channels.
 - **Divergent endpoints.** At transcendence each archetype reaches a
   *different* fate rather than one shared singularity — e.g.
   field_resonance → a matter-transition that draws watchers,

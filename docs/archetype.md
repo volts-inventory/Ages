@@ -163,18 +163,28 @@ from the transcending civ's tool roster — a tier-5 roster is a strong
 lever signal). The whole path is pure `Real` (Q32.32) arithmetic with
 no RNG, so the realized label is deterministic across replays.
 
-## Resonance physics + science
+## Lever physics + science
 
-The field/resonance lever is now first-class because the physics it
-depends on exists. A new per-cell **resonance field** `Ψ` was added to
-the physics state ([`sim/physics/src/state.rs:63`](../sim/physics/src/state.rs))
-as an *additive, speculative substrate* — no existing law reads it, so
-installing it leaves every legacy channel (temperature, charge,
-climate) bit-identical.
+A lever is *first-class science* when the substrate it depends on
+exists as a per-cell physics field that species can perceive and civ
+hypothesizers can fit laws over. Four levers now carry a dedicated,
+**additive, speculative** field — none is read by any legacy law, so
+each leaves every existing channel (temperature, charge, climate)
+bit-identical:
+
+| Lever | Physics field / law | Discovery channel | Sensed via | Templates |
+|-------|---------------------|-------------------|------------|-----------|
+| `FieldResonance` | resonance `Ψ` / `ResonanceField` | `Resonance` (10) | electric / magnetic / radio | `resonance_field_active` (54), `attention_coherence` (55) |
+| `Photonic` | stellar insolation / `SolarInsolation` | `Optics` (11) | visual light / polarization | `daylight_strong` (56), `solar_abundance` (57) |
+| `Gravitational` | tidal stress / `TidalStress` | `Tidal` (12) | seismic | `tidal_flexing` (58), `strong_tides` (59) |
+| `Nuclear` | surface radiation / `SurfaceRadiation` | `Radiogenic` (13) | infrared / thermal | `radiation_background` (60), `radiation_hotspot` (61) |
+
+### Resonance — the showcase (an evolving field)
 
 `ResonanceField`
 ([`sim/physics/src/resonance.rs`](../sim/physics/src/resonance.rs)) is
-the evolution law. Per cell, the field relaxes toward an
+an *evolution* law. Per cell, the field `Ψ`
+([`state.rs:63`](../sim/physics/src/state.rs)) relaxes toward an
 electromagnetic-driven equilibrium
 `piezo_gain × (field_coupling·|B| + charge_coupling·|charge|)` and
 diffuses to neighbours via the same sum-conserving pair-flux scheme as
@@ -182,31 +192,36 @@ charge diffusion. Couplings derive per-planet from the crust's
 piezoelectric fraction, the magnetosphere factor, and an
 atmosphere-density-derived propagation coefficient — so the field is
 prominent on a piezoelectric-crust, strong-dipole, dense-atmosphere
-world and vanishing on a basaltic, no-dipole one. See
-[physics.md#laws](physics.md#laws) for where it sits in the law
+world and vanishing on a basaltic, no-dipole one. Field-sensing
+species (`ElectricField` / `MagneticSense` / `RadioNative`) fire the
+resonance templates, sample `Channel::Resonance`, fit laws, and unlock
+the field-lineage tools.
+
+### Photonic / gravitational / nuclear — diagnostic fields
+
+The other three are *diagnostic* fields: rewritten each tick from
+planet + climate state rather than evolved, but otherwise wired through
+the identical recognition → discovery → tool pipeline.
+
+- **Insolation** (`SolarInsolation`) = stellar irradiance × latitude
+  incidence × cloud clarity. Bright, clear, low-latitude cells read
+  strong; light-sensing species fit laws over it.
+- **Tidal stress** (`TidalStress`) = aggregate moon pull × surface
+  gravity, latitude-banded (peaks at the equatorial / sub-lunar bulge).
+  Seismic species sense it.
+- **Surface radiation** (`SurfaceRadiation`) = a radiogenic crust floor
+  (heavy-element decay) plus a magnetosphere-shielded cosmic flux that
+  rises toward the poles. Thermal-sensing biologies read its heat
+  signature.
+
+The remaining seven levers (combustion, biochemical, cryogenic,
+mechanical, hydraulic, exotic-chemistry, plasma/EM) are scored from the
+world+species prior and the *existing* channels (fuel / oxidiser /
+fossil, ice, elevation, water depth / vapour, substances, charge /
+magnetic). All eleven are scored as equal peers and reach endpoints;
+four now additionally carry a dedicated substrate field. See
+[physics.md#laws](physics.md#laws) for where the four laws sit in the
 roster.
-
-Its consumers are new:
-
-- **Recognition** gained `Field::Resonance`
-  ([`sim/recognition/src/lib.rs:59`](../sim/recognition/src/lib.rs))
-  plus two templates: `resonance_field_active` (id 54, fires above 1
-  unit) and `attention_coherence` (id 55, the sustained high-field
-  state above 5 units). Both read through the `ElectricField` /
-  `MagneticSense` / `RadioNative` channels. See
-  [recognition.md](recognition.md).
-- **Discovery** gained `Channel::Resonance`
-  ([`sim/civ/src/discovery/channels.rs:47`](../sim/civ/src/discovery/channels.rs)),
-  reachable by `ElectricField`, `MagneticSense`, and `RadioNative`
-  modalities. See [discovery.md#channels](discovery.md#channels).
-
-The result is that a field-sensing species on a resonance-rich world
-does **genuine resonance science** through the same hypothesizer
-pipeline as any other lever — it fires the resonance templates,
-samples the resonance channel, fits laws, and unlocks the
-field-lineage tools. Resonance is the one lever with full science
-treatment today; all eleven are scored and reach endpoints, but the
-others do not yet have a dedicated physics field or discovery channel.
 
 ## Endpoints
 

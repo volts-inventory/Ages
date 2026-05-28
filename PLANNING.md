@@ -62,10 +62,12 @@ What runs end-to-end on `./run.sh`:
   11 peer levers (no privileged default, no fallback), labelled
   pure / hybrid / emergent; an orthogonal cognition overlay
   (individual / collective / substrate-distributed); a world+species
-  prior refined by the realized run trajectory; a first-class
-  resonance physics field + recognition templates + discovery
-  channel so field-sensing civs do real resonance science; and a
-  divergent endpoint per archetype at transcendence. Surfaced via
+  prior refined by the realized run trajectory; dedicated additive
+  per-cell physics fields for four levers (resonance, photonic /
+  insolation, gravitational / tidal, nuclear / radiation), each with
+  recognition templates + a discovery channel so an attuned species
+  does real science on that substrate; and a divergent endpoint per
+  archetype at transcendence. Surfaced via
   the additive `ArchetypeDerived` / `ArchetypeEndpoint` events in
   both narrators.
 
@@ -76,7 +78,7 @@ campaigns, ~1000 lines of report.
 
 ## Last change
 
-Civilizational-archetype framework (8 commits). Generalized the
+Civilizational-archetype framework (16 commits). Generalized the
 sim's implicit combustion-privileged developmental path into an
 open space of 11 peer levers (combustion, field_resonance,
 biochemical, cryogenic, mechanical, hydraulic, exotic_chemistry,
@@ -89,18 +91,19 @@ every lever family. An orthogonal cognition overlay (individual /
 collective / substrate-distributed) bends a fate inward toward
 silence at the endpoint. Each lever's score is a world+species prior
 refined by the realized run trajectory (confirmed-relation channels +
-unlocked tool clusters). A new additive per-cell resonance field in
-`sim/physics` (legacy channels bit-identical) makes the
-field/resonance lever first-class: recognition gained
-`Field::Resonance` + `resonance_field_active` / `attention_coherence`
-templates, discovery gained a resonance channel, so field-sensing
-species do genuine resonance science. At transcendence each archetype
-reaches a divergent endpoint (one per lever) rather than a shared
-singularity; the `transcendence` run-end reason is unchanged. Two
-additive events — `ArchetypeDerived` (run start) and
-`ArchetypeEndpoint` (transcendence) — surface through both the Rust
-prose narrator and `narrate.py`. Pure Q32.32, no RNG; labels stable
-across replays. See [`docs/archetype.md`](docs/archetype.md).
+unlocked tool clusters). Four levers now carry a dedicated additive
+per-cell physics field in `sim/physics` (legacy channels
+bit-identical), each with recognition templates + a discovery channel
+so an attuned species does genuine science on that substrate:
+field/resonance (resonance field `Ψ`), photonic (stellar insolation),
+gravitational (tidal stress), and nuclear (surface radiation). At
+transcendence each archetype reaches a divergent endpoint (one per
+lever) rather than a shared singularity; the `transcendence` run-end
+reason is unchanged. Two additive events — `ArchetypeDerived` (run
+start) and `ArchetypeEndpoint` (transcendence) — surface through the
+Rust prose narrator, `narrate.py`, and the markdown report. Pure
+Q32.32, no RNG; labels stable across replays. See
+[`docs/archetype.md`](docs/archetype.md).
 
 Prior change — workspace audit pass — three iterations of concrete
 duplication removal, no behavioural change (post-run reports

@@ -95,7 +95,10 @@ which are a *different* enum living next to recognition's
   physics state:
   `Temperature`, `WaterDepth`, `ChargeMagnitude`, `Elevation`,
   `Fuel`, `Oxidiser`, `Vapour`, `Ice`, `Fossil`, `MagneticField`,
-  `Resonance` (see [discovery.md#channels](discovery.md#channels)).
+  `Resonance`, `Optics`, `Tidal`, `Radiogenic` (see
+  [discovery.md#channels](discovery.md#channels)). The last four are
+  the civilizational-archetype lever substrates — resonance, photonic,
+  gravitational, nuclear (see [archetype.md](archetype.md)).
 
 The `channels_for_modality` table in
 [`sim/civ/src/discovery/channels.rs:107`](../sim/civ/src/discovery/channels.rs)

@@ -224,6 +224,9 @@ names what the hypothesizer reads from physics state:
 | `Fossil` | `Substance::Fossil` density (geological hydrocarbon deposits) | 1 |
 | `MagneticField` | `|B|` from the magnetism kernel (the dipole, not local charge) | 1 |
 | `Resonance` | Per-cell resonance field `Ψ` (the field/resonance lever substrate; see [archetype.md](archetype.md)) | 1 |
+| `Optics` | Per-cell stellar insolation (the photonic lever substrate; see [archetype.md](archetype.md)) | 1 |
+| `Tidal` | Per-cell tidal stress (the gravitational lever substrate; see [archetype.md](archetype.md)) | 1 |
+| `Radiogenic` | Per-cell ionizing surface radiation (the nuclear lever substrate; see [archetype.md](archetype.md)) | 1 |
 
 Samples are stored in **fit-space** (raw value `/ Channel::scale()`)
 so the `Σϕ(x)ϕ(x)ᵀ` accumulator stays inside Q32.32 range even with
@@ -239,10 +242,11 @@ reachable through it:
 
 | Modality | Channels |
 |----------|----------|
-| `VisualLight` / `VisualPolarization` | `Temperature`, `Elevation` |
-| `InfraredThermal` | `Temperature` |
+| `VisualLight` / `VisualPolarization` | `Temperature`, `Elevation`, `Optics` |
+| `InfraredThermal` | `Temperature`, `Radiogenic` |
 | `ChemicalTaste` / `ChemicalPheromone` | `Vapour`, `Oxidiser` |
-| `AcousticAir` / `AcousticWater` / `Seismic` | `WaterDepth`, `Elevation`, `Temperature` |
+| `AcousticAir` / `AcousticWater` | `WaterDepth`, `Elevation`, `Temperature` |
+| `Seismic` | `WaterDepth`, `Elevation`, `Temperature`, `Tidal` |
 | `ElectricField` | `ChargeMagnitude`, `Resonance` |
 | `MagneticSense` / `RadioNative` | `MagneticField`, `Resonance` |
 | `Tactile` | `Temperature`, `Elevation` |
@@ -264,7 +268,7 @@ Three disjoint namespaces ([`channels.rs:69`](../sim/civ/src/discovery/channels.
 
 - **Firing** — `relation_id_for(template_id, channel) =
   template_id × 16 + (channel as u32)`. Caps under 16 channels;
-  current 11 channels leave room for 5 more.
+  current 14 channels leave room for 2 more.
 - **Measurement (direct)** — `measurement_relation_id(y, x) =
   1_000_000 + y.discriminant × 256 + x.discriminant`.
 - **Measurement (residual)** — `2_000_000 + (mixed % 1_000_000)`
