@@ -18,6 +18,7 @@ use crate::ages::derive_ages;
 use crate::digest::{Digest, DiscoveryRecord, TransferRecord};
 use crate::highlights::{highlights, HighlightKind};
 use crate::q32::q32_to_f64;
+use protocol::Event;
 use std::fmt::Write;
 
 mod civ;
@@ -95,6 +96,7 @@ pub fn markdown(d: &Digest) -> String {
 
     render_planet(&mut s, d);
     render_species(&mut s, d);
+    render_archetype(&mut s, d);
     render_ages(&mut s, d);
     render_summary(&mut s, d);
     render_memorable_figures(&mut s, d);
@@ -123,6 +125,46 @@ pub fn markdown(d: &Digest) -> String {
     render_highlights(&mut s, d);
 
     s
+}
+
+fn render_archetype(s: &mut String, d: &Digest) {
+    let Some(a) = d.events.iter().find_map(|e| match e {
+        Event::ArchetypeDerived(a) => Some(a),
+        _ => None,
+    }) else {
+        return;
+    };
+    let _ = writeln!(s, "## Developmental archetype");
+    let _ = writeln!(s);
+    let _ = writeln!(s, "- **Archetype:** {}", a.label);
+    let _ = writeln!(s, "- **Dominant lever:** {}", a.dominant_lever);
+    let _ = writeln!(s, "- **Secondary lever:** {}", a.secondary_lever);
+    let _ = writeln!(s, "- **Cognition:** {}", a.cognition_mode);
+    let _ = writeln!(s);
+
+    // Lever signature, strongest first — the peer-scored dimensions
+    // this world+species lean on.
+    let mut scored: Vec<(&String, f64)> = a
+        .lever_names
+        .iter()
+        .zip(a.lever_scores_q32.iter())
+        .map(|(n, &q)| (n, q32_to_f64(q)))
+        .collect();
+    scored.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
+    let _ = writeln!(s, "Lever signature (strongest first):");
+    let _ = writeln!(s);
+    for (name, score) in scored.iter().take(5) {
+        let _ = writeln!(s, "- {name}: {score:.2}");
+    }
+    let _ = writeln!(s);
+
+    if let Some(e) = d.events.iter().find_map(|e| match e {
+        Event::ArchetypeEndpoint(ep) => Some(ep),
+        _ => None,
+    }) {
+        let _ = writeln!(s, "**Endpoint reached** ({}): {}", e.endpoint_mode, e.description);
+        let _ = writeln!(s);
+    }
 }
 
 fn render_species(s: &mut String, d: &Digest) {
