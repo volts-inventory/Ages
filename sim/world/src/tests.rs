@@ -138,6 +138,51 @@ fn no_atmosphere_means_no_oxidiser() {
 }
 
 #[test]
+fn composition_never_contradicts_temperature() {
+    // No sampled planet may pair an incoherent (composition,
+    // temperature): no liquid-ocean surface above the solvent boil
+    // point, and a sub-surface ocean (frozen-lid) only below freeze.
+    for seed in 0..400u64 {
+        let p = sample_planet(seed);
+        let (freeze_k, boil_k) =
+            sim_physics::chemistry::substrate_phase_thresholds(p.metabolic_substrate.tag());
+        if p.mean_temperature > boil_k {
+            assert!(
+                !matches!(
+                    p.composition,
+                    Composition::OceanWorld | Composition::SubSurfaceOcean
+                ),
+                "seed {seed}: hothouse world must not be an ocean/sub-surface type"
+            );
+        }
+        if matches!(p.composition, Composition::SubSurfaceOcean) {
+            assert!(
+                p.mean_temperature < freeze_k,
+                "seed {seed}: sub-surface ocean needs a frozen surface (mean < freeze)"
+            );
+        }
+    }
+}
+
+#[test]
+fn seed_495_reconciles_to_a_rocky_land_world() {
+    // Seed 495 samples aqueous at ~378 K — above water's boil point —
+    // and previously rolled `SubSurfaceOcean` (all-water, dead). The
+    // composition↔temperature coupling now resolves it to a dry Rocky
+    // world that actually has land relief above its waterline.
+    let p = sample_planet(495);
+    assert_eq!(
+        p.composition,
+        Composition::Rocky,
+        "hot aqueous seed 495 should reconcile to a rocky world"
+    );
+    assert!(
+        p.terrain_peak > p.sea_level,
+        "rocky world should have peaks above the waterline (real land)"
+    );
+}
+
+#[test]
 fn scorching_ocean_world_is_dry_and_habitable() {
     // Seed 495 samples a sub-surface-ocean world at ~378 K — above
     // water's boil point — so its grid floods to kilometres of "sea"
@@ -145,11 +190,18 @@ fn scorching_ocean_world_is_dry_and_habitable() {
     // treat those cells as dry land (habitable) rather than
     // uninhabitable deep ocean (`≈`, multiplier 0.0), or the world
     // produces zero population for its land-evolved species.
-    let planet = sample_planet(495);
+    let mut planet = sample_planet(495);
     assert!(
         surface_solvent_boiled(&planet),
         "seed 495 (~378 K) should be above its solvent boil point"
     );
+    // The composition↔temperature coupling now keeps seed 495 itself
+    // from flooding (it resolves to a rocky land world), so synthesise
+    // a fully-flooded grid here — sea level above every peak — to
+    // exercise the boil-off classifier in isolation. terrain_peak stays
+    // positive so dried basins read as `·` plain, not the `≡` gas-shell
+    // fallback.
+    planet.sea_level = planet.terrain_peak + Real::from_int(1_000);
 
     let grid = HexGrid::new(8, 8);
     let mut state = PhysicsState::new(grid);
