@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # run.sh — generate a fresh world and watch it live.
 #
-# Random seed each launch; 5000 years of sim time at a paced
-# tempo so each frame reads as ~half a sim year. NDJSON event
-# log archived under `runs/{date}-{seed}.ndjson` so previous
-# runs aren't overwritten.
+# Launches the interactive TUI dashboard (`--cli viewport`): tabbed
+# World / Civilizations / Planet views with a live colour map,
+# selectable per-civ panels, and a scrolling event log. Keyboard
+# controls: q quit · space pause · s step · ←/→ speed · ↑/↓ select
+# civ · Tab switch view · d density toggle · PgUp/PgDn scroll log.
+# The sim runs on a background thread; --tick-rate-ms sets the
+# starting speed (adjust live with ←/→).
+#
+# Random seed each launch; 5000 years of sim time. NDJSON event
+# log archived under `runs/{date}-{seed}.ndjson` so previous runs
+# aren't overwritten. (Piping this script's output to a file falls
+# back to a plain non-interactive frame dump.)
 #
 # Tweak the constants below if you want a different default
 # experience.

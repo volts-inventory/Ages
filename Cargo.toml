@@ -26,6 +26,7 @@ publish = false
 anyhow = "1"
 fixed = "1"
 pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+ratatui = "0.29"
 rand = "0.8"
 rand_chacha = "0.3"
 schemars = "0.8"

@@ -47,11 +47,37 @@ pub use setup::lifecycle_for_role;
 ///
 /// Followed by the `RunEnd` emit with the resolved end reason.
 pub fn run<E: Emitter>(cfg: &RunConfig, emitter: &mut E) -> Result<(), E::Error> {
+    run_interruptible(cfg, emitter, || true)
+}
+
+/// `run` with a caller-supplied `should_continue` predicate checked at
+/// the top of every tick. Returning `false` stops the loop *cleanly*:
+/// the in-flight tick has already finished, and the function falls
+/// through to emit the canonical `RunEnd` (reason `interrupted`) so
+/// the event log stays well-formed for the post-run report.
+///
+/// The interactive TUI uses this so quitting mid-run still produces a
+/// complete NDJSON log: the UI sets a shared quit flag, the sim breaks
+/// at the next tick boundary, emits `RunEnd`, and flushes the file —
+/// rather than being torn down with a truncated log.
+pub fn run_interruptible<E, F>(
+    cfg: &RunConfig,
+    emitter: &mut E,
+    should_continue: F,
+) -> Result<(), E::Error>
+where
+    E: Emitter,
+    F: Fn() -> bool,
+{
     let _rng = rng_from_seed(cfg.seed);
 
     let mut rs = setup::setup_run(cfg, emitter)?;
 
     for tick in 0..cfg.max_ticks {
+        if !should_continue() {
+            rs.early_run_end = Some((tick, "interrupted"));
+            break;
+        }
         let cont = run_tick::run_tick(&mut rs, cfg, emitter, tick)?;
         if !cont {
             break;

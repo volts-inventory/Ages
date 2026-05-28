@@ -18,6 +18,7 @@
 //! write a refreshing frame to stdout.
 
 mod ansi;
+mod api;
 mod cards;
 mod config;
 mod emitter;
@@ -26,6 +27,7 @@ mod log;
 mod sidebar;
 mod state;
 
+pub use api::CivPanel;
 pub use config::{TempUnit, ViewportConfig};
 pub use emitter::ViewportEmitter;
 
