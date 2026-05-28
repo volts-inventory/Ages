@@ -205,6 +205,25 @@ pub struct SpeciesCosmologyBias {
     pub hierarchical_q32: i64,
 }
 
+/// Civilizational-archetype classification, emitted once at run start
+/// from the world+species prior (the realized archetype refines as
+/// civs confirm relations and unlock tools). The classifier is open:
+/// `label` is a pure lever name (e.g. `field_resonance`), a `a/b`
+/// hybrid, or an `emergent_x_y_z` signature when no single lever
+/// dominates. `lever_scores_q32` are Q32.32 raw bits parallel to
+/// `lever_names` in canonical lever order; consumers display via
+/// `i64 as f64 / 2^32`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArchetypeDerived {
+    pub tick: u64,
+    pub label: String,
+    pub dominant_lever: String,
+    pub secondary_lever: String,
+    pub cognition_mode: String,
+    pub lever_names: Vec<String>,
+    pub lever_scores_q32: Vec<i64>,
+}
+
 /// Cause of a `SpeciesExtinct` event. Sprint 2 Item 6a emits
 /// `PopulationCollapse` only — biomass dropped below the threshold
 /// for the confirmation window. `KeystoneCascade` and `Catastrophe`

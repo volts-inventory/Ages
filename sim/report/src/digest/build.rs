@@ -544,6 +544,7 @@ impl Digest {
             | Event::MeasurementConfirmed(_)
             | Event::SpeciesNomadsChanged(_)
             | Event::SpeciesCosmologyBias(_)
+            | Event::ArchetypeDerived(_)
             | Event::SpeciesDrift(_)
             | Event::CohesionShifted(_)
             | Event::RelationMythologized(_)

@@ -147,6 +147,10 @@ pub enum Event {
     /// vector as their initial cosmology rather than starting at
     /// neutral.
     SpeciesCosmologyBias(SpeciesCosmologyBias),
+    /// Open lever-signature archetype classification, emitted once at
+    /// run start from the world+species prior. The realized archetype
+    /// refines as civs confirm relations and unlock tools.
+    ArchetypeDerived(ArchetypeDerived),
     /// Per-civ species trait drift snapshot. Emitted at civ
     /// founding (refound, breakaway, or post-collapse emergent) when
     /// the inherited drift exceeds a half-step threshold on at

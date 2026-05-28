@@ -155,6 +155,10 @@ pub fn narrate_event(state: &mut NarratorState, event: &Event) -> Option<String>
             cog_tier(q32_to_f64(s.cognition_q32)),
             s.modalities.len(),
         )),
+        Event::ArchetypeDerived(a) => Some(format!(
+            "Developmental archetype — {} (dominant lever {}, {} cognition).",
+            a.label, a.dominant_lever, a.cognition_mode,
+        )),
         Event::CivFounded(c) => {
             let year = state.year_of(c.tick);
             let label = if c.name.is_empty() {

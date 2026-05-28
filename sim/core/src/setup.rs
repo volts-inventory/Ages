@@ -317,6 +317,29 @@ pub(crate) fn setup_run<E: Emitter>(
         },
     ))?;
 
+    // Archetype classification (open lever-signature). Emitted once at
+    // run start from the world+species prior; downstream the realized
+    // archetype refines as civs confirm relations and unlock tools.
+    {
+        use sim_civ::archetype::Lever;
+        let profile = sim_civ::archetype::classify_world_species(&planet, &species);
+        let ranked = profile.scores.ranked();
+        let lever_names: Vec<String> = Lever::ALL.iter().map(|l| l.name().to_string()).collect();
+        let lever_scores_q32: Vec<i64> = Lever::ALL
+            .iter()
+            .map(|l| profile.scores.get(*l).raw().to_bits())
+            .collect();
+        emitter.emit(&Event::ArchetypeDerived(protocol::ArchetypeDerived {
+            tick: 0,
+            label: profile.label.name(),
+            dominant_lever: ranked[0].0.name().to_string(),
+            secondary_lever: ranked[1].0.name().to_string(),
+            cognition_mode: profile.cognition.name().to_string(),
+            lever_names,
+            lever_scores_q32,
+        }))?;
+    }
+
     let species_modality_kinds: Vec<ModalityKind> =
         species.modalities.iter().map(|m| m.kind).collect();
     let civs: Vec<Civ> = Vec::new();

@@ -179,6 +179,9 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         // starting cosmology, so don't pin it in the highlight
         // reel.
         | Event::SpeciesCosmologyBias(_)
+        // Archetype declaration is run-start metadata; rendered in
+        // the report's planet/species framing, not pinned to the reel.
+        | Event::ArchetypeDerived(_)
         // Drift snapshot is per-civ-founding metadata;
         // shown in chapters but not pinned to highlights.
         | Event::SpeciesDrift(_)

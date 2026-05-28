@@ -99,6 +99,16 @@ pub enum CognitionMode {
     SubstrateDistributed,
 }
 
+impl CognitionMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            CognitionMode::Individual => "individual",
+            CognitionMode::Collective => "collective",
+            CognitionMode::SubstrateDistributed => "substrate_distributed",
+        }
+    }
+}
+
 /// Per-lever score vector. Index aligns with [`Lever::ALL`]. Scores
 /// are clamped to `[0, 1]`; they need not sum to one.
 #[derive(Debug, Clone, Copy)]
