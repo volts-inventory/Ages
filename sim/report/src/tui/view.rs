@@ -131,9 +131,29 @@ fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
         .constraints([Constraint::Min(20), Constraint::Length(34)])
         .split(rows[0]);
     draw_map(f, cols[0], model, ui);
-    draw_civ_list(f, cols[1], model, ui);
+    // Right column: a compact species panel above the civ list, so the
+    // World view shows who the protagonists are (and their habitat)
+    // without switching to the Planet tab.
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(6), Constraint::Min(4)])
+        .split(cols[1]);
+    draw_species_panel(f, right[0], model);
+    draw_civ_list(f, right[1], model, ui);
     draw_legend(f, rows[1], model);
     draw_log(f, rows[2], model, ui);
+}
+
+fn draw_species_panel(f: &mut Frame, area: Rect, model: &Model) {
+    let text = model
+        .species_card_text()
+        .unwrap_or_else(|| "species pending".to_string());
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL).title(" Species "))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 fn draw_civilizations(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {

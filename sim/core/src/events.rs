@@ -175,5 +175,13 @@ pub(crate) fn species_to_event(s: &Species) -> SpeciesDerived {
             sim_species::CognitionTopology::Collective => "collective".into(),
             sim_species::CognitionTopology::Acentric => "acentric".into(),
         },
+        habitat: match s.habitat {
+            sim_species::Habitat::Aquatic => "aquatic".into(),
+            sim_species::Habitat::Terrestrial => "terrestrial".into(),
+            sim_species::Habitat::Amphibious => "amphibious".into(),
+            sim_species::Habitat::Airborne => "airborne".into(),
+            sim_species::Habitat::Subterranean => "subterranean".into(),
+            sim_species::Habitat::Endolithic => "endolithic".into(),
+        },
     }
 }

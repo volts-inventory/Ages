@@ -771,6 +771,7 @@ mod tests {
             manipulation_modes: vec!["prehensile".into()],
             perceivable_template_ids: vec![],
             cognition_topology: "centralized".into(),
+            habitat: "terrestrial".into(),
         })
     }
 

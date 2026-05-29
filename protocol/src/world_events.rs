@@ -178,6 +178,11 @@ pub struct SpeciesDerived {
     /// processing centres). Drives reporting flavour and reserves
     /// space for behavioural forks in later passes.
     pub cognition_topology: String,
+    /// Native habitat / preferred terrain — `aquatic`, `terrestrial`,
+    /// `amphibious`, `airborne`, `subterranean`, `endolithic`. Explains
+    /// where the species nucleates (e.g. an aquatic species seeds in
+    /// the ocean) and is surfaced in the viewport species panel.
+    pub habitat: String,
 }
 
 /// Species trait-drift snapshot at civ founding.

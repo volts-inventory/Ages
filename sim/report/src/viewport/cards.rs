@@ -197,6 +197,9 @@ impl<W: Write> ViewportEmitter<W> {
             s,
             "{lifespan_years}y · {soc_word} · {comm_word} · {biochem}",
         );
+        // Line 4: native habitat / preferred terrain — explains where
+        // the species nucleates (e.g. an aquatic species in the ocean).
+        let _ = writeln!(s, "habitat: {} (preferred terrain)", sp.habitat);
         Some(s)
     }
 }
