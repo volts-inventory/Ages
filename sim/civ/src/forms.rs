@@ -8,7 +8,7 @@
 //! graduates this to a sensorium / tech-tier driven gate
 //! once that design is concrete enough to attach unlocks to.
 
-use sim_arith::transcendental::{exp, ln, pow};
+use sim_arith::transcendental::{exp, ln};
 use sim_arith::Real;
 
 /// The 12 forms in M3's vocabulary. Each is single-variable with
@@ -163,8 +163,14 @@ impl Form {
             Form::Polynomial3 => vec![params[0] / s3, params[1] / s2, params[2] / s, params[3]],
             Form::ExpDecay | Form::ExpGrowth => vec![params[0], params[1] / s],
             Form::PowerLaw => {
-                // a / s^b
-                let denom = pow(s, params[1]);
+                // a / s^b, with s^b = exp(b·ln s). Clamp the exponent to
+                // the safe exp range so a wild fitted exponent doesn't
+                // panic when a confirmed power-law relation is rescaled
+                // to real units. Bit-identical to `pow` within range.
+                let arg = (params[1] * ln(s))
+                    .max(-Real::from_int(20))
+                    .min(Real::from_int(20));
+                let denom = exp(arg);
                 vec![params[0] / denom, params[1]]
             }
             Form::Logarithmic => {
@@ -210,7 +216,18 @@ impl Form {
                 if x <= Real::ZERO {
                     Real::ZERO
                 } else {
-                    params[0] * pow(x, params[1])
+                    // `pow(x, b)` = exp(b·ln x); a wild fit (large fitted
+                    // exponent `params[1]`) can push `b·ln x` past the
+                    // exp ceiling and panic during evaluation. Clamp the
+                    // effective exponent to the same ±20 range as the
+                    // ExpGrowth/Decay arms. Within range this is
+                    // bit-identical to `pow` (which computes exactly
+                    // exp(b·ln x)); only the overflow case is bounded,
+                    // yielding a finite prediction the fit then rejects.
+                    let arg = (params[1] * ln(x))
+                        .max(-Real::from_int(20))
+                        .min(Real::from_int(20));
+                    params[0] * exp(arg)
                 }
             }
             Form::Logarithmic => {

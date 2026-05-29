@@ -436,12 +436,25 @@ pub fn rmse(form: Form, params: &[Real], samples: &[Sample]) -> Real {
     // confidence and rejects the form, which is the desired
     // behaviour.
     let safe_max = Real::from_int(10_000);
+    // I32F32 ceiling guard. Each clamped `diff²` is ≤ 1e8, but a
+    // wildly bad fit over *many* samples can still drive `sum_sq` past
+    // the ~2.1e9 I32F32 maximum (the per-diff clamp alone is not
+    // enough once the sample count is large — e.g. a big habitable
+    // ocean). Stop and return a saturating-large RMSE, which `fit`
+    // turns into ~zero confidence so the form is rejected — the same
+    // outcome a huge finite RMSE would give, minus the panic. Normal
+    // fits never approach the ceiling, so their RMSE is bit-identical.
+    let sum_sq_ceiling = Real::from_int(2_000_000_000);
     let mut sum_sq = Real::ZERO;
     for s in samples {
         let pred = form.evaluate(params, s.x);
         let raw_diff = s.y - pred;
         let diff = raw_diff.max(-safe_max).min(safe_max);
-        sum_sq = sum_sq + diff * diff;
+        let term = diff * diff;
+        if sum_sq > sum_sq_ceiling - term {
+            return safe_max;
+        }
+        sum_sq = sum_sq + term;
     }
     let mean_sq = sum_sq / Real::from_int(i64::try_from(n).unwrap_or(i64::MAX));
     // Q32.32 add/mul with the per-iter clamp keeps `sum_sq`
