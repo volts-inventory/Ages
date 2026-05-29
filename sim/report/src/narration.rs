@@ -155,6 +155,19 @@ pub fn narrate_event(state: &mut NarratorState, event: &Event) -> Option<String>
             cog_tier(q32_to_f64(s.cognition_q32)),
             s.modalities.len(),
         )),
+        Event::ArchetypeDerived(a) => Some(format!(
+            "Developmental archetype — {} (dominant lever {}, {} cognition).",
+            a.label, a.dominant_lever, a.cognition_mode,
+        )),
+        Event::ArchetypeEndpoint(e) => Some(format!(
+            "{} reaches its endpoint — {}",
+            if e.civ_name.is_empty() {
+                "The civilization"
+            } else {
+                e.civ_name.as_str()
+            },
+            e.description,
+        )),
         Event::CivFounded(c) => {
             let year = state.year_of(c.tick);
             let label = if c.name.is_empty() {
@@ -758,6 +771,7 @@ mod tests {
             manipulation_modes: vec!["prehensile".into()],
             perceivable_template_ids: vec![],
             cognition_topology: "centralized".into(),
+            habitat: "terrestrial".into(),
         })
     }
 

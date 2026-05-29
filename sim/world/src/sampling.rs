@@ -349,6 +349,23 @@ pub fn sample_planet(seed: u64) -> Planet {
         Composition::GaseousShell => Real::ZERO,
     };
 
+    // Planet-scale realism: terrain relief is a real physical feature
+    // of a real-sized planet, so its magnitude scales with the planet's
+    // radius — a bigger world has proportionally grander relief (taller
+    // peaks, deeper basins). `sea_level` and `terrain_peak` scale by the
+    // same `radius` factor so their *ratio* is unchanged: the per-cell
+    // glyph classifier in `habitability.rs` keys land bands off
+    // fractions of `terrain_peak` (`peak_70` / `peak_40`) and water
+    // bands off `sea_level`, so a uniform scale leaves the glyph
+    // distribution invariant while the absolute relief grows. The
+    // `init_planet` elevation builder scales its slopes / buffer by the
+    // same radius so landmass *extent* (in cells) is also preserved.
+    // Earth radius (1.0) is a no-op, keeping every Earth-radius seed
+    // byte-identical. Applied after the RNG draws so the draw sequence
+    // — and therefore byte-replay — is unchanged.
+    let sea_level = sea_level * radius;
+    let terrain_peak = terrain_peak * radius;
+
     // Peak position; init_planet wraps to grid bounds.
     let terrain_centre_q = rng.gen_range(0..32);
     let terrain_centre_r = rng.gen_range(0..32);
@@ -610,7 +627,7 @@ pub fn sample_planet(seed: u64) -> Planet {
 
     // Continuous biosphere richness scalar. Categorical →
     // [low, high] ranges, clamped to [0, 1] after jitter.
-    let biosphere_density = sample_biosphere_density(biosphere, &mut rng);
+    let biosphere_density = sample_biosphere_density(biosphere, radius, &mut rng);
 
     // Continuous crustal composition. Sampled per
     // (categorical-crust, substrate); ±10% jitter then normalise.
@@ -899,7 +916,24 @@ pub(crate) fn sample_atmospheric_composition(
 /// continuous mapping with ±0.10 jitter, clamped to `[0, 1]`.
 /// Determinism: takes the same `ChaCha20Rng` already in
 /// `sample_planet`'s draw sequence.
-pub(crate) fn sample_biosphere_density(class: BiosphereClass, rng: &mut ChaCha20Rng) -> Real {
+///
+/// Planet-scale realism (habitat generation): a larger planet offers
+/// proportionally more — and more varied — habitable surface, so its
+/// biosphere fills out a larger fraction of that surface. The richness
+/// scalar is therefore nudged up by an area-derived factor before the
+/// `[0, 1]` clamp: a bigger world's habitat *extent / diversity* rises
+/// toward saturation. The clamp at 1.0 keeps the lift sub-quadratic —
+/// it can't run the richness away — so planet-wide carrying capacity
+/// still scales ≈ `radius²` (owned by `planet_area_factor` on the civ),
+/// not `radius⁴`. Earth radius (1.0) is a no-op, leaving every
+/// Earth-radius seed's density byte-identical; only larger worlds gain
+/// extra habitat coverage. Applied after the RNG draw so byte-replay of
+/// the draw sequence is unchanged.
+pub(crate) fn sample_biosphere_density(
+    class: BiosphereClass,
+    radius: Real,
+    rng: &mut ChaCha20Rng,
+) -> Real {
     let baseline = match class {
         BiosphereClass::None => 0,
         BiosphereClass::Sparse => 30,
@@ -908,7 +942,14 @@ pub(crate) fn sample_biosphere_density(class: BiosphereClass, rng: &mut ChaCha20
     };
     let jitter = rng.gen_range(-10_i64..=10_i64);
     let raw = (baseline + jitter).clamp(0, 100);
-    Real::from_ratio(raw, 100)
+    let base_density = Real::from_ratio(raw, 100);
+    // Area-derived habitat-extent lift. Surface area ∝ radius², but we
+    // apply the milder linear `radius` factor (floored at 1.0 so smaller
+    // worlds aren't penalised below their sampled richness) so the
+    // post-clamp density rises gently with planet size rather than
+    // saturating instantly on any super-Earth.
+    let area_lift = radius.max(Real::ONE);
+    (base_density * area_lift).min(Real::ONE)
 }
 
 /// Per-seed crustal composition. Sampled per (categorical-crust,

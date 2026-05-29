@@ -431,6 +431,41 @@ pub(crate) fn run_tick<E: Emitter>(
     }
     if let Some(first) = rs.first_tier5_complete_tick {
         if tick.saturating_sub(first) >= TRANSCENDENCE_SUSTAINED_TICKS {
+            // Resolve the divergent archetype endpoint for the civ that
+            // crossed the threshold. The realized archetype is read from
+            // its tool roster (a tier-5 roster is a strong lever signal);
+            // different levers reach different fates.
+            if let Some(civ) = rs.civs.iter().find(|c| {
+                tech::ToolKind::TIER_FIVE
+                    .iter()
+                    .all(|t| c.unlocked_tools.contains(t))
+            }) {
+                // Exclude the tier-5 transcendence set itself: every
+                // transcending civ holds those three tools, so they are
+                // non-discriminating and would bias every endpoint
+                // toward the same lever. Refining on the *rest* of the
+                // roster lets the fate reflect the civ's distinguishing
+                // archetype.
+                let tools: Vec<tech::ToolKind> = civ
+                    .unlocked_tools
+                    .iter()
+                    .copied()
+                    .filter(|t| !tech::ToolKind::TIER_FIVE.contains(t))
+                    .collect();
+                let profile =
+                    sim_civ::archetype::classify_realized(&rs.planet, &rs.species, &[], &tools);
+                let endpoint = sim_civ::archetype::endpoint_for(&profile);
+                emitter.emit(&Event::ArchetypeEndpoint(protocol::ArchetypeEndpoint {
+                    tick,
+                    civ_id: civ.id,
+                    civ_name: civ.name.clone(),
+                    label: profile.label.name(),
+                    dominant_lever: profile.label.dominant_lever().name().to_string(),
+                    cognition_mode: profile.cognition.name().to_string(),
+                    endpoint_mode: endpoint.mode.to_string(),
+                    description: endpoint.description,
+                }))?;
+            }
             rs.early_run_end = Some((tick, "transcendence"));
             return Ok(false);
         }

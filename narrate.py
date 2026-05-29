@@ -237,7 +237,7 @@ def read_events(path):
 
 # ── Narrative builders ──
 
-def opening(meta: Metadata, planet, species, run_start, run_end):
+def opening(meta: Metadata, planet, species, run_start, run_end, archetype=None):
     name = planet["name"]
     seed = planet["seed"]
     substrate = planet["metabolic_substrate"]
@@ -320,6 +320,17 @@ def opening(meta: Metadata, planet, species, run_start, run_end):
         secondaries = [PROSE_MOD.get(m, m.lower()) for m in species["modalities"][1:5]]
         out.append(f"Secondary senses: {', '.join(secondaries)}.")
     out.append("")
+
+    if archetype:
+        label = archetype.get("label", "?").replace("_", " ")
+        dom = archetype.get("dominant_lever", "?").replace("_", " ")
+        cog = archetype.get("cognition_mode", "individual")
+        cog_note = "" if cog == "individual" else f", a {cog.replace('_', '-')} mind"
+        out.append(
+            f"Developmental archetype: {label} — this world and people lean on "
+            f"{dom} as their foundational lever{cog_note}."
+        )
+        out.append("")
     return "\n".join(out)
 
 
@@ -677,6 +688,13 @@ def closing(events_by_kind, run_end):
     out.append(f"  · resolved {conflicts} conflicts")
     out.append(f"  · weathered {catastrophes} catastrophes")
     out.append("")
+
+    endpoints = events_by_kind.get("archetype_endpoint", [])
+    if endpoints:
+        e = endpoints[-1]
+        who = e.get("civ_name") or "The civilization"
+        out.append(f"{who} reached its endpoint — {e.get('description', '')}")
+        out.append("")
     return "\n".join(out)
 
 
@@ -694,6 +712,7 @@ def main(argv):
     species = None
     run_start = None
     run_end = None
+    archetype = None
     metadata = Metadata()
     events_by_kind = defaultdict(list)
 
@@ -714,6 +733,8 @@ def main(argv):
             # tables. Populates the Metadata bag so the rest of
             # the script reads everything from one place.
             metadata.load_from_event(ev)
+        elif kind == "archetype_derived":
+            archetype = ev
         elif kind in {
             "civ_founded", "civ_collapsed", "civ_contact",
             "tech_unlocked", "knowledge_transmitted",
@@ -722,6 +743,9 @@ def main(argv):
             # M8: trade routes — established/closed events thread
             # the economic story through the narrator.
             "trade_route_established", "trade_route_closed",
+            # Archetype endpoint — the run's climactic divergent fate,
+            # rendered in the closing.
+            "archetype_endpoint",
         }:
             events_by_kind[kind].append(ev)
 
@@ -730,7 +754,7 @@ def main(argv):
         sys.exit(1)
 
     grid_width = planet_map["grid_width"] if planet_map else None
-    print(opening(metadata, planet, species, run_start, run_end))
+    print(opening(metadata, planet, species, run_start, run_end, archetype))
     print(render_arcs(narrate_civ_arcs(events_by_kind, grid_width)))
     print(closing(events_by_kind, run_end))
 

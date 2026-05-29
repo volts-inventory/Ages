@@ -82,7 +82,14 @@ impl Civ {
         // farms / forages. Tools and tech multiply through the
         // same way they did pre-refactor.
         let producer_share = self.producer_biomass * claimed_frac;
-        let mult = producer_share * self.tech_multiplier * self.tool_capacity_multiplier();
+        // `planet_area_factor` (∝ radius²) restores the planet's real
+        // physical surface area into the capacity: the hex grid is a
+        // sampling resolution, not the planet, so a bigger world hosts
+        // proportionally more population at the same biosphere / tech.
+        let mult = producer_share
+            * self.tech_multiplier
+            * self.tool_capacity_multiplier()
+            * self.planet_area_factor;
         Pop::from_real(self.carrying_capacity_per_unit) * mult
     }
 
@@ -126,7 +133,12 @@ impl Civ {
             .fold(Real::ZERO, |a, b| a + b);
         let weighted_share = weighted / total_r;
         let producer_share = self.producer_biomass * weighted_share;
-        let mult = producer_share * self.tech_multiplier * self.tool_capacity_multiplier();
+        // Planet-area scaling applies the same way it does in the
+        // plain `carrying_capacity` path — see that method's comment.
+        let mult = producer_share
+            * self.tech_multiplier
+            * self.tool_capacity_multiplier()
+            * self.planet_area_factor;
         Pop::from_real(self.carrying_capacity_per_unit) * mult
     }
 
@@ -170,7 +182,8 @@ impl Civ {
                     * self.tech_multiplier
                     * self.tool_capacity_multiplier()
                     * factor
-                    * hab;
+                    * hab
+                    * self.planet_area_factor;
                 pop_per_unit * mult
             })
             .fold(Pop::ZERO, |a, b| a + b)
@@ -260,7 +273,8 @@ impl Civ {
             * self.tech_multiplier
             * self.tool_capacity_multiplier()
             * factor
-            * hab;
+            * hab
+            * self.planet_area_factor;
         Pop::from_real(self.carrying_capacity_per_unit) * mult
     }
 

@@ -73,7 +73,11 @@ fn channel_to_substance(channel: Channel) -> Option<Substance> {
         | Channel::WaterDepth
         | Channel::ChargeMagnitude
         | Channel::Elevation
-        | Channel::MagneticField => None,
+        | Channel::MagneticField
+        | Channel::Resonance
+        | Channel::Optics
+        | Channel::Tidal
+        | Channel::Radiogenic => None,
     }
 }
 
@@ -154,7 +158,10 @@ pub fn is_tool_emergence_tick_for_metabolism(tick: u64, metabolism: sim_arith::R
 fn channel_to_kind(channel: Channel) -> ChannelKind {
     match channel {
         Channel::Temperature => ChannelKind::InfraredThermal,
-        Channel::ChargeMagnitude => ChannelKind::ElectricField,
+        Channel::ChargeMagnitude | Channel::Resonance => ChannelKind::ElectricField,
+        Channel::Optics => ChannelKind::VisualLight,
+        Channel::Tidal => ChannelKind::Seismic,
+        Channel::Radiogenic => ChannelKind::InfraredThermal,
         Channel::MagneticField => ChannelKind::MagneticSense,
         Channel::WaterDepth => ChannelKind::AcousticWater,
         Channel::Elevation => ChannelKind::Tactile,
@@ -264,6 +271,28 @@ fn effects_for_cluster(cluster_size: usize, channel: Channel) -> DynamicToolEffe
             effects.expansion_rate_bonus = Real::percent(5) * scale;
             effects.discovery_rate_bonus = Real::percent(5) * scale;
         }
+        // Resonance: field-resonance instrumentation — the same
+        // electromagnetic-science axis as ChargeMagnitude, so it
+        // accelerates the discovery loop directly.
+        Channel::Resonance => {
+            effects.discovery_rate_bonus = Real::percent(8) * scale;
+        }
+        // Optics: photonic instrumentation — lenses, heliographs,
+        // light-based measurement. Accelerates the discovery loop.
+        Channel::Optics => {
+            effects.discovery_rate_bonus = Real::percent(8) * scale;
+        }
+        // Tidal: gravimetry / tidal-prediction instrumentation. Lifts
+        // expansion (navigation, tide tables) and the science loop.
+        Channel::Tidal => {
+            effects.expansion_rate_bonus = Real::percent(5) * scale;
+            effects.discovery_rate_bonus = Real::percent(5) * scale;
+        }
+        // Radiogenic: radiation instrumentation — detection, shielding,
+        // and eventually decay-power. Accelerates the discovery loop.
+        Channel::Radiogenic => {
+            effects.discovery_rate_bonus = Real::percent(8) * scale;
+        }
     }
     effects
 }
@@ -280,6 +309,10 @@ fn channel_label(channel: Channel) -> &'static str {
         Channel::Vapour => "vapour",
         Channel::Ice => "cryogenic",
         Channel::Fossil => "fossil",
+        Channel::Resonance => "resonance",
+        Channel::Optics => "optics",
+        Channel::Tidal => "tidal",
+        Channel::Radiogenic => "radiogenic",
     }
 }
 

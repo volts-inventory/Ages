@@ -12,7 +12,15 @@ pub struct RecognitionFiring {
     pub tick: u64,
     pub template_id: u32,
     pub template_name: String,
+    /// A representative cell that fired this template this scan (the
+    /// first in scan order). Per-cell firings are aggregated for the
+    /// event log; the sim's internal per-cell observation is unchanged.
     pub cell: u32,
+    /// Number of cells that fired this template this scan. The event is
+    /// emitted once per template per scan (not once per cell), so the
+    /// log stays compact on uniform planets where a template matches
+    /// most cells. Consumers that want a firing total sum this.
+    pub count: u32,
 }
 
 /// Planet-sampled event — emitted once at run start, immediately
@@ -178,6 +186,11 @@ pub struct SpeciesDerived {
     /// processing centres). Drives reporting flavour and reserves
     /// space for behavioural forks in later passes.
     pub cognition_topology: String,
+    /// Native habitat / preferred terrain — `aquatic`, `terrestrial`,
+    /// `amphibious`, `airborne`, `subterranean`, `endolithic`. Explains
+    /// where the species nucleates (e.g. an aquatic species seeds in
+    /// the ocean) and is surfaced in the viewport species panel.
+    pub habitat: String,
 }
 
 /// Species trait-drift snapshot at civ founding.
@@ -203,6 +216,46 @@ pub struct SpeciesCosmologyBias {
     pub reformist_q32: i64,
     pub mystical_q32: i64,
     pub hierarchical_q32: i64,
+}
+
+/// Civilizational-archetype classification, emitted once at run start
+/// from the world+species prior (the realized archetype refines as
+/// civs confirm relations and unlock tools). The classifier is open:
+/// `label` is a pure lever name (e.g. `field_resonance`), a `a/b`
+/// hybrid, or an `emergent_x_y_z` signature when no single lever
+/// dominates. `lever_scores_q32` are Q32.32 raw bits parallel to
+/// `lever_names` in canonical lever order; consumers display via
+/// `i64 as f64 / 2^32`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArchetypeDerived {
+    pub tick: u64,
+    pub label: String,
+    pub dominant_lever: String,
+    pub secondary_lever: String,
+    pub cognition_mode: String,
+    pub lever_names: Vec<String>,
+    pub lever_scores_q32: Vec<i64>,
+}
+
+/// Archetype-specific civilizational endpoint, emitted when a civ
+/// reaches the transcendence threshold (all tier-5 tools sustained).
+/// Different foundational levers reach *different* fates: a
+/// field-resonance civ a matter-transition that draws watchers, a
+/// biochemical one a biosphere-merge that seeds panspermia, a
+/// combustion one an uncertain industrial apex, and so on. The
+/// `endpoint_mode` is a stable machine tag; `description` is the
+/// narrated divergent fate. Cognition overlay (collective /
+/// substrate-distributed) can bend the fate inward toward silence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArchetypeEndpoint {
+    pub tick: u64,
+    pub civ_id: u32,
+    pub civ_name: String,
+    pub label: String,
+    pub dominant_lever: String,
+    pub cognition_mode: String,
+    pub endpoint_mode: String,
+    pub description: String,
 }
 
 /// Cause of a `SpeciesExtinct` event. Sprint 2 Item 6a emits

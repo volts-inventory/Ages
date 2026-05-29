@@ -52,6 +52,23 @@ pub enum Field {
     /// templates (downwind shadow, leeward) need a separate
     /// signature variant once those land.
     WindMagnitude,
+    /// Per-cell resonance field (`state.resonance()`). The
+    /// "field-and-resonance" archetype's primary substrate signal —
+    /// field-sensing species perceive it directly and civ science
+    /// fits laws over it.
+    Resonance,
+    /// Per-cell stellar insolation (`state.insolation()`). The photonic
+    /// archetype's substrate signal — light-sensing species perceive it
+    /// directly and civ science fits laws over it.
+    Insolation,
+    /// Per-cell tidal stress (`state.tidal_stress()`). The
+    /// gravitational archetype's substrate signal — ground- and
+    /// motion-sensing species perceive it.
+    TidalStress,
+    /// Per-cell ionizing surface radiation (`state.surface_radiation()`).
+    /// The nuclear archetype's substrate signal — thermal-sensing and
+    /// radiation-hardened biologies perceive it.
+    Radiation,
 }
 
 impl Field {
@@ -68,6 +85,10 @@ impl Field {
                 let r = vr[cell];
                 sqrt(q * q + r * r)
             }
+            Field::Resonance => state.resonance()[cell],
+            Field::Insolation => state.insolation()[cell],
+            Field::TidalStress => state.tidal_stress()[cell],
+            Field::Radiation => state.surface_radiation()[cell],
         }
     }
 }

@@ -67,7 +67,12 @@ trace back to at least one.
   CI enforces byte-for-byte determinism on the reference seed.
 - **Shipped:** 35 plan-v2 items + 26 post-implementation fixes +
   4 calibration fixes + 19 cleanup PRs + viewport / narration +
-  docs cleanup wave.
+  docs cleanup wave + the open civilizational-archetype framework.
+- **Developmental-path space is open, not combustion-privileged.**
+  A run's developmental path is scored across 11 peer levers
+  (combustion is one option among eleven, not the assumed default)
+  and labelled pure / hybrid / emergent, with a divergent endpoint
+  per archetype. See [archetype.md](archetype.md).
 - **PR count:** 160+ PRs merged to `main`.
 
 ## Vision pillar → shipped features
@@ -93,6 +98,9 @@ trace back to at least one.
 | Civs emerge from nomadic density + tech-readiness, not scripted | **Shipped** | [civ.md](civ.md), [population.md](population.md) |
 | Emergent recognition templates: confirmed thresholds become new named phenomena | **Shipped** | [recognition.md](recognition.md) |
 | Emergent tools: confirmed-relation clusters become new tools in the species canon | **Shipped** | [tech.md](tech.md) |
+| Open developmental-path space — 11 peer levers, no privileged default, pure/hybrid/emergent labels (paths nobody authored still detected + named) | **Shipped** (was implicitly combustion-privileged) | [archetype.md](archetype.md) |
+| Divergent endpoints — each archetype reaches a different fate at transcendence, not one shared singularity; cognition overlay bends collective/substrate minds toward silence | **Shipped** | [archetype.md](archetype.md) |
+| Resonance field as a first-class lever substrate — field-sensing civs do genuine resonance science (templates + discovery channel) | **Shipped** (resonance only; the other 10 levers are scored but lack dedicated physics/discovery yet) | [archetype.md](archetype.md), [physics.md](physics.md) |
 | Two-layer culture: slow-drift cosmology + fast-divergent religion | **Shipped** (5-axis + 3-axis) | [culture.md](culture.md) |
 
 ### 3. Species as protagonist

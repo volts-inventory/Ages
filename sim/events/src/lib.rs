@@ -188,6 +188,8 @@ impl Emitter for CountingEmitter {
             Event::TemplateDiscovered(_) => "template_discovered",
             Event::ToolDiscovered(_) => "tool_discovered",
             Event::SpeciesCosmologyBias(_) => "species_cosmology_bias",
+            Event::ArchetypeDerived(_) => "archetype_derived",
+            Event::ArchetypeEndpoint(_) => "archetype_endpoint",
             Event::SpeciesDrift(_) => "species_drift",
             Event::CohesionShifted(_) => "cohesion_shifted",
             Event::RelationMythologized(_) => "relation_mythologized",
@@ -240,6 +242,13 @@ pub fn is_highlight_event(event: &Event) -> bool {
             // narrative weight as Species — it's the species-
             // level cultural-substrate declaration.
             | Event::SpeciesCosmologyBias(_)
+            // The run-start archetype declaration — which of the
+            // foundational levers this world+species develops along —
+            // is a top-level structural pin.
+            | Event::ArchetypeDerived(_)
+            // The archetype endpoint is the run's climactic divergent
+            // fate — always a headline pin.
+            | Event::ArchetypeEndpoint(_)
             | Event::RunEnd { .. }
     )
     // PlanetMap is intentionally excluded — it's a one-shot setup

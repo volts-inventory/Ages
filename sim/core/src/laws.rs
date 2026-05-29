@@ -81,6 +81,24 @@ pub(crate) struct Laws {
     /// rapid rotators get four-or-more. Vacuum planets short-circuit
     /// via the law's `has_atmosphere` flag.
     pub hadley: sim_physics::HadleyCirculation,
+    /// Field-and-resonance vision extension: the speculative
+    /// resonance / attention field. Couplings derive from the crust's
+    /// piezoelectric fraction (gain), the magnetosphere class
+    /// (field coupling), and atmosphere density (propagation), so the
+    /// field is prominent on field-and-resonance archetype worlds and
+    /// near-zero on basaltic no-dipole ones.
+    pub resonance: sim_physics::ResonanceField,
+    /// Photonic vision extension: the diagnostic stellar-insolation
+    /// field. Scaled from the planet's sampled stellar irradiance, so
+    /// it is strong on bright-star worlds and faint on dim ones.
+    pub insolation: sim_physics::SolarInsolation,
+    /// Gravitational vision extension: diagnostic tidal-stress field.
+    /// Amplitude scales with the planet's moons and surface gravity.
+    pub tidal_stress: sim_physics::TidalStress,
+    /// Nuclear vision extension: diagnostic surface-radiation field.
+    /// Radiogenic floor from crustal heavy elements + magnetosphere-
+    /// shielded cosmic flux.
+    pub surface_radiation: sim_physics::SurfaceRadiation,
 }
 
 /// Build all physics laws with coefficients derived from a sampled
@@ -402,6 +420,48 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         },
     };
 
+    // Field-and-resonance vision extension. Gain from the crust's
+    // piezoelectric fraction; field coupling from the magnetosphere
+    // class (None 0 / Weak 1 / Strong 3); propagation from atmosphere
+    // density (denser air carries the resonance farther, floored low
+    // for thin atmospheres and zero in vacuum). The resonance law is
+    // installed on every run (vision boundary moved): on a basaltic,
+    // no-dipole world the field stays near zero, so it is harmless
+    // there and prominent only on field-and-resonance archetypes.
+    let piezo_fraction = planet.crustal_composition.piezoelectric;
+    let field_factor = match planet.magnetosphere {
+        Magnetosphere::None => Real::ZERO,
+        Magnetosphere::Weak => Real::ONE,
+        Magnetosphere::Strong => Real::from_int(3),
+    };
+    let density_x100 = planet.atmosphere.density_x100();
+    let propagation = if density_x100 > 0 {
+        (Real::percent(2) * Real::from_int(density_x100) / Real::from_int(122))
+            .min(Real::percent(10))
+            .max(Real::from_ratio(1, 1000))
+    } else {
+        Real::ZERO
+    };
+    let resonance =
+        sim_physics::ResonanceField::for_coupling(piezo_fraction, field_factor, propagation);
+    // Photonic vision extension: diagnostic insolation scaled from the
+    // sampled stellar irradiance.
+    let insolation = sim_physics::SolarInsolation::for_planet(planet.stellar_luminosity);
+    // Gravitational vision extension: tidal stress from aggregate moon
+    // pull (one Earth-tide per moon, first-order) × surface gravity.
+    let gravity_g = planet.gravity() / Real::from_ratio(981, 100);
+    let tidal_coefficient = Real::from_int(i64::from(planet.moon_count));
+    let tidal_stress = sim_physics::TidalStress::for_planet(tidal_coefficient, gravity_g);
+    // Nuclear vision extension: radiogenic crust floor + cosmic flux
+    // gated by magnetospheric shielding.
+    let shielding = match planet.magnetosphere {
+        sim_world::Magnetosphere::None => Real::ZERO,
+        sim_world::Magnetosphere::Weak => Real::from_ratio(5, 10),
+        sim_world::Magnetosphere::Strong => Real::from_ratio(9, 10),
+    };
+    let surface_radiation =
+        sim_physics::SurfaceRadiation::for_planet(planet.crustal_composition.rare_earth, shielding);
+
     Laws {
         fluid,
         heat,
@@ -425,6 +485,10 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
         planet_radius_earth_units,
         atmospheric_escape,
         hadley,
+        resonance,
+        insolation,
+        tidal_stress,
+        surface_radiation,
     }
 }
 

@@ -881,6 +881,108 @@ impl RecognitionLibrary {
                         ChannelKind::VisualLight,
                     ],
                 },
+                // ============================================
+                // Resonance-field templates. The new per-cell
+                // resonance field (`state.resonance()`) surfaces as
+                // the "field-and-resonance" archetype's primary
+                // substrate signal. Field-sensing species perceive
+                // it via the electric / magnetic / radio channels.
+                // ============================================
+                // Resonance field active — the field is present at
+                // an appreciable level. Low floor (1 unit) mirrors
+                // the way `magnetic_field_strong` gates on a modest
+                // |B| threshold.
+                RecognitionTemplate {
+                    id: 54,
+                    name: "resonance_field_active",
+                    signature: Signature::Above(Field::Resonance, Real::from_int(1)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[
+                        ChannelKind::ElectricField,
+                        ChannelKind::MagneticSense,
+                        ChannelKind::RadioNative,
+                    ],
+                },
+                // Attention coherence — strong resonance, the
+                // sustained high-field state field-sensing species
+                // read as coherent attention. Higher floor (5
+                // units) distinguishes it from the everyday
+                // background `resonance_field_active`.
+                RecognitionTemplate {
+                    id: 55,
+                    name: "attention_coherence",
+                    signature: Signature::Above(Field::Resonance, Real::from_int(5)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[
+                        ChannelKind::ElectricField,
+                        ChannelKind::MagneticSense,
+                        ChannelKind::RadioNative,
+                    ],
+                },
+                // ============================================
+                // Insolation templates. The diagnostic per-cell
+                // stellar-insolation field (`state.insolation()`)
+                // surfaces as the photonic archetype's substrate
+                // signal. Light-sensing species perceive it via the
+                // visual channels.
+                // ============================================
+                // Daylight present — insolation above a modest floor.
+                RecognitionTemplate {
+                    id: 56,
+                    name: "daylight_strong",
+                    signature: Signature::Above(Field::Insolation, Real::from_int(2)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::VisualLight, ChannelKind::VisualPolarization],
+                },
+                // Solar abundance — a brightly-lit cell, the
+                // high-irradiance state photonic civilizations build on.
+                RecognitionTemplate {
+                    id: 57,
+                    name: "solar_abundance",
+                    signature: Signature::Above(Field::Insolation, Real::from_int(5)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::VisualLight, ChannelKind::VisualPolarization],
+                },
+                // ============================================
+                // Tidal-stress templates. The diagnostic per-cell
+                // tidal field (`state.tidal_stress()`) surfaces as the
+                // gravitational archetype's substrate signal. Ground-
+                // and motion-sensing species perceive it.
+                // ============================================
+                RecognitionTemplate {
+                    id: 58,
+                    name: "tidal_flexing",
+                    signature: Signature::Above(Field::TidalStress, Real::from_int(1)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::Seismic],
+                },
+                RecognitionTemplate {
+                    id: 59,
+                    name: "strong_tides",
+                    signature: Signature::Above(Field::TidalStress, Real::from_int(3)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::Seismic],
+                },
+                // ============================================
+                // Surface-radiation templates. The diagnostic per-cell
+                // ionizing-radiation field (`state.surface_radiation()`)
+                // surfaces as the nuclear archetype's substrate signal.
+                // Thermal-sensing biologies perceive its heat signature.
+                // ============================================
+                RecognitionTemplate {
+                    id: 60,
+                    name: "radiation_background",
+                    signature: Signature::Above(Field::Radiation, Real::from_int(2)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::InfraredThermal],
+                },
+                RecognitionTemplate {
+                    id: 61,
+                    name: "radiation_hotspot",
+                    signature: Signature::Above(Field::Radiation, Real::from_int(8)),
+                    tags: &[FormTag::Threshold],
+                    channels: &[ChannelKind::InfraredThermal],
+                },
             ],
         }
     }

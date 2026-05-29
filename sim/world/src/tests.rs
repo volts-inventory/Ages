@@ -107,9 +107,12 @@ fn sampled_planets_lie_in_si_ranges() {
         // Stellar irradiance 200 to 3000 W/m².
         assert!(p.stellar_luminosity >= Real::from_int(200));
         assert!(p.stellar_luminosity <= Real::from_int(3_000));
-        // Terrain 0 to 15_000 m.
+        // Terrain 0 to 15_000 m at Earth radius, scaled by the planet's
+        // radius for planet-scale relief (see `sampling.rs`). The
+        // largest sampled radius is 1.6 (Ammoniacal), so the radius-
+        // scaled peak ceiling is 15_000 × 1.6 = 24_000 m.
         assert!(p.terrain_peak >= Real::ZERO);
-        assert!(p.terrain_peak <= Real::from_int(15_000));
+        assert!(p.terrain_peak <= Real::from_int(24_000));
     }
 }
 

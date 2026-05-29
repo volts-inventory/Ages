@@ -332,6 +332,22 @@ impl Real {
         Self(diff)
     }
 
+    /// Saturating division: a tiny divisor (e.g. an inverse-square fit
+    /// evaluated near its singularity) would otherwise overflow I32F32
+    /// and panic. Division by zero saturates to `MAX`/`MIN` by sign of
+    /// the numerator (callers that care guard the zero case first).
+    #[must_use]
+    pub fn saturating_div(self, rhs: Self) -> Self {
+        if rhs.0 == I32F32::ZERO {
+            return if self.0 < I32F32::ZERO {
+                Self(I32F32::MIN)
+            } else {
+                Self(I32F32::MAX)
+            };
+        }
+        Self(self.0.saturating_div(rhs.0))
+    }
+
     /// Return a `f64` *for display only*. Not for use in deterministic
     /// computation; if you call this in a sim loop you have a bug.
     pub fn to_f64_for_display(self) -> f64 {

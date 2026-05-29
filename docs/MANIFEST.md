@@ -48,6 +48,7 @@ rationale see `docs/decisions/INDEX.md` (archive only).
 | `docs/physics.md` | Heat / fluid / hydrology / magnetism / Lorentz / Coriolis / tides / radiation / vertical convection / tectonics / tidal heating / atmospheric escape. |
 | `docs/recognition.md` | Templates, signatures, fields, perceivable vs latent, emergent templates. |
 | `docs/discovery.md` | Form vocabulary, fits, hypothesizer lifecycle, theory hierarchy, rivals, mythologization, experiments. |
+| `docs/archetype.md` | The open 11-lever civilizational-archetype framework: pure/hybrid/emergent classification, cognition overlay, prior-vs-realized scoring, resonance physics + science, divergent endpoints, the `ArchetypeDerived` / `ArchetypeEndpoint` events. Read when changing how a run's developmental path is classified, the resonance field, or the endpoint fates. |
 | `docs/species.md` | Species derivation, sensorium, per-civ drift, cosmology baseline. |
 | `docs/civ.md` | Civ lifecycle: founding, cohesion, breakaway, collapse, succession, contact. |
 | `docs/culture.md` | Cosmology + religion axes, kinship, belligerence, war, conflict events. |

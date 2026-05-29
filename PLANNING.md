@@ -58,6 +58,18 @@ What runs end-to-end on `./run.sh`:
   scientific-lifecycle counters, highlight reel.
 - Python prose narrator (`narrate.py`) consuming the same
   NDJSON via `RunMetadata` label tables.
+- Open civilizational-archetype framework: every run scored across
+  11 peer levers (no privileged default, no fallback), labelled
+  pure / hybrid / emergent; an orthogonal cognition overlay
+  (individual / collective / substrate-distributed); a world+species
+  prior refined by the realized run trajectory; dedicated additive
+  per-cell physics fields for four levers (resonance, photonic /
+  insolation, gravitational / tidal, nuclear / radiation), each with
+  recognition templates + a discovery channel so an attuned species
+  does real science on that substrate; and a divergent endpoint per
+  archetype at transcendence. Surfaced via
+  the additive `ArchetypeDerived` / `ArchetypeEndpoint` events in
+  both narrators.
 
 A representative seed-42 / 5000-year run produces ~14 civs,
 7000+ confirmed relations, 1800+ knowledge transmissions across
@@ -66,9 +78,36 @@ campaigns, ~1000 lines of report.
 
 ## Last change
 
-Workspace audit pass — three iterations of concrete duplication
-removal, no behavioural change (post-run reports byte-identical
-seed-42 / 50-year before and after).
+Civilizational-archetype framework (16 commits). Generalized the
+sim's implicit combustion-privileged developmental path into an
+open space of 11 peer levers (combustion, field_resonance,
+biochemical, cryogenic, mechanical, hydraulic, exotic_chemistry,
+plasma_em, gravitational, photonic, nuclear) scored identically with
+no default and no fallback. The classifier
+(`sim/civ/src/archetype.rs`) is open — pure / named-hybrid /
+signature-named-emergent — so unforeseen paths are still detected
+and labelled; a 12-seed prior sweep yields 12 distinct labels across
+every lever family. An orthogonal cognition overlay (individual /
+collective / substrate-distributed) bends a fate inward toward
+silence at the endpoint. Each lever's score is a world+species prior
+refined by the realized run trajectory (confirmed-relation channels +
+unlocked tool clusters). Four levers now carry a dedicated additive
+per-cell physics field in `sim/physics` (legacy channels
+bit-identical), each with recognition templates + a discovery channel
+so an attuned species does genuine science on that substrate:
+field/resonance (resonance field `Ψ`), photonic (stellar insolation),
+gravitational (tidal stress), and nuclear (surface radiation). At
+transcendence each archetype reaches a divergent endpoint (one per
+lever) rather than a shared singularity; the `transcendence` run-end
+reason is unchanged. Two additive events — `ArchetypeDerived` (run
+start) and `ArchetypeEndpoint` (transcendence) — surface through the
+Rust prose narrator, `narrate.py`, and the markdown report. Pure
+Q32.32, no RNG; labels stable across replays. See
+[`docs/archetype.md`](docs/archetype.md).
+
+Prior change — workspace audit pass — three iterations of concrete
+duplication removal, no behavioural change (post-run reports
+byte-identical seed-42 / 50-year before and after).
 
 Iter 1 — helpers + dead code. `Real::clamp01()`,
 `Pop::to_real_nonneg()`, `impl From<(i64, i64)> for Real` added to

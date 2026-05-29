@@ -222,7 +222,19 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
     // "steep" slope drops the summit interior fast enough that
     // even a 7000 m primary on a 32×20 grid taper through to the
     // shallow band within a handful of cells.
-    let steep_slope = Real::from_int(200);
+    // Planet-scale realism: the elevation slopes / coastal buffer scale
+    // with `planet.radius` in lockstep with the radius-scaled
+    // `terrain_peak` / `sea_level` (see `sampling.rs`). Scaling all
+    // three by the same factor makes the elevation field self-similar:
+    // the cell distance at which a peak's flank crosses sea level
+    // (`(peak_height − sea_level) / slope`) is unchanged, so landmass
+    // *extent* in cells — and therefore the per-cell glyph distribution
+    // — is identical to the unscaled grid. Only the absolute relief (in
+    // metres) and the resulting water depths grow with the planet. Earth
+    // radius (1.0) is a no-op. Floored at a tiny positive radius so a
+    // degenerate test planet never zeroes the slopes.
+    let relief_scale = planet.radius.max(Real::percent(1));
+    let steep_slope = Real::from_int(200) * relief_scale;
     // Shallow slope 350 m/cell. With a smaller value each peak's
     // shallow zone reached zero ~14 cells out, so 6-8 peaks at
     // ~5-cell spacing combined into one continuous landmass even
@@ -231,14 +243,14 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
     // becomes a discrete island. The shallow-water `~` band gets
     // narrower (≈ 0.3 cells per cone) but the population-wide
     // sweep test still catches at least one shallow-band cell.
-    let shallow_slope = Real::from_int(350);
+    let shallow_slope = Real::from_int(350) * relief_scale;
     // Cells of the primary cone whose elevation lies within the
     // gentle band (`buffer` metres above sea_level → coast).
     // Setting the buffer to 200 m means each peak's flank spends
     // a full 4 cells (`buffer / shallow_slope`) above sea_level
     // and another 2 cells (`100 / shallow_slope`) inside the
     // `~` shallow-water band before crossing into deep water.
-    let multi_peak_buffer = Real::from_int(200);
+    let multi_peak_buffer = Real::from_int(200) * relief_scale;
 
     let peaks: Vec<(i32, i32, Real)> = if planet.terrain_peak == Real::ZERO {
         Vec::new()

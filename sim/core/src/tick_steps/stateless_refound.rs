@@ -108,6 +108,7 @@ pub(crate) fn stateless_refound_step<E: Emitter>(
         new_civ.effective_sociality(&rs.species),
         rs.planet.metabolic_substrate.metabolism(),
         rs.state.grid().width().saturating_mul(rs.state.grid().height()),
+        rs.planet.radius,
         rs.species.cognition_topology,
     );
     new_civ.configure_lifecycle_state(&rs.species.lifecycle);

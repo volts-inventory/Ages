@@ -60,6 +60,32 @@ pub struct PhysicsState {
     substances: Vec<Vec<Real>>,
     /// Electric charge per cell. Signed; mutated by EM law (M1b).
     charge: Vec<Real>,
+    /// Speculative resonance / attention field `Ψ` per cell
+    /// (field-and-resonance vision extension). Driven by `|B|` +
+    /// `|charge|` scaled by crust piezoelectricity, diffuses to
+    /// neighbours, relaxes toward equilibrium. Mutated only by
+    /// `ResonanceField`; read by recognition (`Field::Resonance`) and
+    /// the discovery hypothesizer (`Channel::Resonance`). No legacy
+    /// law reads it, so its presence leaves every other channel
+    /// bit-identical.
+    resonance: Vec<Real>,
+    /// Diagnostic per-cell stellar insolation (photonic vision
+    /// extension). Rewritten each tick by `SolarInsolation` from
+    /// stellar irradiance × latitude incidence × cloud clarity; read
+    /// by recognition (`Field::Insolation`) and the discovery
+    /// hypothesizer (`Channel::Optics`). No legacy law reads it, so its
+    /// presence leaves every other channel bit-identical.
+    insolation: Vec<Real>,
+    /// Diagnostic per-cell tidal stress (gravitational vision
+    /// extension). Rewritten each tick by `TidalStress`; read by
+    /// recognition (`Field::TidalStress`) and discovery
+    /// (`Channel::Tidal`). Additive — no legacy law reads it.
+    tidal_stress: Vec<Real>,
+    /// Diagnostic per-cell ionizing surface radiation (nuclear vision
+    /// extension). Rewritten each tick by `SurfaceRadiation`; read by
+    /// recognition (`Field::Radiation`) and discovery
+    /// (`Channel::Radiogenic`). Additive — no legacy law reads it.
+    surface_radiation: Vec<Real>,
     /// Planetary magnetic field as a vector — `(B_q, B_r)`
     /// per cell in axial coordinates. Previously this was a scalar
     /// magnitude with no direction; promoting to a vector lets the
@@ -310,6 +336,10 @@ impl PhysicsState {
             fluid_v_w: vec![Real::ZERO; n],
             substances: vec![vec![Real::ZERO; n]; N_SUBSTANCES],
             charge: vec![Real::ZERO; n],
+            resonance: vec![Real::ZERO; n],
+            insolation: vec![Real::ZERO; n],
+            tidal_stress: vec![Real::ZERO; n],
+            surface_radiation: vec![Real::ZERO; n],
             magnetic_b_q: vec![Real::ZERO; n],
             magnetic_b_r: vec![Real::ZERO; n],
             magnetic_b_z: vec![Real::ZERO; n],
@@ -499,6 +529,46 @@ impl PhysicsState {
 
     pub fn charge_mut(&mut self) -> &mut [Real] {
         &mut self.charge
+    }
+
+    /// Speculative resonance / attention field `Ψ` per cell. Written
+    /// by `ResonanceField`; read by recognition + discovery.
+    pub fn resonance(&self) -> &[Real] {
+        &self.resonance
+    }
+
+    pub fn resonance_mut(&mut self) -> &mut [Real] {
+        &mut self.resonance
+    }
+
+    /// Diagnostic per-cell stellar insolation. Written by
+    /// `SolarInsolation`; read by recognition + discovery.
+    pub fn insolation(&self) -> &[Real] {
+        &self.insolation
+    }
+
+    pub fn insolation_mut(&mut self) -> &mut [Real] {
+        &mut self.insolation
+    }
+
+    /// Diagnostic per-cell tidal stress. Written by `TidalStress`;
+    /// read by recognition + discovery.
+    pub fn tidal_stress(&self) -> &[Real] {
+        &self.tidal_stress
+    }
+
+    pub fn tidal_stress_mut(&mut self) -> &mut [Real] {
+        &mut self.tidal_stress
+    }
+
+    /// Diagnostic per-cell ionizing surface radiation. Written by
+    /// `SurfaceRadiation`; read by recognition + discovery.
+    pub fn surface_radiation(&self) -> &[Real] {
+        &self.surface_radiation
+    }
+
+    pub fn surface_radiation_mut(&mut self) -> &mut [Real] {
+        &mut self.surface_radiation
     }
 
     /// Vector magnetic field — `(B_q, B_r)` slices in axial
