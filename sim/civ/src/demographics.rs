@@ -75,6 +75,43 @@ pub fn founding_min_population(biosphere: BiosphereClass, cognition: Real) -> Po
         + Pop::from_int(15) * cognition_penalty
 }
 
+/// Absolute-density lift applied to the per-unit carrying capacity so
+/// a real-sized planet supports a realistic *several-billion* total
+/// population, not the ~tens-of-millions the bare 50,000/unit baseline
+/// produced. The point of "planet-scale realism" is that the hex grid
+/// is only a sampling resolution of a much larger physical world: an
+/// Earth-radius, fully-habitable, baseline-tech planet should host a
+/// few billion carrying capacity so a typical civ (tens to hundreds of
+/// millions) is a small fraction of the planet and never saturates the
+/// whole map.
+///
+/// Calibration: at the reference grid the producer pool of a fully-
+/// habitable world is `~n_cells × biosphere_density ≈ 1080 × 0.9 ≈ 970`
+/// units; with `50,000 × 50 = 2,500,000` individuals per unit the
+/// planet-wide total lands at `~2.4 billion` (median cognition) to
+/// `~2.8 billion` (max cognition) — squarely in the low-single-digit
+/// billions target. Every relative multiplier (habitability, seasonal,
+/// tech, tool, producer share, area) still rides on top, so the
+/// demographic-transition arc and ecosystem coupling are unchanged in
+/// *shape* — only the absolute scale moved.
+pub const PLANET_CAPACITY_DENSITY_LIFT: i64 = 50;
+
+/// Planet surface-area scaling factor relative to Earth. Surface area
+/// of a sphere is `4πr²`, so area ∝ radius²; Earth (radius 1.0) maps to
+/// factor 1.0 and a 1.4-Earth-radius world to `1.4² = 1.96×`. The hex
+/// grid samples the planet at a fixed resolution regardless of physical
+/// size, so this factor restores the real planet's scale into every
+/// carrying-capacity computation: a bigger planet has proportionally
+/// more habitable surface and therefore proportionally more capacity.
+/// Guarded against a non-positive radius (degenerate test planets) by
+/// flooring at a tiny positive value so the factor never zeroes a civ's
+/// capacity outright.
+#[must_use]
+pub fn planet_area_factor(radius: Real) -> Real {
+    let r = radius.max(Real::percent(1));
+    r * r
+}
+
 /// Reference grid resolution (cells per planet) that
 /// `carrying_capacity_per_unit` is calibrated against. The default
 /// run grid is 36×30 = 1080 cells; at that resolution the scale
@@ -95,7 +132,10 @@ pub const REFERENCE_PLANET_CELL_COUNT: u32 = 1080;
 /// REFERENCE / cell_count.
 ///
 /// Earth-equivalent baseline (max-cog) at the reference grid
-/// resolution is ~50,000/unit. Biosphere is *not* multiplied here
+/// resolution is `~50,000 × PLANET_CAPACITY_DENSITY_LIFT` per unit —
+/// the bare 50,000 anchor lifted into the billion-scale absolute total
+/// a real-sized planet should host (see `PLANET_CAPACITY_DENSITY_LIFT`).
+/// Biosphere is *not* multiplied here
 /// — it's already captured by the per-cell `Substance::Fuel`
 /// ceiling (`bio_fuel` in `world/init.rs`: Sparse 0.20, Lush 1.0,
 /// HyperBio 3.0). Gravity is *not* multiplied either — native
@@ -105,12 +145,14 @@ pub const REFERENCE_PLANET_CELL_COUNT: u32 = 1080;
 /// biosphere its effect (and `tech_multiplier × tool_multiplier`
 /// gives tech its effect) without the prior double-count.
 ///
-/// The 20× lift from the prior 2,500 puts paleolithic civs at ~50k
-/// people per cell (city-state density) so the tech-tier multiplier
-/// stack (see `tools::tool_capacity_multiplier` / `tech::effects`)
-/// can carry agricultural civs to ~M/cell, industrial civs to ~10M/
-/// cell, and modern/future-age civs to ~hundreds of M/cell without
-/// needing any further global retune. The ratio thresholds (food
+/// The absolute scale is set so a fully-habitable Earth-radius planet
+/// at baseline tech hosts a few-billion total carrying capacity: a
+/// typical civ (tens to hundreds of millions) is then a small fraction
+/// of the planet and the map no longer shows one civ saturating
+/// everything. The tech-tier multiplier stack (see
+/// `tools::tool_capacity_multiplier` / `tech::effects`) still rides on
+/// top so the paleolithic → modern density arc is preserved in shape;
+/// only the absolute floor moved up. The ratio thresholds (food
 /// security, migration pressure) are scale-invariant — both still
 /// trigger at the same fractions of cap regardless of the absolute
 /// number.
@@ -132,7 +174,11 @@ pub fn carrying_capacity_per_unit(cognition: Real, cell_count: u32) -> Real {
     let effective_cells = cell_count.max(1);
     let resolution_factor = Real::from_int(i64::from(REFERENCE_PLANET_CELL_COUNT))
         / Real::from_int(i64::from(effective_cells));
-    Real::from_int(50_000) * cognition_factor * resolution_factor
+    // `PLANET_CAPACITY_DENSITY_LIFT` raises the absolute magnitude into
+    // the billion-scale total a real-sized planet should host; the
+    // relative cognition / resolution factors are unchanged so the
+    // per-cell density ladder and grid-resolution invariance still hold.
+    Real::from_int(50_000 * PLANET_CAPACITY_DENSITY_LIFT) * cognition_factor * resolution_factor
 }
 
 /// Substrate-derived migration pressure threshold. Solitary
@@ -312,16 +358,16 @@ pub fn dynamics_for_civ(
 mod tests {
     use super::*;
 
-    /// Calibration regression test. Pins the per-fuel-unit
-    /// carrying capacity to ±10% of the 50,000 base for the typical
-    /// habitable seed (Sparse–Lush–Hyper biospheres at Earth gravity
-    /// and median cognition). The 20× lift over the prior 2,500 base
-    /// underwrites the billion-scale demographic-transition arc — a
-    /// fully-teched cell can now hold ~hundreds of millions, and
-    /// civs reach planetary-scale populations as the tech tree fills.
-    /// Sparse-world floor still stays within 10% of Earth-equivalent
-    /// so marginal seeds don't tip into `food_crisis` from substrate
-    /// alone.
+    /// Calibration regression test. Pins the per-unit carrying
+    /// capacity to ±10% of the `50,000 × PLANET_CAPACITY_DENSITY_LIFT`
+    /// base for the typical habitable seed (Sparse–Lush–Hyper
+    /// biospheres at Earth gravity and median cognition). The density
+    /// lift puts a fully-habitable Earth-radius planet at a low-single-
+    /// digit-billion *total* carrying capacity so a typical civ is a
+    /// small fraction of the planet; the cognition band (0.85–1.15) and
+    /// grid-resolution invariance are unchanged. Sparse-world floor
+    /// still stays within the same relative band so marginal seeds
+    /// don't tip into `food_crisis` from substrate alone.
     #[test]
     fn carrying_capacity_envelope_is_calibrated() {
         let ref_cells = REFERENCE_PLANET_CELL_COUNT;
@@ -329,15 +375,22 @@ mod tests {
         let median_cog =
             carrying_capacity_per_unit(Real::from_ratio(5, 10), ref_cells);
         let no_cog = carrying_capacity_per_unit(Real::ZERO, ref_cells);
-        // Max-cog at reference grid recovers the ~50,000 anchor
-        // (cognition_factor = 1.15 → 50,000 × 1.15 = 57,500).
-        assert!(max_cog >= Real::from_int(55_000) && max_cog <= Real::from_int(60_000));
-        // Median-cog sits exactly between (cognition_factor = 1.0).
-        assert!(median_cog >= Real::from_int(49_000) && median_cog <= Real::from_int(51_000));
-        // Zero-cog is the floor (cognition_factor = 0.85). Still
-        // viable — a low-cog species can found cities, just denser
+        // Anchor = 50,000 × 50 = 2,500,000 (median cognition). Max-cog
+        // (cognition_factor = 1.15) → 2,875,000.
+        assert!(
+            max_cog >= Real::from_int(2_800_000) && max_cog <= Real::from_int(2_950_000)
+        );
+        // Median-cog sits exactly on the 2,500,000 anchor
+        // (cognition_factor = 1.0).
+        assert!(
+            median_cog >= Real::from_int(2_450_000) && median_cog <= Real::from_int(2_550_000)
+        );
+        // Zero-cog is the floor (cognition_factor = 0.85 → 2,125,000).
+        // Still viable — a low-cog species can found cities, just denser
         // tools/tech are needed to match a high-cog peer.
-        assert!(no_cog >= Real::from_int(42_000) && no_cog <= Real::from_int(43_000));
+        assert!(
+            no_cog >= Real::from_int(2_080_000) && no_cog <= Real::from_int(2_170_000)
+        );
     }
 
     #[test]

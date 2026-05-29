@@ -92,6 +92,9 @@ impl Civ {
             // (50,000/fuel-unit). `configure_substrate` overwrites
             // with a biosphere-derived value during full founding.
             carrying_capacity_per_unit: Real::from_int(50_000),
+            // Earth-equivalent until `configure_substrate_with_topology`
+            // overwrites with the planet's `radius²` at full founding.
+            planet_area_factor: Real::ONE,
             species_habitat: sim_species::Habitat::Terrestrial,
             allied_with: std::collections::BTreeSet::new(),
             contact_history: std::collections::BTreeSet::new(),
@@ -174,6 +177,7 @@ impl Civ {
         sociality: Real,
         metabolism: Real,
         cell_count: u32,
+        planet_radius: Real,
     ) {
         // Back-compat default — Centralized topology, no per-
         // topology cadence shift. Production callers that have the
@@ -184,13 +188,17 @@ impl Civ {
             sociality,
             metabolism,
             cell_count,
+            planet_radius,
             sim_species::CognitionTopology::Centralized,
         );
     }
 
     /// `configure_substrate` with the species' cognition topology
     /// folded into the per-figure attempt-period scaling. Used by
-    /// `sim-core` once the species is in hand.
+    /// `sim-core` once the species is in hand. `planet_radius` (Earth
+    /// radii) sets the cached `planet_area_factor` (∝ radius²) so the
+    /// civ's carrying capacity scales with the planet's real physical
+    /// surface area rather than the fixed hex-grid resolution.
     pub fn configure_substrate_with_topology(
         &mut self,
         habitat: sim_species::Habitat,
@@ -198,10 +206,12 @@ impl Civ {
         sociality: Real,
         metabolism: Real,
         cell_count: u32,
+        planet_radius: Real,
         topology: sim_species::CognitionTopology,
     ) {
         self.species_habitat = habitat;
         self.carrying_capacity_per_unit = carrying_capacity_per_unit(cognition, cell_count);
+        self.planet_area_factor = crate::demographics::planet_area_factor(planet_radius);
         self.migration_pressure_threshold = migration_pressure_threshold(sociality);
         let scaled = scale_attempt_period_for_metabolism(
             attempt_period_for_cognition_and_topology(cognition, topology),

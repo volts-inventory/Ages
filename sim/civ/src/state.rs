@@ -135,6 +135,12 @@ impl Civ {
             // build a `Civ` without threading planet context (legacy
             // unit tests).
             carrying_capacity_per_unit: Real::from_int(50_000),
+            // Default Earth-equivalent surface area —
+            // `configure_substrate_with_topology` overwrites with
+            // `radius²` at founding. Legacy / test callers without
+            // planet context keep the neutral 1.0 so their capacity
+            // ratios match the pre-planet-scale behaviour.
+            planet_area_factor: Real::ONE,
             // Default Terrestrial — `configure_substrate` overrides
             // at founding from the species' real habitat. Legacy
             // tests without that init path see land-only behaviour.

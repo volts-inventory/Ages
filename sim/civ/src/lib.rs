@@ -160,6 +160,17 @@ pub struct Civ {
     /// equivalent) for legacy callers that construct without
     /// substrate context.
     pub carrying_capacity_per_unit: Real,
+    /// Planet-scale surface-area factor (Earth = 1.0). The hex grid is
+    /// only a sampling resolution; the real planet's habitable surface
+    /// scales with its physical area (∝ radius²). Every carrying-
+    /// capacity function multiplies this in so a planet "feels" its
+    /// true scale — a 1.4-Earth-radius world supports ~1.96× the
+    /// population of an Earth-radius one at the same biosphere / tech.
+    /// Cached at founding via `configure_substrate_with_topology` from
+    /// `planet.radius`; default `Real::ONE` (Earth-equivalent) for
+    /// legacy callers / unit tests that construct without planet
+    /// context so their capacity ratios stay invariant.
+    pub planet_area_factor: Real,
     /// Species habitat domain (Aquatic / Terrestrial / Amphibious /
     /// Airborne), cached at founding via `configure_substrate`.
     /// Read by `cell_capacity` so aquatic species see water cells
