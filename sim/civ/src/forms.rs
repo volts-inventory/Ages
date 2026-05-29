@@ -188,67 +188,68 @@ impl Form {
     /// `params` length must equal `self.param_count()`.
     pub fn evaluate(self, params: &[Real], x: Real) -> Real {
         debug_assert_eq!(params.len(), self.param_count(), "param arity");
+        // Saturating arithmetic throughout: a degenerate / near-singular
+        // fit can produce large params, and `params·xⁿ` (or `a·exp(...)`)
+        // would otherwise overflow I32F32 and panic the run loop. With
+        // saturating ops a wild fit yields a large-but-finite prediction,
+        // which `rmse` turns into a huge residual and `fit` rejects.
+        // Saturating ops are bit-identical to `*`/`+`/`/` within range,
+        // so well-behaved fits are unchanged.
+        let clamp20 = |v: Real| v.max(-Real::from_int(20)).min(Real::from_int(20));
         match self {
             Form::Constant => params[0],
-            Form::Linear => params[0] * x + params[1],
-            Form::Polynomial2 => params[0] * x * x + params[1] * x + params[2],
+            Form::Linear => params[0].saturating_mul(x).saturating_add(params[1]),
+            Form::Polynomial2 => params[0]
+                .saturating_mul(x)
+                .saturating_mul(x)
+                .saturating_add(params[1].saturating_mul(x))
+                .saturating_add(params[2]),
             Form::Polynomial3 => {
-                let x2 = x * x;
-                params[0] * x2 * x + params[1] * x2 + params[2] * x + params[3]
+                let x2 = x.saturating_mul(x);
+                params[0]
+                    .saturating_mul(x2)
+                    .saturating_mul(x)
+                    .saturating_add(params[1].saturating_mul(x2))
+                    .saturating_add(params[2].saturating_mul(x))
+                    .saturating_add(params[3])
             }
             Form::ExpDecay => {
-                // clamp the exp argument so a fit whose
-                // params drift into a regime where `params[1] · x`
-                // exceeds Q32.32's exp range doesn't panic during
-                // evaluation. `exp` asserts the integer-shift
-                // exponent ≤ 30; argument ≤ 30·ln(2) ≈ 20.8 keeps
-                // it safe with margin.
-                let arg = -(params[1] * x);
-                let safe = arg.max(-Real::from_int(20)).min(Real::from_int(20));
-                params[0] * exp(safe)
+                // Clamp the exp argument (≤ 30·ln2 ≈ 20.8 is the safe
+                // exp ceiling) and saturate the amplitude product.
+                let safe = clamp20(Real::ZERO.saturating_sub(params[1].saturating_mul(x)));
+                params[0].saturating_mul(exp(safe))
             }
             Form::ExpGrowth => {
-                let arg = params[1] * x;
-                let safe = arg.max(-Real::from_int(20)).min(Real::from_int(20));
-                params[0] * exp(safe)
+                let safe = clamp20(params[1].saturating_mul(x));
+                params[0].saturating_mul(exp(safe))
             }
             Form::PowerLaw => {
                 if x <= Real::ZERO {
                     Real::ZERO
                 } else {
-                    // `pow(x, b)` = exp(b·ln x); a wild fit (large fitted
-                    // exponent `params[1]`) can push `b·ln x` past the
-                    // exp ceiling and panic during evaluation. Clamp the
-                    // effective exponent to the same ±20 range as the
-                    // ExpGrowth/Decay arms. Within range this is
-                    // bit-identical to `pow` (which computes exactly
-                    // exp(b·ln x)); only the overflow case is bounded,
-                    // yielding a finite prediction the fit then rejects.
-                    let arg = (params[1] * ln(x))
-                        .max(-Real::from_int(20))
-                        .min(Real::from_int(20));
-                    params[0] * exp(arg)
+                    // `pow(x, b)` = exp(b·ln x); clamp the effective
+                    // exponent so a wild fitted exponent can't push exp
+                    // past its ceiling. Bit-identical to `pow` in range.
+                    let arg = clamp20(params[1].saturating_mul(ln(x)));
+                    params[0].saturating_mul(exp(arg))
                 }
             }
             Form::Logarithmic => {
                 if x <= Real::ZERO {
                     Real::ZERO
                 } else {
-                    params[0] * ln(x) + params[1]
+                    params[0].saturating_mul(ln(x)).saturating_add(params[1])
                 }
             }
             Form::InverseSquare => {
-                // Q32.32 underflow guard: smallest representable positive
-                // value is 2^-32 ≈ 2.3e-10, so for |x| ≲ 1.5e-5 the
-                // product x*x rounds to zero and the divide panics. Use
-                // the same `min_safe_x` threshold as `fit_inverse_square`
-                // — a meaningful inverse-square fit can't operate inside
-                // the singularity anyway.
-                let denom = x * x;
+                // `x·x` rounds to zero for |x| ≲ 1.5e-5 (Q32.32 LSB);
+                // saturating_div then returns a bounded sentinel rather
+                // than panicking on the singularity.
+                let denom = x.saturating_mul(x);
                 if denom == Real::ZERO {
                     Real::ZERO
                 } else {
-                    params[0] / denom
+                    params[0].saturating_div(denom)
                 }
             }
             Form::ThresholdStep => {
