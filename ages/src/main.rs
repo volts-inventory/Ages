@@ -6,16 +6,21 @@
 //! reproduces the same run bit-for-bit.
 
 use anyhow::{Context, Result};
-use sim_core::{run, RunConfig};
+use sim_core::{run, run_interruptible, RunConfig};
 use sim_events::{
-    is_highlight_event, FilterEmitter, JsonLinesEmitter, TeeEmitter, ThrottledEmitter,
+    is_highlight_event, ChannelEmitter, FilterEmitter, JsonLinesEmitter, PaceControl, TeeEmitter,
+    ThrottledEmitter,
 };
 use sim_report::{
-    replay_narration, NarratingEmitter, TempUnit, ViewportConfig, ViewportEmitter,
+    replay_narration, run_interactive_tui, NarratingEmitter, TempUnit, TuiOptions, ViewportConfig,
+    ViewportEmitter,
 };
 use std::fs::File;
-use std::io::{BufRead, BufWriter};
+use std::io::{BufRead, BufWriter, IsTerminal};
 use std::path::PathBuf;
+use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 mod config_prompt;
@@ -125,49 +130,97 @@ fn main() -> Result<()> {
             run(&cfg, &mut emitter)?;
         }
         CliVerbosity::Viewport | CliVerbosity::ViewportDensity => {
-            // Live ASCII viewport. Stdout pipeline mirrors per-civ
-            // territorial state from the event stream and re-renders
-            // a planet frame every `--frame-every-ticks` ticks via
-            // ANSI alternate-screen + cursor-home. The NDJSON file
-            // emitter stays untouched so batch consumers and the
-            // post-run report still see the full event log.
+            // Live viewport. On a real terminal this is the
+            // interactive ratatui dashboard (`tui`): the sim runs on a
+            // background thread feeding events over a channel while the
+            // UI thread renders + handles keyboard controls. The
+            // NDJSON file emitter stays in the loop so batch consumers
+            // and the post-run report still see the full event log.
             //
-            // Throttling sits outside the viewport so the wall-clock
-            // sleep fires once per TickEnd regardless of frame
-            // cadence — pairing `--tick-rate-ms 16 --frame-every-ticks 50`
-            // gives ~3 frames/sec at 1 tick = 1 month; a 5000-year
-            // run is 60000 ticks → at 50-tick cadence ~1200 frames.
-            //
-            // `viewport-density` is the same pipeline with the
-            // density-glyph variant of the renderer; everything
-            // else (cadence, alt-screen, log, sidebar) is shared.
+            // When stdout is *not* a terminal (piped to a file / CI),
+            // raw mode + the alternate screen would corrupt the sink,
+            // so fall back to a plain, no-colour frame dump driven by
+            // the legacy renderer with alt-screen disabled.
             let density_mode = matches!(args.cli, CliVerbosity::ViewportDensity);
-            let viewport = ViewportEmitter::new(
-                std::io::stdout().lock(),
-                ViewportConfig {
-                    frame_every: args.frame_every_ticks,
-                    use_alt_screen: true,
-                    use_color: !args.no_color,
-                    show_planet_card: args.viewport_planet_card,
-                    log_lines: args.viewport_log_lines,
-                    compact: args.viewport_compact,
-                    temperature_unit: args.temperature_unit,
-                    density_mode,
-                },
-            );
-            let stdout_pipeline = ThrottledEmitter {
-                inner: viewport,
-                tick_rate: throttle,
-            };
-            let mut emitter = TeeEmitter {
-                a: file_emitter,
-                b: stdout_pipeline,
-            };
-            run(&cfg, &mut emitter)?;
+            if std::io::stdout().is_terminal() {
+                run_tui(cfg, file_emitter, &args, density_mode, throttle)?;
+            } else {
+                let viewport = ViewportEmitter::new(
+                    std::io::stdout().lock(),
+                    ViewportConfig {
+                        frame_every: args.frame_every_ticks,
+                        use_alt_screen: false,
+                        use_color: false,
+                        show_planet_card: args.viewport_planet_card,
+                        log_lines: args.viewport_log_lines,
+                        compact: args.viewport_compact,
+                        temperature_unit: args.temperature_unit,
+                        density_mode,
+                    },
+                );
+                let stdout_pipeline = ThrottledEmitter {
+                    inner: viewport,
+                    tick_rate: throttle,
+                };
+                let mut emitter = TeeEmitter {
+                    a: file_emitter,
+                    b: stdout_pipeline,
+                };
+                run(&cfg, &mut emitter)?;
+            }
         }
     }
 
     Ok(())
+}
+
+/// Drive the interactive TUI. The sim runs on a background thread
+/// (NDJSON file + channel tee); this thread owns the terminal via
+/// `run_interactive_tui` and returns when the user quits or
+/// acknowledges run completion. The shared `PaceControl` lets the UI
+/// pause / step / change speed; on exit we signal it and close the
+/// channel so the sim thread unwinds, then join it.
+fn run_tui(
+    cfg: RunConfig,
+    file_emitter: JsonLinesEmitter<BufWriter<File>>,
+    args: &Args,
+    density_mode: bool,
+    initial_delay: Duration,
+) -> Result<()> {
+    let opts = TuiOptions {
+        use_color: !args.no_color,
+        density_mode,
+        temperature_unit: args.temperature_unit,
+        initial_delay,
+        start_paused: false,
+    };
+    let pace = Arc::new(PaceControl::new(opts.initial_delay, opts.start_paused));
+    // Bounded channel: if the UI falls behind, the sim blocks on send
+    // (backpressure) rather than buffering an unbounded backlog.
+    let (tx, rx) = sync_channel::<protocol::Event>(8192);
+    let sim_pace = Arc::clone(&pace);
+    let stop_pace = Arc::clone(&pace);
+    let sim = thread::spawn(move || {
+        let mut emitter = TeeEmitter {
+            a: file_emitter,
+            b: ChannelEmitter::new(tx, sim_pace),
+        };
+        // Stop at the next tick boundary once the UI sets the quit
+        // flag. `run_interruptible` still emits a final `RunEnd` and
+        // the BufWriter flushes on drop, so an early quit leaves a
+        // well-formed NDJSON log for the post-run report.
+        let _ = run_interruptible(&cfg, &mut emitter, move || !stop_pace.is_quit());
+    });
+
+    let tui_res = run_interactive_tui(&rx, &pace, &opts);
+
+    // Signal the stop, then keep draining so the sim's final tick +
+    // `RunEnd` aren't blocked on a full channel; the loop ends when
+    // the sim thread drops its sender. Then join.
+    pace.quit();
+    while rx.recv().is_ok() {}
+    let _ = sim.join();
+    tui_res.context("interactive TUI failed")
 }
 
 // Adding `narration` pushed `Args` past the pedantic 3-bool ceiling
@@ -248,10 +301,13 @@ enum CliVerbosity {
     /// conflicts, run-end. The canonical NDJSON file still carries
     /// the full stream.
     Highlights,
-    /// Live ASCII viewport: re-renders the planet + per-civ
-    /// territories to stdout every `--frame-every-ticks` ticks
-    /// using ANSI alternate-screen mode. NDJSON file still
-    /// carries the full event log.
+    /// Interactive ratatui dashboard (the default live experience on
+    /// a real terminal): tabbed World / Civilizations / Planet views
+    /// with a live colour map, selectable per-civ panels, scrolling
+    /// event log, and keyboard controls (pause / step / speed / civ
+    /// select / view switch). The sim runs on a background thread; the
+    /// NDJSON file still carries the full event log. When stdout is
+    /// not a terminal (piped / CI), falls back to a plain frame dump.
     Viewport,
     /// Same as `Viewport` but renders cells as density block
     /// glyphs (` ░ ▒ ▓ █`) sized by pop fill-% instead of the
@@ -484,10 +540,15 @@ fn print_help() {
              --cli <mode>           live CLI verbosity: quiet|all|highlights|viewport|viewport-density (default: all)\n  \
                                     highlights = structural-pin subset (founding, collapse,\n  \
                                     catastrophe, tech, contact, transmission, conflict, run-end)\n  \
-                                    viewport   = live ASCII planet+territory map, refreshed in\n  \
-                                    alternate-screen mode every --frame-every-ticks years\n  \
-                                    viewport-density = same map, density block glyphs (░▒▓█)\n  \
-                                    instead of pop-fill digits\n  \
+                                    viewport   = interactive TUI dashboard (tabbed World /\n  \
+                                    Civilizations / Planet, live colour map, civ panels,\n  \
+                                    event log) with keyboard controls: q quit · space pause ·\n  \
+                                    s step · ←/→ speed · ↑/↓ select civ · [ ] scroll civ list ·\n  \
+                                    Tab switch view · d density · PgUp/PgDn scroll log (or the\n  \
+                                    civ-detail pane on the Civilizations tab). Piped output\n  \
+                                    falls back to a plain frame dump.\n  \
+                                    viewport-density = same dashboard, map starts in density\n  \
+                                    mode (block-shaded fill-% instead of pop-fill digits)\n  \
              --tick-rate-ms <u64>   wall-clock sleep per tick on stdout streaming\n  \
                                     (default: 0 = no throttling). Useful for human\n  \
                                     readability or pacing a UI consumer. NDJSON file\n  \

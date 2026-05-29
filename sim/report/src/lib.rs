@@ -44,6 +44,7 @@ pub mod narration;
 mod parse;
 mod q32;
 mod render;
+pub mod tui;
 pub mod viewport;
 
 pub use digest::{CivChapter, Digest};
@@ -58,7 +59,8 @@ pub use narration::{
 };
 pub use parse::{events_from_reader, ParseError};
 pub use render::markdown;
-pub use viewport::{TempUnit, ViewportConfig, ViewportEmitter};
+pub use tui::{run_interactive_tui, TuiOptions};
+pub use viewport::{CivPanel, TempUnit, ViewportConfig, ViewportEmitter};
 
 use std::io::Read;
 

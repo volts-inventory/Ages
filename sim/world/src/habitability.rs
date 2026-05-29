@@ -68,6 +68,33 @@ pub fn is_claimable_multiplier(mult: Real) -> bool {
     )
 }
 
+/// Effective surface boil point (K) for the planet's solvent at its
+/// own surface pressure, with the per-seed substrate perturbation
+/// applied — the same value `Chemistry::for_planet_with_perturbation`
+/// wires into the physics phase-transition thresholds, so habitability
+/// and chemistry agree on when the solvent is liquid.
+#[must_use]
+pub fn effective_boil_k(planet: &Planet) -> Real {
+    let perturb = Real::ONE + planet.substrate_perturbation;
+    sim_physics::chemistry::substrate_boiling_point_k(
+        planet.metabolic_substrate.tag(),
+        planet.surface_pressure,
+    ) * perturb
+}
+
+/// `true` when the planet's mean temperature is at or above its
+/// solvent boil point: the surface liquid has boiled off, so cells
+/// the elevation field still records as flooded ocean basins hold no
+/// standing solvent — they are dry, baked land. Used by
+/// `terrain_glyph_at` so a scorching world (e.g. a hot sub-surface-
+/// ocean sample whose grid floods to 9 km of "sea") stops reading as
+/// a temperate ocean that is uninhabitable to its land-evolved
+/// species. Mirrors the viewport's `SurfacePhase::Scorched` remap.
+#[must_use]
+pub fn surface_solvent_boiled(planet: &Planet) -> bool {
+    planet.mean_temperature >= effective_boil_k(planet)
+}
+
 /// Per-cell terrain glyph derived from the same fields
 /// `sim/report/src/render.rs::terrain_symbol` reads — elevation,
 /// `water_depth`, and the planet's `terrain_peak`. Mirrors the
@@ -83,7 +110,17 @@ pub fn is_claimable_multiplier(mult: Real) -> bool {
 pub fn terrain_glyph_at(state: &PhysicsState, planet: &Planet, cell: u32) -> char {
     let i = cell as usize;
     let elev = state.elevation().get(i).copied().unwrap_or(Real::ZERO);
-    let depth = state.water_depth().get(i).copied().unwrap_or(Real::ZERO);
+    // Above the solvent boil point there is no standing surface
+    // liquid: treat the recorded water depth as zero so flooded
+    // basins fall through to the dry land glyphs (`·` plain / hills)
+    // instead of `≈`/`~`. Keeps a scorching world habitable for a
+    // land species and matches the Scorched render phase.
+    let boiled = surface_solvent_boiled(planet);
+    let depth = if boiled {
+        Real::ZERO
+    } else {
+        state.water_depth().get(i).copied().unwrap_or(Real::ZERO)
+    };
     // Mirror render.rs: deep water > 100 m → `≈`, any depth → `~`.
     if depth > Real::from_int(100) {
         return '\u{2248}'; // deep water
@@ -116,6 +153,9 @@ pub fn terrain_glyph_at(state: &PhysicsState, planet: &Planet, cell: u32) -> cha
     let grid = state.grid();
     let axial = grid.axial_of(sim_physics::CellId(cell));
     let neighbour_is_water = |dq: i32, dr: i32| -> bool {
+        if boiled {
+            return false; // no surface liquid to be coastal to
+        }
         let nb = grid.cell_id(sim_physics::Axial {
             q: axial.q + dq,
             r: axial.r + dr,

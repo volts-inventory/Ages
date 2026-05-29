@@ -6,6 +6,9 @@
 
 use protocol::Event;
 use std::io::Write;
+use std::sync::mpsc::SyncSender;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EmitError {
@@ -251,6 +254,175 @@ pub fn is_highlight_event(event: &Event) -> bool {
     // PlanetMap is intentionally excluded — it's a one-shot setup
     // event with per-cell payload that bloats the live stream;
     // the post-run report renders it from the file.
+}
+
+/// Shared run-pacing control for the interactive TUI. The sim runs
+/// on a background thread driving `run()`; the UI thread mutates
+/// this handle to pause, single-step, change speed, or request an
+/// early stop. The sim-side [`ChannelEmitter`] consults it once per
+/// tick (via [`PaceControl::wait_tick`]) and blocks / sleeps
+/// accordingly. All methods take `&self` so the handle can be shared
+/// behind an [`Arc`] across the two threads.
+///
+/// Determinism note: pacing reads wall-clock time but never feeds it
+/// into sim computation — the canonical NDJSON event log written
+/// upstream is bit-for-bit identical regardless of pause / speed.
+#[derive(Debug)]
+pub struct PaceControl {
+    inner: Mutex<PaceState>,
+    cv: Condvar,
+}
+
+#[derive(Debug)]
+struct PaceState {
+    paused: bool,
+    /// Per-tick delay when running. `Duration::ZERO` = full speed.
+    delay: Duration,
+    /// Pending single-step ticks to release while paused.
+    steps: u64,
+    /// The UI asked the sim to stop; `wait_tick` returns `false` so
+    /// the emitter can unwind `run()` cleanly.
+    quit: bool,
+}
+
+impl PaceControl {
+    #[must_use]
+    pub fn new(delay: Duration, paused: bool) -> Self {
+        Self {
+            inner: Mutex::new(PaceState {
+                paused,
+                delay,
+                steps: 0,
+                quit: false,
+            }),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Flip the paused state and wake the sim thread so it re-checks.
+    pub fn toggle_pause(&self) {
+        let mut s = self.inner.lock().unwrap();
+        s.paused = !s.paused;
+        self.cv.notify_all();
+    }
+
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.inner.lock().unwrap().paused
+    }
+
+    /// Set the per-tick delay (running speed) and wake the sim so an
+    /// in-flight delay is recomputed against the new value.
+    pub fn set_delay(&self, delay: Duration) {
+        let mut s = self.inner.lock().unwrap();
+        s.delay = delay;
+        self.cv.notify_all();
+    }
+
+    #[must_use]
+    pub fn delay(&self) -> Duration {
+        self.inner.lock().unwrap().delay
+    }
+
+    /// Release `n` ticks while paused, then re-pause. Pressing step
+    /// implies "pause and advance", so this also sets `paused`.
+    pub fn step(&self, n: u64) {
+        let mut s = self.inner.lock().unwrap();
+        s.paused = true;
+        s.steps = s.steps.saturating_add(n);
+        self.cv.notify_all();
+    }
+
+    /// Ask the sim to stop at the next tick boundary. Idempotent.
+    /// Doesn't tear the sim down — `wait_tick` returns promptly and the
+    /// caller's tick loop breaks cleanly so a final `RunEnd` is still
+    /// emitted (see `sim-core`'s `run_interruptible`).
+    pub fn quit(&self) {
+        let mut s = self.inner.lock().unwrap();
+        s.quit = true;
+        self.cv.notify_all();
+    }
+
+    /// Whether the UI has requested the sim stop. The sim's tick loop
+    /// polls this to break gracefully.
+    #[must_use]
+    pub fn is_quit(&self) -> bool {
+        self.inner.lock().unwrap().quit
+    }
+
+    /// Called by the sim-side emitter once per tick (on `TickEnd`).
+    /// Blocks while paused (until resumed, a step is released, or a
+    /// quit is requested); otherwise sleeps the configured delay,
+    /// staying responsive to pause / speed changes via the condvar.
+    /// Returns promptly when a quit is requested so the current tick
+    /// completes and the run loop can break cleanly.
+    pub fn wait_tick(&self) {
+        let mut s = self.inner.lock().unwrap();
+        loop {
+            if s.quit {
+                return;
+            }
+            if s.steps > 0 {
+                s.steps -= 1;
+                return;
+            }
+            if s.paused {
+                s = self.cv.wait(s).unwrap();
+                continue;
+            }
+            let delay = s.delay;
+            if delay.is_zero() {
+                return;
+            }
+            let (guard, res) = self.cv.wait_timeout(s, delay).unwrap();
+            s = guard;
+            if res.timed_out() {
+                return;
+            }
+            // Woken early by a state change (pause / speed / quit) —
+            // loop to re-evaluate rather than releasing the tick.
+        }
+    }
+}
+
+/// Forwards every event to a bounded channel (clone per event) and
+/// applies [`PaceControl`] pacing on each tick boundary. Used to
+/// drive the interactive TUI: the sim runs on a background thread
+/// with this as one leg of a [`TeeEmitter`] (the other leg being the
+/// canonical NDJSON file), and the UI thread drains the channel to
+/// mirror state.
+///
+/// The bounded channel provides backpressure: if the UI falls behind,
+/// `send` blocks and the sim paces itself to the UI's draining rate.
+/// If the UI drops the receiver (the user quit), `send` fails and
+/// this returns an error so `run()` unwinds the sim cleanly.
+pub struct ChannelEmitter {
+    tx: SyncSender<Event>,
+    pace: Arc<PaceControl>,
+}
+
+impl ChannelEmitter {
+    #[must_use]
+    pub fn new(tx: SyncSender<Event>, pace: Arc<PaceControl>) -> Self {
+        Self { tx, pace }
+    }
+}
+
+impl Emitter for ChannelEmitter {
+    type Error = EmitError;
+
+    fn emit(&mut self, event: &Event) -> Result<(), Self::Error> {
+        if self.tx.send(event.clone()).is_err() {
+            return Err(EmitError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "tui receiver closed",
+            )));
+        }
+        if matches!(event, Event::Tick(t) if matches!(t.phase, protocol::Phase::TickEnd)) {
+            self.pace.wait_tick();
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
