@@ -124,7 +124,7 @@ fn draw_footer(f: &mut Frame, area: Rect) {
 fn draw_world(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(4), Constraint::Length(8)])
+        .constraints([Constraint::Min(6), Constraint::Length(5), Constraint::Length(8)])
         .split(area);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -236,21 +236,26 @@ fn draw_civ_list(f: &mut Frame, area: Rect, model: &Model, ui: &mut UiState) {
         .skip(start)
         .take(height)
         .map(|(idx, p)| {
+            let selected = idx == ui.selected_civ;
             let swatch_color = if ui.use_color {
                 Color::Indexed(p.color_idx)
             } else {
                 Color::Reset
             };
             let war = if p.at_war { " ⚔" } else { "" };
+            // The trailing population/tier detail is dimmed gray when
+            // idle, but on the selected row's light background gray-on-
+            // white is unreadable — switch it to the row's dark fg.
+            let detail_fg = if selected { Color::Black } else { Color::Gray };
             let line = Line::from(vec![
                 Span::styled("█ ", Style::default().fg(swatch_color)),
                 Span::raw(format!("{} {}", p.centroid_letter, p.name)),
                 Span::styled(
                     format!("  {}p t{}{}", fmt_pop(p.pop), p.tier, war),
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(detail_fg),
                 ),
             ]);
-            let style = if idx == ui.selected_civ {
+            let style = if selected {
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::White)
@@ -367,7 +372,8 @@ fn draw_legend(f: &mut Frame, area: Rect, model: &Model) {
         SurfacePhase::Scorched => "· dry basin  ▲ peak  △ hill  ▒ land  ░ coast",
     };
     let lines = vec![
-        Line::from("A–Z = capital · 1–9 = fill% · # = disputed · bright = nomad"),
+        Line::from("A–Z = capital · 1–9 = % of cell capacity · # = disputed (multi-civ)"),
+        Line::from("colour = owning civ (matches Civs panel) · bright/white = nomads"),
         Line::from(terrain),
     ];
     f.render_widget(
