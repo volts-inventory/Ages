@@ -28,7 +28,12 @@ fn ocean_planet(_width: u32, _height: u32) -> sim_world::Planet {
         sea_level: Real::from_int(1_500),
         atmosphere: Atmosphere::Oxidising,
         atmospheric_composition: sim_world::AtmosphericComposition::vacuum(),
-        surface_pressure: Real::from_ratio(101_325, 1_000),
+        // 1 atm in Pascals (the unit `surface_pressure` is in — real
+        // planets sample 60k-180k Pa). The earlier `101_325/1000` was
+        // ~101 Pa (near vacuum); harmless until #175 made terrain
+        // boil-aware, which then evaporated this "ocean" and left the
+        // aquatic species with no habitat.
+        surface_pressure: Real::from_int(101_325),
         biosphere: BiosphereClass::Lush,
         biosphere_density: Real::from_ratio(7, 10),
         crustal_composition: sim_world::CrustalComposition::empty(),
