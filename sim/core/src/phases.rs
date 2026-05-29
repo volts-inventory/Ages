@@ -164,19 +164,36 @@ pub(crate) fn recognition_phase<E: Emitter>(
             firing.template_id,
         );
     }
+    // Aggregate firings per template for emission: one event per
+    // template per scan carrying the fired-cell `count` and a
+    // representative cell, instead of one event per cell. The per-cell
+    // `firings` returned below (and consumed by nomadic-tech
+    // accumulation above + per-civ observation downstream) are
+    // unchanged, so sim behaviour and determinism are unaffected — only
+    // the event-log volume drops (~1000x on uniform planets where many
+    // templates match most cells). The BTreeMap keeps emission order
+    // deterministic (ascending template id).
+    let mut per_template: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
     for firing in &firings {
+        per_template
+            .entry(firing.template_id)
+            .and_modify(|(count, _)| *count += 1)
+            .or_insert((1, firing.cell));
+    }
+    for (template_id, (count, cell)) in per_template {
         // Map back to the template name for the event payload.
         let name = recognition
             .templates
             .iter()
-            .find(|t| t.id == firing.template_id)
+            .find(|t| t.id == template_id)
             .map(|t| t.name.to_string())
             .unwrap_or_default();
         emitter.emit(&Event::Recognition(RecognitionFiring {
             tick,
-            template_id: firing.template_id,
+            template_id,
             template_name: name,
-            cell: firing.cell,
+            cell,
+            count,
         }))?;
     }
     Ok(firings)

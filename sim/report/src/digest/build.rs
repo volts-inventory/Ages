@@ -250,7 +250,10 @@ impl Digest {
             Event::PlanetMap(m) => self.planet_map = Some(m.clone()),
             Event::Species(s) => self.species = Some(s.clone()),
             Event::Recognition(f) => {
-                *self.firing_counts.entry(f.template_id).or_insert(0) += 1;
+                // `f.count` is the number of cells that fired this
+                // template this scan (events are aggregated per template
+                // per scan), so sum it rather than counting events.
+                *self.firing_counts.entry(f.template_id).or_insert(0) += u64::from(f.count);
             }
             Event::FigureBorn(f) => {
                 self.civ_or_pending(f.civ_id, f.tick)

@@ -12,7 +12,15 @@ pub struct RecognitionFiring {
     pub tick: u64,
     pub template_id: u32,
     pub template_name: String,
+    /// A representative cell that fired this template this scan (the
+    /// first in scan order). Per-cell firings are aggregated for the
+    /// event log; the sim's internal per-cell observation is unchanged.
     pub cell: u32,
+    /// Number of cells that fired this template this scan. The event is
+    /// emitted once per template per scan (not once per cell), so the
+    /// log stays compact on uniform planets where a template matches
+    /// most cells. Consumers that want a firing total sum this.
+    pub count: u32,
 }
 
 /// Planet-sampled event — emitted once at run start, immediately
