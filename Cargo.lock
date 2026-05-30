@@ -645,6 +645,7 @@ dependencies = [
  "sim-ecosystem",
  "sim-events",
  "sim-physics",
+ "sim-population",
  "sim-recognition",
  "sim-report",
  "sim-species",

@@ -325,16 +325,23 @@ pub(crate) fn run_tick<E: Emitter>(
         .filter(|c| c.is_active())
         .flat_map(|c| c.claimed_cells.iter().copied())
         .collect();
+    // How well this biochemistry tolerates the planet's climate,
+    // pressure, and atmosphere — a per-run constant that scales the
+    // forager ceiling (and, through it, the founding saturation gate)
+    // the same way it scales civ carrying capacity.
+    let survivability = sim_species::planet_survivability(&rs.species.tolerance, &rs.planet);
     nomads::step_growth(
         &mut rs.nomad_pops,
         &rs.state,
         &rs.planet,
         rs.species.habitat,
         &rs.nomad_observations,
+        &rs.species.biology,
         rs.species.cognition,
         rs.species.sociality,
         rs.species.lifespan_years,
         producer_biomass,
+        survivability,
         tick,
         &claim_union,
     );
@@ -357,6 +364,7 @@ pub(crate) fn run_tick<E: Emitter>(
         tick,
         rs.species.cognition,
         producer_biomass,
+        survivability,
     );
     if tick >= rs.last_emergent_tick + nomads::EMERGENT_FOUNDING_COOLDOWN_TICKS {
         emergent_founding_step(rs, cfg, emitter, tick, &claim_union)?;

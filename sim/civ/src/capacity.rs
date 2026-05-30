@@ -52,6 +52,22 @@ fn claimed_cell_fraction(civ: &Civ, state: &sim_physics::PhysicsState) -> Real {
 }
 
 impl Civ {
+    /// Fold the species↔planet survivability scalar (see
+    /// [`sim_species::planet_survivability`]) into the cached
+    /// `carrying_capacity_per_unit`. Because every capacity path —
+    /// aggregate [`carrying_capacity`](Self::carrying_capacity),
+    /// terrain-weighted, seasonal, and per-cell
+    /// [`cell_capacity`](Self::cell_capacity) — multiplies by that one
+    /// cached scalar, folding survivability in here makes a
+    /// marginally-habitable world support proportionally fewer people
+    /// across the board, with no per-formula plumbing. Called once at
+    /// founding, after `configure_substrate_with_topology` has set the
+    /// biosphere-derived baseline. Idempotency is the caller's
+    /// responsibility: invoke exactly once per civ.
+    pub fn apply_planet_survivability(&mut self, survivability: Real) {
+        self.carrying_capacity_per_unit = self.carrying_capacity_per_unit * survivability;
+    }
+
     /// Carrying capacity in pop units. P0.5: derived from the
     /// live `PlanetEcosystem` producer-tier biomass scaled by
     /// the civ's claimed-cell share of the planet, then

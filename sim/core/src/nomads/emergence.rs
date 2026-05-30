@@ -198,6 +198,7 @@ fn pressure_threshold(
     tick: u64,
     cognition: Real,
     producer_biomass: Real,
+    survivability: Real,
 ) -> Real {
     let cap = super::growth::cell_forager_cap(
         state,
@@ -207,6 +208,7 @@ fn pressure_threshold(
         species_habitat,
         cognition,
         producer_biomass,
+        survivability,
     );
     let saturation = cap * Real::from_ratio(EMERGENT_PRESSURE_NUM, EMERGENT_PRESSURE_DEN);
     let floor = Real::from_int(EMERGENT_FOUNDING_POP);
@@ -229,6 +231,7 @@ fn cluster_threshold(
     tick: u64,
     cognition: Real,
     producer_biomass: Real,
+    survivability: Real,
 ) -> Real {
     let cap = super::growth::cell_forager_cap(
         state,
@@ -238,6 +241,7 @@ fn cluster_threshold(
         species_habitat,
         cognition,
         producer_biomass,
+        survivability,
     );
     cap * Real::from_ratio(EMERGENT_CLUSTER_NUM, EMERGENT_CLUSTER_DEN)
 }
@@ -256,6 +260,7 @@ pub(crate) fn update_pressure_streak(
     tick: u64,
     cognition: Real,
     producer_biomass: Real,
+    survivability: Real,
 ) {
     let alive: std::collections::BTreeSet<u32> = pops.keys().copied().collect();
     streak.retain(|cell, _| alive.contains(cell));
@@ -268,6 +273,7 @@ pub(crate) fn update_pressure_streak(
             tick,
             cognition,
             producer_biomass,
+            survivability,
         );
         if pop >= threshold {
             *streak.entry(cell).or_insert(0) += 1;
@@ -309,6 +315,7 @@ pub(crate) fn scan_for_emergence(
     species_habitat: Habitat,
     tick: u64,
     producer_biomass: Real,
+    survivability: Real,
     civ_centroids: &[u32],
     civ_claims: &std::collections::BTreeSet<u32>,
 ) -> Option<u32> {
@@ -338,6 +345,7 @@ pub(crate) fn scan_for_emergence(
             tick,
             cognition,
             producer_biomass,
+            survivability,
         );
         if pop < saturation {
             continue;
@@ -361,6 +369,7 @@ pub(crate) fn scan_for_emergence(
                     tick,
                     cognition,
                     producer_biomass,
+                    survivability,
                 );
                 nbr_pop >= nbr_threshold
             })

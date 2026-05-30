@@ -38,6 +38,7 @@ pub(crate) fn emergent_founding_step<E: Emitter>(
         rs.species.habitat,
         tick,
         producer_biomass,
+        sim_species::planet_survivability(&rs.species.tolerance, &rs.planet),
         &centroids,
         claim_union,
     ) else {
@@ -78,6 +79,14 @@ pub(crate) fn emergent_founding_step<E: Emitter>(
         rs.planet.radius,
         rs.species.cognition_topology,
     );
+    // Scale carrying capacity by how well this biochemistry tolerates
+    // the world's climate, pressure, and atmosphere — a marginal world
+    // supports fewer people (the same survivability that depressed the
+    // species' clutch at genesis).
+    new_civ.apply_planet_survivability(sim_species::planet_survivability(
+        &rs.species.tolerance,
+        &rs.planet,
+    ));
     new_civ.configure_lifecycle_state(&rs.species.lifecycle);
     new_civ.territory_centroid = emerge_cell;
     let target = target_cell_count(&new_civ, rs.state.grid().n_cells());
