@@ -648,3 +648,53 @@ fn acentric_topology_extends_transmission_decay_window() {
     );
     assert!(acentric.transmission_decay_ticks() > centralized.transmission_decay_ticks());
 }
+/// Species↔planet survivability gates reproduction + capacity on
+/// climate (temperature), pressure, and atmosphere: full fit inside
+/// the tolerance band, partial fit just past the edge, the floor far
+/// past it, and an atmosphere penalty even when the climate is ideal.
+#[test]
+fn planet_survivability_gates_climate_pressure_and_atmosphere() {
+    let tol = ToleranceEnvelope::aqueous_default(); // 273-373 K, 0.5-2 atm
+    let mut planet = sample_planet(42);
+    planet.metabolic_substrate = sim_world::MetabolicSubstrate::Aqueous;
+    planet.atmosphere = Atmosphere::Oxidising; // compatible with aqueous
+    planet.surface_pressure = Real::from_int(101_325); // ~1 atm, in range
+    let floor = Real::from_ratio(SURVIVABILITY_FLOOR.0, SURVIVABILITY_FLOOR.1);
+
+    // Comfortable: 320 K sits inside 273-373 → full survivability,
+    // and (crucially) not penalised for being off the range midpoint.
+    planet.mean_temperature = Real::from_int(320);
+    assert_eq!(
+        planet_survivability(&tol, &planet),
+        Real::ONE,
+        "an in-tolerance climate should score a full 1.0"
+    );
+
+    // Marginal-hot: 393 K is 20 K past the 373 K edge → partial fit
+    // strictly between the floor and 1.0.
+    planet.mean_temperature = Real::from_int(393);
+    let warm = planet_survivability(&tol, &planet);
+    assert!(
+        warm < Real::ONE && warm > floor,
+        "a marginal-hot world should partially depress survivability; got {warm:?}"
+    );
+
+    // Lethal-hot: 600 K is far past the edge → clamped to the floor.
+    planet.mean_temperature = Real::from_int(600);
+    assert_eq!(
+        planet_survivability(&tol, &planet),
+        floor,
+        "a lethal climate should clamp to the survivability floor"
+    );
+
+    // Atmosphere gate: a perfect climate but an incompatible
+    // atmosphere (None, which aqueous life can't use) still takes the
+    // penalty.
+    planet.mean_temperature = Real::from_int(320);
+    planet.atmosphere = Atmosphere::None;
+    let no_atm = planet_survivability(&tol, &planet);
+    assert!(
+        no_atm < Real::ONE,
+        "an incompatible atmosphere should penalise even a perfect climate; got {no_atm:?}"
+    );
+}

@@ -95,7 +95,20 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         planet,
         &modalities,
     );
-    let biology = derive_population_biology(
+    // Per-species environmental tolerance envelope. Derived from the
+    // planet's metabolic substrate (each substrate carries a different
+    // "baseline biology" window) with ±20% per-axis jitter from the
+    // species seed so individual species end up as distinguishable
+    // generalists / extremophiles within the substrate.
+    let tolerance = derive_tolerance_envelope(planet.seed, planet.metabolic_substrate);
+    // How well this biochemistry tolerates the world's climate,
+    // pressure, and atmosphere. 1.0 for a comfortable match; lower as
+    // the planet pushes against (or past) the species' tolerance. It
+    // scales reproduction here (effective clutch) and, downstream, the
+    // civ's carrying capacity — a marginally-habitable world both
+    // breeds fewer young per clutch and supports fewer of them.
+    let survivability = crate::planet_survivability(&tolerance, planet);
+    let mut biology = derive_population_biology(
         cognition,
         sociality,
         lifespan_years,
@@ -103,12 +116,10 @@ pub fn derive(planet: &Planet, recognition_lib: &RecognitionLibrary) -> Species 
         cognition_topology,
         &manipulation_modes,
     );
-    // Per-species environmental tolerance envelope. Derived from the
-    // planet's metabolic substrate (each substrate carries a different
-    // "baseline biology" window) with ±20% per-axis jitter from the
-    // species seed so individual species end up as distinguishable
-    // generalists / extremophiles within the substrate.
-    let tolerance = derive_tolerance_envelope(planet.seed, planet.metabolic_substrate);
+    // A hostile world depresses realised fecundity: fewer eggs in a
+    // clutch survive to count, fewer pregnancies carry to term. Floor
+    // at one so the species can always (slowly) reproduce.
+    biology.clutch_size = (biology.clutch_size * survivability).max(Real::ONE);
 
     // Dormancy capability sample (Sprint 2 Item 7b). Drawn from
     // the same per-seed stream as the other species traits so

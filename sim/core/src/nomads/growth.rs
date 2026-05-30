@@ -59,6 +59,7 @@ pub(crate) fn cell_forager_cap(
     species_habitat: Habitat,
     cognition: Real,
     producer_biomass: Real,
+    survivability: Real,
 ) -> Real {
     let glyph = sim_world::terrain_glyph_at(state, planet, cell);
     if glyph == '\u{2261}' {
@@ -76,7 +77,15 @@ pub(crate) fn cell_forager_cap(
         planet,
         species_habitat,
     );
-    baseline * Real::from_ratio(FORAGER_CAPACITY_FRACTION.0, FORAGER_CAPACITY_FRACTION.1)
+    // `survivability` (climate/pressure/atmosphere fit) scales the
+    // forager ceiling the same way it scales a civ's carrying capacity,
+    // so a marginally-habitable world hosts smaller wilderness
+    // populations — and, because the founding saturation/cluster gates
+    // read this same cap, the village a civ must reach before emerging
+    // is correspondingly smaller too.
+    baseline
+        * Real::from_ratio(FORAGER_CAPACITY_FRACTION.0, FORAGER_CAPACITY_FRACTION.1)
+        * survivability
 }
 
 // The intrinsic per-capita logistic growth rate `r` (per tick) is no
@@ -213,6 +222,7 @@ pub(crate) fn step_growth(
     sociality: Real,
     lifespan_years: Real,
     producer_biomass: Real,
+    survivability: Real,
     tick: u64,
     claimed_cells: &std::collections::BTreeSet<u32>,
 ) {
@@ -253,6 +263,7 @@ pub(crate) fn step_growth(
             species_habitat,
             cognition,
             producer_biomass,
+            survivability,
         ) * (Real::ONE + cap_bonus)
     };
 

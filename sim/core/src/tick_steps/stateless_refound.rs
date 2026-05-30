@@ -111,6 +111,13 @@ pub(crate) fn stateless_refound_step<E: Emitter>(
         rs.planet.radius,
         rs.species.cognition_topology,
     );
+    // Same species↔planet survivability that gated the original civ's
+    // capacity — a refounding uses the same biochemistry on the same
+    // world.
+    new_civ.apply_planet_survivability(sim_species::planet_survivability(
+        &rs.species.tolerance,
+        &rs.planet,
+    ));
     new_civ.configure_lifecycle_state(&rs.species.lifecycle);
     let occupied: BTreeSet<u32> = rs
         .civs

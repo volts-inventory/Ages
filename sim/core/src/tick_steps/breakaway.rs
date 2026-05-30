@@ -207,6 +207,13 @@ pub(crate) fn breakaway_step<E: Emitter>(
         rs.planet.radius,
         rs.species.cognition_topology,
     );
+    // Same species↔planet survivability that gates the parent civ's
+    // capacity — a breakaway inherits the same biochemistry on the
+    // same world.
+    new_civ.apply_planet_survivability(sim_species::planet_survivability(
+        &rs.species.tolerance,
+        &rs.planet,
+    ));
     new_civ.configure_lifecycle_state(&rs.species.lifecycle);
     new_civ.territory_centroid = centroid;
     let target = target_cell_count(&new_civ, rs.state.grid().n_cells());

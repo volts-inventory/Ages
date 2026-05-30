@@ -21,10 +21,14 @@ mod derive;
 mod habitat_glyph;
 mod sampling;
 mod species;
+mod survivability;
 mod types;
 
 pub use derive::derive;
 pub use habitat_glyph::habitat_glyph_multiplier;
+pub use survivability::{
+    planet_survivability, ATMOSPHERE_INCOMPAT_PENALTY, SURVIVABILITY_FLOOR,
+};
 pub use sampling::{
     apply_catastrophe, derive_tolerance_envelope, modality_supported,
     sample_tolerance_for_substrate, species_name_from_seed, substrate_default_envelope,
