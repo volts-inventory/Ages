@@ -183,6 +183,29 @@ fn test_traits() -> (Real, Real) {
     (Real::percent(50), Real::percent(60))
 }
 
+/// Minimal mid-r/K biology for `step_growth` tests. The exact
+/// rates don't matter for the mechanic tests (diffusion, strict
+/// block, transit) — only that `intrinsic_growth_rate` derives a
+/// positive logistic `r` so populated cells grow toward cap.
+fn test_biology() -> sim_species::PopulationBiology {
+    sim_species::PopulationBiology {
+        clutch_size: Real::from_int(6),
+        infant_fraction: Real::percent(8),
+        maturity_fraction: Real::percent(20),
+        eldership_fraction: Real::percent(10),
+        infant_survival: Real::percent(60),
+        juvenile_survival: Real::percent(85),
+        food_multipliers: [
+            Real::from_ratio(3, 10),
+            Real::from_ratio(6, 10),
+            Real::ONE,
+            Real::from_ratio(9, 10),
+        ],
+        events_per_fertile_window: Real::from_int(12),
+        reproductive_success: Real::from_ratio(3, 100),
+    }
+}
+
 /// Lifespan used by `step_growth` tests. Pinned at the
 /// diffusion baseline so the rescale factor is exactly 1.0
 /// — tests targeting other knobs stay independent of the
@@ -210,6 +233,7 @@ fn step_growth_diffuses_to_neighbours() {
         &planet,
         Habitat::Aquatic,
         &observations,
+        &test_biology(),
         cog,
         soc,
         test_lifespan(),
@@ -243,6 +267,7 @@ fn step_growth_does_not_spontaneously_populate_empty_cells() {
         &planet,
         Habitat::Aquatic,
         &observations,
+        &test_biology(),
         cog,
         soc,
         test_lifespan(),
@@ -280,6 +305,7 @@ fn step_growth_strict_block_at_tier_zero() {
             &planet,
             Habitat::Aquatic,
             &observations,
+            &test_biology(),
             cog,
             soc,
             test_lifespan(),
@@ -322,6 +348,7 @@ fn step_growth_airborne_crosses_water_at_zero_tech() {
             &planet,
             Habitat::Airborne,
             &observations,
+            &test_biology(),
             cog,
             soc,
             test_lifespan(),
@@ -376,6 +403,7 @@ fn step_growth_terrestrial_unlocks_transit_with_tech() {
             &planet,
             Habitat::Terrestrial,
             &observations,
+            &test_biology(),
             cog,
             soc,
             test_lifespan(),
@@ -496,6 +524,7 @@ fn step_growth_growth_bonus_accelerates_filling() {
             &planet,
             Habitat::Aquatic,
             &obs_baseline,
+            &test_biology(),
             cog,
             soc,
             test_lifespan(),
@@ -509,6 +538,7 @@ fn step_growth_growth_bonus_accelerates_filling() {
             &planet,
             Habitat::Aquatic,
             &obs_boosted,
+            &test_biology(),
             cog,
             soc,
             test_lifespan(),
@@ -589,6 +619,7 @@ fn step_growth_long_lived_species_diffuses_slower() {
             &planet,
             Habitat::Aquatic,
             &observations,
+            &test_biology(),
             cog,
             soc,
             baseline_lifespan,
@@ -602,6 +633,7 @@ fn step_growth_long_lived_species_diffuses_slower() {
             &planet,
             Habitat::Aquatic,
             &observations,
+            &test_biology(),
             cog,
             soc,
             long_lifespan,

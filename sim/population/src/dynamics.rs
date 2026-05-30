@@ -15,6 +15,21 @@ use sim_species::PopulationBiology;
 
 use crate::cohort::Cohort;
 
+/// Lower clamp on the intrinsic logistic growth rate (per tick). An
+/// ultra-K species (clutch ≈ 1, multi-century lifespan) can derive a
+/// near-zero or negative net rate; flooring at 1/4000 ≈ 0.025%/tick
+/// (population doubling ~2770 ticks ≈ a couple of sim-centuries) keeps
+/// it slowly growing rather than declining its way to extinction
+/// before any civ can emerge.
+pub const GROWTH_R_MIN: (i64, i64) = (1, 4000);
+/// Upper clamp on the intrinsic logistic growth rate (per tick). A
+/// 5000-egg broadcast spawner derives a very large per-capita rate;
+/// capping at 1/10 = 10%/tick (doubling ~7 ticks) keeps the explicit
+/// logistic step `cur + r·cur·(1 − cur/cap)` comfortably inside the
+/// stable `r < 1` regime while still letting r-strategists fill empty
+/// habitat in years rather than centuries.
+pub const GROWTH_R_MAX: (i64, i64) = (1, 10);
+
 /// Per-tick transition + survival rates for a 4-bracket step,
 /// derived from `PopulationBiology` + `lifespan_years`. Replaces
 /// the homo-sapiens-calibrated 3%/yr birth, 2.8%/yr death heuristic
@@ -219,6 +234,48 @@ impl PopulationDynamics {
             mortality_reduction: [Real::ZERO; 4],
             birth_rate_multiplier: Real::ONE,
         }
+    }
+
+    /// Intrinsic per-capita logistic growth rate `r` (per tick) for
+    /// an *unstructured* population — the nomadic forager pool, which
+    /// tracks a single pop scalar per cell rather than a 4-bracket
+    /// cohort. Derived from the **same** reproductive rates this
+    /// struct feeds the age-structured civ step, so a species' clutch
+    /// size, reproductive cadence, offspring survival, and lifespan
+    /// drive its nomadic fill speed and its civ demographics off one
+    /// shared chain: clutch → birth rate → growth rate → population.
+    ///
+    /// `r = recruitment − adult_mortality`, where
+    ///   - `recruitment = fertile_fraction × birth_rate ×
+    ///     P(newborn → fertile)` — per-capita recruits reaching
+    ///     reproductive age each tick. `birth_rate` is the civ
+    ///     formula `(clutch × events × success) / fertile_months`;
+    ///     `P(newborn → fertile) = infant_survival × juvenile_survival`
+    ///     (the species' pre-fertility window survivals).
+    ///   - `adult_mortality = 1 − fertile_survival_per_tick` — the
+    ///     same per-tick adult death rate the cohort step applies.
+    ///
+    /// The result is an r/K-faithful spread: a large-clutch
+    /// r-strategist (rodents, broadcast spawners) explodes into empty
+    /// habitat, while a clutch-≈1, long-lived K-strategist (the
+    /// 177-yr social species in the README screenshot) crawls. Clamped
+    /// to `[GROWTH_R_MIN, GROWTH_R_MAX]` so an ultra-K species still
+    /// grows (never stalls or declines its way out of ever founding a
+    /// civ) and a 5000-egg spawner can't push the logistic step past
+    /// the stable `r < 1` regime.
+    pub fn intrinsic_growth_rate(
+        biology: &PopulationBiology,
+        lifespan_years: Real,
+        cognition: Real,
+        sociality: Real,
+    ) -> Real {
+        let d = Self::for_species(biology, lifespan_years, cognition, sociality);
+        let pre_fertile_survival = biology.infant_survival * biology.juvenile_survival;
+        let recruitment = biology.fertile_fraction() * d.birth_rate * pre_fertile_survival;
+        let adult_mortality = Real::ONE - d.fertile_survival_per_tick;
+        let r = recruitment - adult_mortality;
+        r.max(Real::from_ratio(GROWTH_R_MIN.0, GROWTH_R_MIN.1))
+            .min(Real::from_ratio(GROWTH_R_MAX.0, GROWTH_R_MAX.1))
     }
 
     /// Test-only neutral defaults. A cohort with these rates and

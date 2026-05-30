@@ -756,3 +756,71 @@ fn r_strategist_birth_rate_in_broadcast_spawner_range() {
         lifetime_offspring
     );
 }
+
+/// The nomadic forager pool's intrinsic logistic growth rate is
+/// derived from the same biology as the civ cohort, so it must be
+/// r/K-faithful: a large-clutch, short-lived r-strategist fills empty
+/// habitat far faster than a clutch-1, long-lived K-strategist. Both
+/// stay inside the `[GROWTH_R_MIN, GROWTH_R_MAX]` stability clamp, and
+/// even the ultra-K species keeps a strictly positive rate so it never
+/// declines its way out of ever founding a civ.
+#[test]
+fn intrinsic_growth_rate_is_r_over_k_faithful() {
+    use crate::dynamics::{GROWTH_R_MAX, GROWTH_R_MIN};
+    use sim_arith::Real;
+    let cog = Real::percent(50);
+    let soc = Real::percent(50);
+
+    // K-strategist: clutch=1, 200-yr lifespan, high investment.
+    let k_biology = PopulationBiology {
+        clutch_size: Real::ONE,
+        infant_fraction: Real::percent(10),
+        maturity_fraction: Real::percent(30),
+        eldership_fraction: Real::percent(20),
+        infant_survival: Real::percent(85),
+        juvenile_survival: Real::percent(95),
+        food_multipliers: [
+            Real::percent(30),
+            Real::percent(60),
+            Real::ONE,
+            Real::percent(90),
+        ],
+        events_per_fertile_window: Real::from_int(30),
+        reproductive_success: Real::from_ratio(5, 1000),
+    };
+    // r-strategist: huge clutch, 2-yr lifespan, broadcast spawn.
+    let r_biology = PopulationBiology {
+        clutch_size: Real::from_int(5_000),
+        infant_fraction: Real::percent(1),
+        maturity_fraction: Real::percent(4),
+        eldership_fraction: Real::ZERO,
+        infant_survival: Real::percent(5),
+        juvenile_survival: Real::percent(20),
+        food_multipliers: [
+            Real::percent(30),
+            Real::percent(60),
+            Real::ONE,
+            Real::percent(90),
+        ],
+        events_per_fertile_window: Real::from_int(2),
+        reproductive_success: Real::from_ratio(100, 1000),
+    };
+
+    let k_r = PopulationDynamics::intrinsic_growth_rate(&k_biology, Real::from_int(200), cog, soc);
+    let r_r = PopulationDynamics::intrinsic_growth_rate(&r_biology, Real::from_int(2), cog, soc);
+
+    let r_min = Real::from_ratio(GROWTH_R_MIN.0, GROWTH_R_MIN.1);
+    let r_max = Real::from_ratio(GROWTH_R_MAX.0, GROWTH_R_MAX.1);
+    assert!(
+        r_r > k_r,
+        "r-strategist growth rate must exceed K-strategist: r={r_r:?} k={k_r:?}"
+    );
+    assert!(
+        k_r >= r_min,
+        "K-strategist rate must stay at/above the positive floor: {k_r:?} < {r_min:?}"
+    );
+    assert!(
+        r_r <= r_max,
+        "r-strategist rate must be capped at the stability ceiling: {r_r:?} > {r_max:?}"
+    );
+}

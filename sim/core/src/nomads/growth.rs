@@ -79,33 +79,21 @@ pub(crate) fn cell_forager_cap(
     baseline * Real::from_ratio(FORAGER_CAPACITY_FRACTION.0, FORAGER_CAPACITY_FRACTION.1)
 }
 
-/// Intrinsic per-capita logistic growth rate `r` (per tick). In
-/// the Verhulst term `dN = r·N·(1 − N/cap)` this is the maximum
-/// per-tick growth fraction, realised when the cell is far below
-/// cap. 1/200 = 0.5%/tick ≈ 6%/yr, a population doubling time of
-/// ~140 ticks at low density — a fast-colonising but still
-/// biological rate (real post-agricultural growth is far slower;
-/// this is the cap on how quickly a near-empty cell can fill).
-///
-/// Because growth is now proportional to `N` (not to the gap
-/// `cap − N`), a near-empty cell fills along a true S-curve:
-/// hundreds of ticks of slow accumulation, a fast middle phase,
-/// then a long taper into cap — rather than the old gap-relaxation
-/// rule that leapt to ~cap/200 in the first tick. A cell crosses
-/// the 80% sustained-saturation founding gate after ~1600 ticks
-/// (~130 sim-years) from a small seed, so first foundings land a
-/// couple of centuries in rather than within decades.
-///
-/// The rate originally (under gap-relaxation) bumped 1/200 → 1/100
-/// to outpace the unconditional non-habitat decay that drained the
-/// species before civ-founding density was reached. With
-/// strict-block tier-0 transit (no decay-leak from pre-tech
-/// species) and per-cell tech bonuses (`thermal_gradient` +10%,
-/// `seasonal_thaw` +10%), it sits at 1/200: pre-tech cells crawl
-/// at hunter-gatherer pace; tech-rich cells fill faster via the
-/// bonuses.
-pub(crate) const NOMAD_GROWTH_NUM: i64 = 1;
-pub(crate) const NOMAD_GROWTH_DEN: i64 = 200;
+// The intrinsic per-capita logistic growth rate `r` (per tick) is no
+// longer a flat constant. It is derived per-species from the
+// reproductive biology via
+// `sim_population::PopulationDynamics::intrinsic_growth_rate` (clutch
+// size, reproductive cadence, offspring survival, lifespan) — the
+// same chain that drives the civ cohort — so r-strategists fill empty
+// habitat fast and K-strategists crawl. In the Verhulst term
+// `dN = r·N·(1 − N/cap)`, `r` is the max per-tick growth fraction at
+// low density; growth proportional to `N` gives a true S-curve (slow
+// cold start, fast middle, long taper) rather than the old
+// gap-relaxation rule that leapt to a fixed fraction of the planetary
+// cap in the first tick. The derived `r` is clamped to
+// `[GROWTH_R_MIN, GROWTH_R_MAX]` in that helper. Per-cell tech bonuses
+// (`thermal_gradient`, `seasonal_thaw`) still multiply it via
+// `cell_growth_bonus`.
 
 /// Density-gradient diffusion rate at the baseline lifespan. The
 /// fraction of the pop *gap* between source and neighbour that
@@ -220,6 +208,7 @@ pub(crate) fn step_growth(
     planet: &sim_world::Planet,
     species_habitat: Habitat,
     observations: &BTreeMap<u32, BTreeMap<u32, u64>>,
+    biology: &sim_species::PopulationBiology,
     cognition: Real,
     sociality: Real,
     lifespan_years: Real,
@@ -227,7 +216,17 @@ pub(crate) fn step_growth(
     tick: u64,
     claimed_cells: &std::collections::BTreeSet<u32>,
 ) {
-    let growth = Real::from_ratio(NOMAD_GROWTH_NUM, NOMAD_GROWTH_DEN);
+    // Intrinsic per-capita logistic rate derived from the species'
+    // reproductive biology — the same `PopulationDynamics` chain the
+    // civ cohort uses — so clutch size, reproductive cadence, and
+    // lifespan drive nomadic fill speed (r-strategists explode,
+    // K-strategists crawl) rather than a one-size-fits-all constant.
+    let growth = sim_population::PopulationDynamics::intrinsic_growth_rate(
+        biology,
+        lifespan_years,
+        cognition,
+        sociality,
+    );
     let diffuse = Real::from_ratio(NOMAD_DIFFUSION_NUM, NOMAD_DIFFUSION_DEN)
         * lifespan_diffusion_scale(lifespan_years);
     let species_t = species_tier(pops, observations, species_habitat, cognition, sociality);

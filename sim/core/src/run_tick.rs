@@ -331,6 +331,7 @@ pub(crate) fn run_tick<E: Emitter>(
         &rs.planet,
         rs.species.habitat,
         &rs.nomad_observations,
+        &rs.species.biology,
         rs.species.cognition,
         rs.species.sociality,
         rs.species.lifespan_years,

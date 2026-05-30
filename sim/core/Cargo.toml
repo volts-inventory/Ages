@@ -16,6 +16,7 @@ sim-civ.workspace = true
 sim-ecosystem.workspace = true
 sim-events.workspace = true
 sim-physics.workspace = true
+sim-population.workspace = true
 sim-recognition.workspace = true
 sim-report.workspace = true
 sim-species.workspace = true
