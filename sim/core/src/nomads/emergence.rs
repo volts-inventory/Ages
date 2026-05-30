@@ -19,7 +19,7 @@
 //! civ absorption or collapse can re-fill over decades rather than
 //! staying empty forever.
 
-use super::{cell_weight, growth::tech_score, is_habitat_match};
+use super::{growth::tech_score, is_habitat_match};
 use sim_arith::Real;
 use sim_species::Habitat;
 use std::collections::BTreeMap;
@@ -27,14 +27,17 @@ use std::collections::BTreeMap;
 /// Emergent founding **minimum population** floor: a cell
 /// can't coalesce into a civilisation unless its nomadic pop is
 /// at least this many people. Combined with the tech
-/// threshold below — a cell with high tech but only 5 people
-/// is still a hunter-gatherer band, not a civilisation.
+/// threshold below — a cell with high tech but only a handful of
+/// people is still a hunter-gatherer band, not a civilisation.
 ///
-/// Acts as the absolute floor on substrate-poor seeds where
-/// `NOMAD_PER_CELL_CAP × habitability` may itself be below 20.
+/// Acts as the absolute floor on substrate-poor seeds where the
+/// relative `cell_forager_cap × habitability` may itself be small.
 /// On normal seeds the relative saturation gate
-/// (`EMERGENT_PRESSURE_NUM/DEN`) dominates.
-pub(crate) const EMERGENT_FOUNDING_POP: i64 = 20;
+/// (`EMERGENT_PRESSURE_NUM/DEN`) dominates. Scaled up alongside the
+/// biosphere-coupled forager cap (which now reads in the thousands
+/// rather than the old flat ~80) so founding still requires a real
+/// village, not 20 stragglers.
+pub(crate) const EMERGENT_FOUNDING_POP: i64 = 300;
 
 /// Relative saturation gate: a cell must hold at least this
 /// fraction of its own `NOMAD_PER_CELL_CAP × habitability`
@@ -104,7 +107,11 @@ pub(crate) const AMBIENT_NOMAD_CHECK_TICKS: u64 = 60;
 /// Smaller than `INITIAL_NOMAD_TOTAL / origins.len()` (typical
 /// per-origin share at sim start) so ambient seeding is a kernel
 /// for diffusion + growth to amplify, not a pre-formed band.
-pub(crate) const AMBIENT_NOMAD_SEED_POP: i64 = 8;
+/// Scaled up in lockstep with the biosphere-coupled forager cap so
+/// the kernel stays the same ~10%-of-cap fraction it always was —
+/// preserving the slow-trickle re-seed pacing despite the larger
+/// absolute populations.
+pub(crate) const AMBIENT_NOMAD_SEED_POP: i64 = 120;
 
 /// Background nomadic emergence in unclaimed habitable cells.
 /// Runs once per `AMBIENT_NOMAD_CHECK_TICKS` ticks after
@@ -188,11 +195,20 @@ fn pressure_threshold(
     planet: &sim_world::Planet,
     species_habitat: Habitat,
     cell: u32,
+    tick: u64,
+    cognition: Real,
+    producer_biomass: Real,
 ) -> Real {
-    let weight = cell_weight(state, planet, cell, species_habitat);
-    let saturation = Real::from_int(super::growth::NOMAD_PER_CELL_CAP)
-        * weight
-        * Real::from_ratio(EMERGENT_PRESSURE_NUM, EMERGENT_PRESSURE_DEN);
+    let cap = super::growth::cell_forager_cap(
+        state,
+        planet,
+        cell,
+        tick,
+        species_habitat,
+        cognition,
+        producer_biomass,
+    );
+    let saturation = cap * Real::from_ratio(EMERGENT_PRESSURE_NUM, EMERGENT_PRESSURE_DEN);
     let floor = Real::from_int(EMERGENT_FOUNDING_POP);
     if saturation > floor {
         saturation
@@ -210,11 +226,20 @@ fn cluster_threshold(
     planet: &sim_world::Planet,
     species_habitat: Habitat,
     cell: u32,
+    tick: u64,
+    cognition: Real,
+    producer_biomass: Real,
 ) -> Real {
-    let weight = cell_weight(state, planet, cell, species_habitat);
-    Real::from_int(super::growth::NOMAD_PER_CELL_CAP)
-        * weight
-        * Real::from_ratio(EMERGENT_CLUSTER_NUM, EMERGENT_CLUSTER_DEN)
+    let cap = super::growth::cell_forager_cap(
+        state,
+        planet,
+        cell,
+        tick,
+        species_habitat,
+        cognition,
+        producer_biomass,
+    );
+    cap * Real::from_ratio(EMERGENT_CLUSTER_NUM, EMERGENT_CLUSTER_DEN)
 }
 
 /// Update the per-cell sustained-density streak counter. Cells
@@ -228,11 +253,22 @@ pub(crate) fn update_pressure_streak(
     state: &sim_physics::PhysicsState,
     planet: &sim_world::Planet,
     species_habitat: Habitat,
+    tick: u64,
+    cognition: Real,
+    producer_biomass: Real,
 ) {
     let alive: std::collections::BTreeSet<u32> = pops.keys().copied().collect();
     streak.retain(|cell, _| alive.contains(cell));
     for (&cell, &pop) in pops {
-        let threshold = pressure_threshold(state, planet, species_habitat, cell);
+        let threshold = pressure_threshold(
+            state,
+            planet,
+            species_habitat,
+            cell,
+            tick,
+            cognition,
+            producer_biomass,
+        );
         if pop >= threshold {
             *streak.entry(cell).or_insert(0) += 1;
         } else {
@@ -271,6 +307,8 @@ pub(crate) fn scan_for_emergence(
     state: &sim_physics::PhysicsState,
     planet: &sim_world::Planet,
     species_habitat: Habitat,
+    tick: u64,
+    producer_biomass: Real,
     civ_centroids: &[u32],
     civ_claims: &std::collections::BTreeSet<u32>,
 ) -> Option<u32> {
@@ -292,7 +330,15 @@ pub(crate) fn scan_for_emergence(
         if !crate::territory::is_habitat_claimable_at(state, planet, cell, species_habitat) {
             continue;
         }
-        let saturation = pressure_threshold(state, planet, species_habitat, cell);
+        let saturation = pressure_threshold(
+            state,
+            planet,
+            species_habitat,
+            cell,
+            tick,
+            cognition,
+            producer_biomass,
+        );
         if pop < saturation {
             continue;
         }
@@ -307,7 +353,15 @@ pub(crate) fn scan_for_emergence(
             .filter(|nbr| {
                 let nbr_id = nbr.0;
                 let nbr_pop = pops.get(&nbr_id).copied().unwrap_or(Real::ZERO);
-                let nbr_threshold = cluster_threshold(state, planet, species_habitat, nbr_id);
+                let nbr_threshold = cluster_threshold(
+                    state,
+                    planet,
+                    species_habitat,
+                    nbr_id,
+                    tick,
+                    cognition,
+                    producer_biomass,
+                );
                 nbr_pop >= nbr_threshold
             })
             .count();

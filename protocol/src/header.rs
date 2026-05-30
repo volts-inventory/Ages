@@ -105,13 +105,14 @@ pub struct TickEvent {
 }
 
 /// Minimum per-cell nomad population required for a cell to render
-/// as `0` in the viewport. Set well above 1 so a cell with a
-/// handful of stray migrants doesn't visually claim the same
-/// "occupied" weight as a saturated village. With per-cell cap
-/// of `NOMAD_PER_CELL_CAP = 80`, a floor of 10 means roughly
-/// "≥ 1/8 of cap" before the glyph appears — the cell has to
-/// host a real settlement, not a passing-through cohort.
-pub const NOMAD_DISPLAY_FLOOR_POP: f64 = 10.0;
+/// as `0` in the viewport. Set well above the stray-migrant level so
+/// a cell with a handful of passing-through people doesn't visually
+/// claim the same "occupied" weight as a saturated village. Scaled up
+/// alongside the biosphere-coupled forager cap (now typically in the
+/// low thousands per cell, vs the old flat ~80) so the floor still
+/// means roughly "≥ 1/8 of a typical saturated cell" — the cell has
+/// to host a real settlement, not a passing-through cohort.
+pub const NOMAD_DISPLAY_FLOOR_POP: f64 = 150.0;
 
 pub const SCHEMA_VERSION: u32 = 0;
 

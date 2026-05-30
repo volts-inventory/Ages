@@ -26,6 +26,7 @@ pub(crate) fn emergent_founding_step<E: Emitter>(
         .filter(|c| c.is_active())
         .map(|c| c.territory_centroid)
         .collect();
+    let producer_biomass = rs.ecosystem.tier_biomass(0);
     let Some(emerge_cell) = nomads::scan_for_emergence(
         &rs.nomad_pops,
         &rs.nomad_observations,
@@ -35,6 +36,8 @@ pub(crate) fn emergent_founding_step<E: Emitter>(
         &rs.state,
         &rs.planet,
         rs.species.habitat,
+        tick,
+        producer_biomass,
         &centroids,
         claim_union,
     ) else {

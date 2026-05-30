@@ -738,6 +738,7 @@ mod tests {
             orbital_period_months: 12,
             metabolic_substrate: "aqueous".into(),
             substrate_perturbation_q32: 0,
+            effective_boil_k_q32: 0,
             atmospheric_n2_q32: 0,
             atmospheric_o2_q32: 0,
             atmospheric_co2_q32: 0,

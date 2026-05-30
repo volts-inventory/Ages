@@ -31,12 +31,24 @@ impl<W: Write> ViewportEmitter<W> {
             .get(&p.metabolic_substrate)
             .copied()
             .unwrap_or(0.0);
-        let b = m
-            .substrate_boil_k
-            .get(&p.metabolic_substrate)
-            .copied()
-            .unwrap_or(0.0);
-        (f * (1.0 + perturb), b * (1.0 + perturb))
+        // Boil point: prefer the planet's pressure-adjusted effective
+        // boil (the value the sim uses in `surface_solvent_boiled`) so
+        // the rendered phase / badge agree with the sim on whether the
+        // solvent has boiled off. The `substrate_boil_k` table is the
+        // 1-atm reference point — wrong for thin/dense atmospheres,
+        // where the solvent boils far below it. Fall back to the
+        // reference value for legacy logs (`effective_boil_k_q32 == 0`).
+        let boil_k = if p.effective_boil_k_q32 != 0 {
+            q32_to_f64(p.effective_boil_k_q32)
+        } else {
+            let b = m
+                .substrate_boil_k
+                .get(&p.metabolic_substrate)
+                .copied()
+                .unwrap_or(0.0);
+            b * (1.0 + perturb)
+        };
+        (f * (1.0 + perturb), boil_k)
     }
 
     /// Coarse surface-physics state for the active planet — used by
