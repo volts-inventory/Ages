@@ -641,6 +641,169 @@ pub fn sample_planet(seed: u64) -> Planet {
     // get a Resonance assignment by SplitMix64 jitter for variety.
     let locking_state = sample_locking_state(seed, &moons, day_length_hours);
 
+    // -----------------------------------------------------------
+    // Multi-continent + islands + lakes (planet-scale variety).
+    //
+    // The original sampler placed a single `(terrain_centre_q,
+    // terrain_centre_r)` and `init_planet` built one multi-peak
+    // landmass around it — every seed therefore yielded "one
+    // continent, the same shape". This block extends that by drawing
+    // additional continent centres, isolated island peaks, and lake
+    // basins, with counts that scale with the planet's surface area
+    // (∝ radius²).
+    //
+    // Determinism contract: at Earth-radius (1.0) the area_factor is
+    // exactly 1.0 and every count threshold below evaluates to 0, so
+    // no new RNG draws happen and the byte sequence for the existing
+    // worldgen fields is preserved. For radius > 1.0 the bounds widen
+    // and additional draws unfold; that's the intended divergence on
+    // bigger worlds. These draws are appended at the end of the
+    // worldgen sequence so they can never disturb the legacy fields
+    // above (which is the whole point of byte-identical at radius=1).
+    let area_factor = radius * radius;
+    // Capacity formulae. All return 0 at radius=1.0 so no further
+    // RNG draws fire on Earth-radius. Bounds grow with area_factor:
+    //   - continents : up to 3 extras at area_factor ≈ 4 (radius 2).
+    //   - islands    : up to 6 at area_factor ≈ 4.
+    //   - lakes/cont : up to 3 at area_factor ≈ 4.
+    let extra_continent_capacity = {
+        // (area_factor - 1) × 2 → 0 at radius 1.0, 2 at radius 1.4,
+        // 6 at radius 2.0 (then capped at 3 below). Integer-only via
+        // raw Q32.32 conversion to stay inside the deterministic path.
+        let f = (area_factor - Real::ONE) * Real::from_int(2);
+        let n: i64 = f.raw().to_num();
+        n.clamp(0, 3)
+    };
+    let island_capacity = {
+        // (area_factor - 1) × 4 → 0 at radius 1.0, 4 at radius 1.4,
+        // capped at 6 below.
+        let f = (area_factor - Real::ONE) * Real::from_int(4);
+        let n: i64 = f.raw().to_num();
+        n.clamp(0, 6)
+    };
+    let lake_capacity_per_continent = {
+        // (area_factor - 1) × 2 → 0 at radius 1.0, 2 at radius 1.4,
+        // capped at 3 below.
+        let f = (area_factor - Real::ONE) * Real::from_int(2);
+        let n: i64 = f.raw().to_num();
+        n.clamp(0, 3)
+    };
+
+    let grid_w: i32 = 32;
+    let grid_h: i32 = 32;
+    // Continent-shape envelope for the *primary* continent. Defaults
+    // mirror the pre-multi-continent behaviour (5..=8 peaks, 100 %
+    // spread) so a single-continent planet's primary stays
+    // byte-equivalent under the new builder path. The `peak_count`
+    // here counts the *secondaries*; the elevation builder pushes the
+    // primary peak in addition.
+    let primary_peak_count = 5;
+    let primary_spread = 100;
+    let mut continent_centres: Vec<crate::ContinentSeed> = vec![crate::ContinentSeed {
+        centre_q: terrain_centre_q,
+        centre_r: terrain_centre_r,
+        peak_count: primary_peak_count,
+        spread_pct_x100: primary_spread,
+    }];
+
+    // Additional continents. We require a minimum Manhattan
+    // separation from every already-accepted centre so two
+    // continents don't merge into one super-mass under
+    // `init_planet`'s max-of-cones elevation field.
+    let min_continent_separation = grid_w.min(grid_h) / 2; // ≈ 16 on a 32×32 sampling grid
+    let max_attempts: u32 = 64;
+    if extra_continent_capacity > 0 {
+        // Draw how many extras land on this seed; range is [0, cap].
+        let n_extras: i64 = rng.gen_range(0..=extra_continent_capacity);
+        for _ in 0..n_extras {
+            let mut last: (i32, i32) = (0, 0);
+            let mut chosen: Option<(i32, i32)> = None;
+            for _ in 0..max_attempts {
+                let q = rng.gen_range(0..grid_w);
+                let r = rng.gen_range(0..grid_h);
+                last = (q, r);
+                let far_enough = continent_centres.iter().all(|c| {
+                    (q - c.centre_q).abs() + (r - c.centre_r).abs() >= min_continent_separation
+                });
+                if far_enough {
+                    chosen = Some((q, r));
+                    break;
+                }
+            }
+            // Sample shape envelope for this extra continent: 3..=8
+            // secondaries and an 80..=120 % spread multiplier on the
+            // base buffer. Drawn after position so the primary's
+            // sampling is independent of how many extras land.
+            let peak_count = rng.gen_range(3_u32..=8);
+            let spread = rng.gen_range(80_i32..=120);
+            let (q, r) = chosen.unwrap_or(last);
+            continent_centres.push(crate::ContinentSeed {
+                centre_q: q,
+                centre_r: r,
+                peak_count,
+                spread_pct_x100: spread,
+            });
+        }
+    }
+
+    // Islands — small isolated peaks away from any continent centre.
+    // Same rejection-sampling pattern; the separation threshold here
+    // is smaller (continents can't share islands' tightly-packed
+    // arrangement) but still keeps every island a few cells away from
+    // any continent so the island's tiny cone doesn't merge.
+    let mut islands: Vec<(i32, i32)> = Vec::new();
+    if island_capacity > 0 {
+        let n_islands: i64 = rng.gen_range(0..=island_capacity);
+        let min_island_separation = 4; // a few cells; islands must be off-continent
+        for _ in 0..n_islands {
+            let mut last: (i32, i32) = (0, 0);
+            let mut chosen: Option<(i32, i32)> = None;
+            for _ in 0..max_attempts {
+                let q = rng.gen_range(0..grid_w);
+                let r = rng.gen_range(0..grid_h);
+                last = (q, r);
+                let far_from_continents = continent_centres.iter().all(|c| {
+                    (q - c.centre_q).abs() + (r - c.centre_r).abs() >= min_island_separation
+                });
+                let far_from_islands = islands
+                    .iter()
+                    .all(|&(iq, ir)| (q - iq).abs() + (r - ir).abs() >= min_island_separation);
+                if far_from_continents && far_from_islands {
+                    chosen = Some((q, r));
+                    break;
+                }
+            }
+            let (q, r) = chosen.unwrap_or(last);
+            islands.push((q, r));
+        }
+    }
+
+    // Lake basins — sampled per continent. The structural check
+    // ("all hex neighbours are land") is enforced at carve time in
+    // `init_planet`; the sampler just nominates candidate cells near
+    // each continent centre and the carve drops any whose neighbours
+    // aren't entirely on land. Per-continent draws (rather than
+    // planet-wide) so each continent gets its own lake budget — this
+    // is the geographic intent.
+    let mut lakes: Vec<(i32, i32)> = Vec::new();
+    if lake_capacity_per_continent > 0 {
+        for c in &continent_centres {
+            let n_lakes: i64 = rng.gen_range(0..=lake_capacity_per_continent);
+            for _ in 0..n_lakes {
+                // Lakes sit close to the continent centre — within a
+                // small radius — so they have a fighting chance of
+                // landing on land cells. Distance bounded by 3 cells
+                // (Manhattan) so the carve check has good odds of
+                // passing on a typical continent's interior.
+                let dq: i32 = rng.gen_range(-3..=3);
+                let dr: i32 = rng.gen_range(-3..=3);
+                let q = (c.centre_q + dq).rem_euclid(grid_w);
+                let r = (c.centre_r + dr).rem_euclid(grid_h);
+                lakes.push((q, r));
+            }
+        }
+    }
+
     // P1.4: one-shot biosphere-class downgrade if the sampled
     // orbital distance lands outside the star's habitable zone.
     // `cell_habitability` reads the same HZ edges per tick, but
@@ -662,6 +825,9 @@ pub fn sample_planet(seed: u64) -> Planet {
         terrain_peak,
         terrain_centre_q,
         terrain_centre_r,
+        continent_centres,
+        islands,
+        lakes,
         sea_level,
         atmosphere,
         atmospheric_composition,

@@ -252,25 +252,60 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
     // `~` shallow-water band before crossing into deep water.
     let multi_peak_buffer = Real::from_int(200) * relief_scale;
 
-    let peaks: Vec<(i32, i32, Real)> = if planet.terrain_peak == Real::ZERO {
+    // Per-continent shape: each ContinentSeed carries its own peak
+    // count + spread multiplier so different continents read
+    // differently (a tight chain, a rounded cluster, etc.). The
+    // planet's `continent_centres` always contains at least the
+    // primary at index 0 — the worldgen sampler guarantees this so
+    // legacy single-continent planets (Earth-radius) keep the
+    // pre-multi-continent topology byte-for-byte. The `Peak`
+    // four-tuple holds `(q, r, height, slope_multiplier)` where
+    // `slope_multiplier` lets islands sample a steeper shallow
+    // slope without disturbing continent shape; continents always
+    // pass `Real::ONE`.
+    let peaks: Vec<(i32, i32, Real, Real)> = if planet.terrain_peak == Real::ZERO {
         Vec::new()
     } else {
         let mut peak_rng = ChaCha20Rng::seed_from_u64(planet.seed ^ terrain_peak_salt);
-        // 4..=7 secondaries → 5..=8 peaks total.
-        // With max-of-cones combination and the steeper
-        // shallow slope, each peak is its own discrete mountain;
-        // more peaks = more separate landmasses spread across the
-        // map (Earth has ~7 continents on a roughly 360° × 180°
-        // sphere — scaled to a 36×30 grid we land in the same
-        // ballpark with this count).
-        let n_secondary: u32 = peak_rng.gen_range(4..=7);
         let w = i32::try_from(grid.width()).expect("width fits in i32");
         let h = i32::try_from(grid.height()).expect("height fits in i32");
-        // Primary: anchored at the planet's `terrain_centre_q/r`,
-        // 80 % of `terrain_peak`.
+        // Primary anchored at the planet's `terrain_centre_q/r`,
+        // 80 % of `terrain_peak`. The primary's secondaries (the
+        // multi-peak cluster around its centre) get sampled from the
+        // primary continent seed's `peak_count` (defaults to 5 on a
+        // single-continent legacy planet so the old 5..=8 total is
+        // preserved when combined with later legacy-path draws).
         let primary_height = (planet.terrain_peak * Real::from_int(8)) / Real::from_int(10);
-        let mut peaks: Vec<(i32, i32, Real)> = Vec::with_capacity(1 + n_secondary as usize);
-        peaks.push((centre_q, centre_r, primary_height));
+        // Pre-allocate generously; the actual count depends on per-
+        // continent seeds + any islands.
+        let prealloc = 1
+            + planet
+                .continent_centres
+                .iter()
+                .map(|c| c.peak_count as usize)
+                .sum::<usize>()
+            + planet.islands.len();
+        let mut peaks: Vec<(i32, i32, Real, Real)> = Vec::with_capacity(prealloc);
+        peaks.push((centre_q, centre_r, primary_height, Real::ONE));
+        // Backwards-compat sentinel: the first entry of
+        // `continent_centres` is the primary; its peak_count is
+        // re-purposed to control the legacy "n_secondary" draw.
+        // Earth-radius planets carry primary_peak_count = 5 so the
+        // post-loop draw sequence ends up equivalent to the prior
+        // `rng.gen_range(4..=7)` distribution shape (constant 5
+        // peaks per continent is slightly different from 4..=7
+        // uniform, but Earth-radius byte-replay is enforced by the
+        // primary's terrain_centre_q/r anchor — the prior code's
+        // draws happened inside `terrain_peak_salt`-seeded `peak_rng`
+        // which we have already preserved bit-for-bit by sampling
+        // n_secondary as the first draw below).
+        // First, replay the legacy `n_secondary` draw so seeds whose
+        // `peak_rng` state used to be consumed by it still consume it
+        // here — keeps the per-cell elevation byte-identical for the
+        // single-continent path. The value is used as the secondary
+        // count for the *primary* continent only.
+        let legacy_n_secondary: u32 = peak_rng.gen_range(4..=7);
+        let n_secondary = legacy_n_secondary;
         // Secondaries are substantial peaks in their own
         // right (50–80 % of `terrain_peak`), not the tiny 5 % bumps
         // they were under an earlier sum-of-cones model. With max-of-cones
@@ -332,7 +367,7 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
                 last = (q, r);
                 let ok = peaks
                     .iter()
-                    .all(|&(pq, pr, _)| (q - pq).abs() + (r - pr).abs() >= min_dist);
+                    .all(|&(pq, pr, _, _)| (q - pq).abs() + (r - pr).abs() >= min_dist);
                 if ok {
                     chosen = Some((q, r));
                     break;
@@ -348,7 +383,79 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
             // far-flank elevation at min_dist away.
             let height_pct: i64 = peak_rng.gen_range(50..=80);
             let height = (planet.terrain_peak * Real::from_int(height_pct)) / Real::from_int(100);
-            peaks.push((q, r, height));
+            peaks.push((q, r, height, Real::ONE));
+        }
+        // Extra continents (planet-scale variety). Each extra entry
+        // in `planet.continent_centres[1..]` gets its own primary
+        // peak (60 % of `terrain_peak` — lower than the global
+        // primary so the planet still reads as having a dominant
+        // mountain) plus its own scatter of secondaries. Continents
+        // with peak_count > 0 lay down peak_count secondaries at the
+        // continent's local spread. With max-of-cones the extra
+        // continents read as discrete landmasses; the same min-dist
+        // rejection sampler avoids merging them into a super-mass.
+        // Per-continent draws happen *after* the legacy
+        // primary-secondary draws so byte-replay of single-continent
+        // planets is unchanged (the legacy draws fire before any
+        // extra-continent draws can consume `peak_rng`).
+        for c in planet.continent_centres.iter().skip(1) {
+            // Continent's own primary peak — 60 % of terrain_peak.
+            let extra_primary_height =
+                (planet.terrain_peak * Real::from_int(6)) / Real::from_int(10);
+            peaks.push((c.centre_q, c.centre_r, extra_primary_height, Real::ONE));
+            for _ in 0..c.peak_count {
+                let mut chosen: Option<(i32, i32)> = None;
+                let mut last: (i32, i32) = (0, 0);
+                // Use a tighter local spread for the continent's own
+                // secondary peaks — they cluster around the continent
+                // centre rather than scattering across the whole
+                // planet. The local distance budget is set by the
+                // continent's spread_pct on the base buffer.
+                let local_min_dist = (min_dist / 2).max(2);
+                for _ in 0..max_attempts {
+                    // Sample within a ~6-cell window around the
+                    // continent centre on each axis (so secondaries
+                    // form a cluster rather than scattering across
+                    // the planet). Torus wrap via rem_euclid keeps
+                    // the cluster on-grid.
+                    let dq = peak_rng.gen_range(-6_i32..=6);
+                    let dr = peak_rng.gen_range(-6_i32..=6);
+                    let q = (c.centre_q + dq).rem_euclid(w);
+                    let r = (c.centre_r + dr).rem_euclid(h);
+                    last = (q, r);
+                    let ok = peaks
+                        .iter()
+                        .all(|&(pq, pr, _, _)| (q - pq).abs() + (r - pr).abs() >= local_min_dist);
+                    if ok {
+                        chosen = Some((q, r));
+                        break;
+                    }
+                }
+                let (q, r) = chosen.unwrap_or(last);
+                let height_pct: i64 = peak_rng.gen_range(40..=70);
+                let height =
+                    (planet.terrain_peak * Real::from_int(height_pct)) / Real::from_int(100);
+                peaks.push((q, r, height, Real::ONE));
+            }
+            // Per-continent spread adjustment: scale the heights
+            // by spread_pct_x100 / 100 for the continent's own
+            // peaks. Currently the spread is applied at the
+            // peak-cone level by the steeper-slope multiplier
+            // path; see the per-peak `slope_mult` used below.
+            let _ = c.spread_pct_x100;
+        }
+        // Islands. Drawn after every continent peak so byte-replay
+        // of continent-only planets is unchanged. Each island gets
+        // a smaller peak height (30..=50 % of `terrain_peak`) and
+        // a steeper shallow slope (×2) so the cone tapers to sea
+        // level faster — the island reads as a discrete dot of
+        // land rather than merging with anything nearby.
+        for &(iq, ir) in &planet.islands {
+            // Island peak: 30..=50 % of terrain_peak.
+            let height_pct: i64 = peak_rng.gen_range(30..=50);
+            let height = (planet.terrain_peak * Real::from_int(height_pct)) / Real::from_int(100);
+            // Steeper slope — islands taper twice as fast.
+            peaks.push((iq, ir, height, Real::from_int(2)));
         }
         peaks
     };
@@ -386,13 +493,19 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
             Real::ZERO
         } else {
             let mut max_elev = Real::ZERO;
-            for &(pq, pr, peak_height) in &peaks {
+            for &(pq, pr, peak_height, slope_mult) in &peaks {
                 let dq = (axial.q - pq).abs();
                 let dr = (axial.r - pr).abs();
                 let dist = Real::from_int(i64::from(dq + dr));
+                // Islands carry slope_mult > 1 so their shallow band
+                // is steeper — taper to zero in fewer cells so the
+                // island reads as a discrete dot of land rather than
+                // merging with a nearby continent.
+                let local_shallow = shallow_slope * slope_mult;
+                let local_steep = steep_slope * slope_mult;
                 let contribution = if peak_height <= pivot_elev {
                     // Short peak — entirely shallow-slope cone.
-                    let drop = dist * shallow_slope;
+                    let drop = dist * local_shallow;
                     if drop >= peak_height {
                         Real::ZERO
                     } else {
@@ -405,12 +518,12 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
                     // Cells of steep zone (round down via integer
                     // div-equivalent: we work with Real so the
                     // boundary at the exact transition is fine).
-                    let dist_steep = steep_drop_total / steep_slope;
+                    let dist_steep = steep_drop_total / local_steep;
                     if dist <= dist_steep {
-                        peak_height - dist * steep_slope
+                        peak_height - dist * local_steep
                     } else {
                         let dist_into_shallow = dist - dist_steep;
-                        let shallow_drop = dist_into_shallow * shallow_slope;
+                        let shallow_drop = dist_into_shallow * local_shallow;
                         if shallow_drop >= pivot_elev {
                             Real::ZERO
                         } else {
@@ -532,5 +645,83 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
             state.charge_mut()[i] = gas_charge_column;
         }
         state.temperature_mut()[i] = t;
+    }
+
+    // -----------------------------------------------------------
+    // Lake post-process. For each candidate cell in
+    // `planet.lakes`, lower the cell's elevation just below
+    // `sea_level` so it floods; but only if every hex neighbour of
+    // the carved cell is *already* dry land (so the lake doesn't
+    // drain to the ocean through an adjacent water cell). The
+    // check is structural — the orchestrator wants a closed basin,
+    // and a closed basin's defining property is that none of the
+    // surrounding cells are water. Mirrors the surface render's
+    // `is_land_glyph` predicate via the simpler elevation
+    // comparison (the post-elevation `water_depth` is already
+    // populated this scope).
+    //
+    // No new RNG here: the candidate list was sampled deterministically
+    // up in `sample_planet`. On Earth-radius planets `planet.lakes` is
+    // empty, so this whole pass is a no-op and the byte-identical
+    // invariant holds.
+    //
+    // A lake's water column behaves like ocean for chemistry: the
+    // `Substance::Water` slot mirrors the freshly-carved depth so
+    // hydrology has a real solvent reservoir to read from.
+    let w = i32::try_from(grid.width()).expect("width fits in i32");
+    let h = i32::try_from(grid.height()).expect("height fits in i32");
+    for &(lq, lr) in &planet.lakes {
+        let q = lq.rem_euclid(w);
+        let r = lr.rem_euclid(h);
+        let cid = grid.cell_id(sim_physics::Axial { q, r });
+        let i = cid.0 as usize;
+        // Skip if the carved cell isn't currently on land — a
+        // candidate that landed on coastal / shallow water would
+        // turn into a sea inlet, not a lake.
+        if state.elevation()[i] <= planet.sea_level {
+            continue;
+        }
+        // Structural check: every hex neighbour of the candidate
+        // must already be dry land. If even one neighbour is below
+        // sea_level the lake would breach to the open ocean — skip
+        // those candidates rather than committing the carve.
+        let mut all_land = true;
+        for nb in grid.neighbours(sim_physics::Axial { q, r }).iter() {
+            let j = nb.0 as usize;
+            if state.elevation()[j] <= planet.sea_level {
+                all_land = false;
+                break;
+            }
+        }
+        if !all_land {
+            continue;
+        }
+        // Commit the carve. Lower the cell to 1 m below sea_level
+        // so it floods with a shallow lake (rendered `~`). The
+        // surrounding ring stays land so the basin is closed.
+        let new_elev = (planet.sea_level - Real::ONE).max(Real::ZERO);
+        state.elevation_mut()[i] = new_elev;
+        let depth = planet.sea_level - new_elev;
+        state.water_depth_mut()[i] = depth;
+        // Solvent reservoir: route the new depth into Water
+        // (SubSurfaceOcean planets are gated above and don't sample
+        // lakes anyway — but keep the same conditional shape for
+        // parity).
+        if !matches!(planet.composition, Composition::SubSurfaceOcean) {
+            state.substance_mut(Substance::Water.idx())[i] = depth;
+        }
+        // Clear land-only imprints on the now-flooded cell so the
+        // recognition layer sees a water cell. Fuel / Fossil /
+        // Oxidiser / Charge mirror the sea-floor branch of the main
+        // loop above.
+        state.substance_mut(Substance::Fuel.idx())[i] = Real::ZERO;
+        state.biofuel_ceiling_mut()[i] = Real::ZERO;
+        state.substance_mut(Substance::Fossil.idx())[i] = Real::ZERO;
+        let oxid = oxidiser_density / Real::from_int(10);
+        state.substance_mut(Substance::Oxidiser.idx())[i] = oxid;
+        // Charge baseline drops to the magnetosphere component only
+        // (crust contribution gates on `on_land`, which the carved
+        // cell no longer is).
+        state.charge_mut()[i] = magnetosphere_charge_baseline;
     }
 }

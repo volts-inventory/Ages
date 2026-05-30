@@ -363,14 +363,23 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     let perturb = Real::ONE + planet.substrate_perturbation;
     let ice_albedo = sim_physics::IceAlbedo::for_freeze_point(substrate_freeze_k * perturb);
 
+    // Planet-scale realism (regional dynamism): per-tick tectonic
+    // uplift / erosion + volcanic outgassing scale with the planet's
+    // surface area (∝ radius²) so a bigger world's regions churn
+    // proportionally more. Earth (factor 1.0) is byte-identical to
+    // the prior `earth_like()` constructors. The same factor lands on
+    // the catastrophe cadence below (asteroid / solar-flare / ice-age
+    // periods) so the three "rare-event" stacks scale in lockstep.
+    let area_factor = planet.radius * planet.radius;
+
     // Tectonics + fluvial erosion (Sprint 4 Item 12). Default
     // coefficients here; the per-planet plate roster is sampled in
     // `sim_world::init_planet` and installed via
     // `state.set_tectonics_fields(...)` + `Laws::install_tectonics`.
-    let tectonics = sim_physics::Tectonics::earth_like();
+    let tectonics = sim_physics::Tectonics::for_planet(area_factor);
 
     // Volcanic CO2 + H2O outgassing (Sprint 4 Item 12d).
-    let volcanism = sim_physics::Volcanism::earth_like();
+    let volcanism = sim_physics::Volcanism::for_planet(area_factor);
 
     // Geomagnetic-reversal Markov chain (Sprint 5 Item 20). One
     // earth-like calibration covers every planet — trial rate +

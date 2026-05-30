@@ -37,7 +37,7 @@ pub(super) fn try_apply(
     let asteroid_ready = civ
         .last_asteroid_tick
         .is_none_or(|t| tick.saturating_sub(t) >= ASTEROID_COOLDOWN_TICKS);
-    if !(asteroid_ready && asteroid_fires(tick)) {
+    if !(asteroid_ready && asteroid_fires(planet, tick)) {
         return None;
     }
     // cell-targeted: deterministic impact site per

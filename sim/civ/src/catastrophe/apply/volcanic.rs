@@ -37,10 +37,17 @@ pub(super) fn try_apply(
     // volcanic cooldown scales with crust — Basaltic
     // baseline, Hydrocarbon shorter (more frequent), older crusts
     // longer. Computed in Q32.32 then converted back to ticks.
+    //
+    // Planet-scale realism: divide the crust-adjusted cooldown by
+    // the planet's surface area factor (`radius²`) so a bigger
+    // world's regions churn proportionally more — more volcanic
+    // events per century. Earth-radius (1.0) is a no-op.
     let volcanic_factor = volcanic_cooldown_factor(planet.crust);
+    let area_factor = planet.radius * planet.radius;
     let scaled_cooldown_real =
         Real::from_int(i64::try_from(VOLCANIC_COOLDOWN_TICKS).unwrap_or(i64::MAX))
-            * volcanic_factor;
+            * volcanic_factor
+            / area_factor.max(Real::percent(1));
     let scaled_volcanic_cooldown: u64 =
         u64::try_from(scaled_cooldown_real.raw().to_num::<i64>().max(1))
             .unwrap_or(VOLCANIC_COOLDOWN_TICKS);

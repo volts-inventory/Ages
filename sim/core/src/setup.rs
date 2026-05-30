@@ -282,8 +282,16 @@ pub(crate) fn setup_run<E: Emitter>(
     }))?;
     let mut laws = build_laws(&planet, cfg.grid_height);
     laws.magnetism.init_field(&mut state);
-    let (tectonics, plate_id, crust_thickness) =
-        sim_physics::Tectonics::sample_plates_for_seed(planet.seed, state.grid());
+    // Plate roster sampled with the planet-scale area_factor so its
+    // per-tick rate coefficients (convergence_rate / divergence_rate
+    // / erosion_k) come back already lifted by `radius²`. Earth
+    // (factor 1.0) reduces to the legacy single-arg path.
+    let area_factor = planet.radius * planet.radius;
+    let (tectonics, plate_id, crust_thickness) = sim_physics::Tectonics::sample_plates_for_planet(
+        planet.seed,
+        state.grid(),
+        area_factor,
+    );
     state.set_tectonics_fields(plate_id, crust_thickness);
     laws.install_tectonics(tectonics);
     let recognition = RecognitionLibrary::earth_like_default();

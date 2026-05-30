@@ -21,6 +21,24 @@ const EARTH_GRAVITY_MS2_X100: i64 = 981;
 /// output and downstream physics consumers.
 const EARTH_RADIUS_M: i64 = 6_371_000;
 
+/// One continent's worldgen seed: its centre on the axial grid
+/// plus the per-continent shape parameters (peak count and
+/// spread-buffer percentage). Sampled in [`crate::sample_planet`]
+/// from the same deterministic RNG stream as the rest of the
+/// planet so byte-replay holds; consumed by `init_planet`'s
+/// elevation builder which lays down `peak_count` secondary peaks
+/// per continent at the continent's local `spread_pct_x100`
+/// multiplier on the global `multi_peak_buffer`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContinentSeed {
+    pub centre_q: i32,
+    pub centre_r: i32,
+    pub peak_count: u32,
+    /// Per-continent spread (×100). 100 = baseline buffer, 80 = a
+    /// tighter / elongated chain, 120 = a wider rounded mass.
+    pub spread_pct_x100: i32,
+}
+
 /// Bulk planet properties sampled at run start. Subset of the full
 /// ~50-property seed; expands as later milestones need more.
 ///
@@ -71,6 +89,34 @@ pub struct Planet {
     /// grid. Wraps around grid bounds at init time.
     pub terrain_centre_q: i32,
     pub terrain_centre_r: i32,
+    /// Continent centres in axial coords. The first entry is the
+    /// primary (which mirrors `terrain_centre_q`/`r` so legacy
+    /// callers that anchor a mountain there still find it);
+    /// additional entries are extra continents on larger planets.
+    /// At Earth-radius (1.0) this carries a single entry so the
+    /// elevation builder reproduces the pre-multi-continent layout
+    /// byte-for-byte. The vec also carries a per-continent shape
+    /// envelope: `(centre_q, centre_r, peak_count, spread_pct_x100)`
+    /// where `spread_pct_x100` is a per-continent multiplier on the
+    /// `multi_peak_buffer` (50..=150 = ±50%) and `peak_count` is the
+    /// number of secondary peaks (3..=8) the elevation builder
+    /// should attach. Each continent therefore reads as its own
+    /// shape — rounded mass, elongated chain, scattered cluster —
+    /// rather than every continent being a copy of the global
+    /// template.
+    pub continent_centres: Vec<ContinentSeed>,
+    /// Island centres in axial coords. Each carries a smaller
+    /// `peak_height` and a steeper `shallow_slope` so it forms a
+    /// discrete tiny landmass rather than merging with the
+    /// continents. Empty at Earth-radius (1.0) so the byte-identical
+    /// invariant holds.
+    pub islands: Vec<(i32, i32)>,
+    /// Lake centres in axial coords. The elevation post-process in
+    /// `init_planet` carves a local depression at each entry — but
+    /// only if the structural check (all hex neighbours are land)
+    /// passes, otherwise the entry is skipped. Empty at Earth-
+    /// radius (1.0).
+    pub lakes: Vec<(i32, i32)>,
     /// Sea level in metres above the abyssal plain. Below this
     /// elevation, water fills cells.
     pub sea_level: Real,

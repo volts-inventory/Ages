@@ -77,13 +77,51 @@ impl Volcanism {
     /// Earth-like calibration.
     #[must_use]
     pub fn earth_like() -> Self {
+        Self::for_planet(Real::ONE)
+    }
+
+    /// Planet-scale calibration. `area_factor = radius²` lifts the
+    /// per-tick eruption rates (both the deterministic plate-boundary
+    /// CO₂/H₂O emission and the hot-spot trial probability) in
+    /// proportion to surface area: a bigger world has proportionally
+    /// more plate-boundary length and more hot-spot targets, so per-
+    /// century volcanic activity scales with `area`. Earth (factor
+    /// 1.0) leaves every coefficient at the legacy `earth_like()`
+    /// baseline byte-for-byte. The hot-spot probability is scaled by
+    /// lifting the numerator (denominator fixed) so the integer
+    /// modulo trial stays well-defined.
+    #[must_use]
+    pub fn for_planet(area_factor: Real) -> Self {
+        let base_co2 = Real::from_ratio(VOLCANIC_CO2_NUM, VOLCANIC_CO2_DEN);
+        let base_h2o = Real::from_ratio(VOLCANIC_H2O_NUM, VOLCANIC_H2O_DEN);
+        let base_hs_co2 = Real::from_ratio(HOT_SPOT_CO2_NUM, HOT_SPOT_CO2_DEN);
+        let base_hs_h2o = Real::from_ratio(HOT_SPOT_H2O_NUM, HOT_SPOT_H2O_DEN);
+        // Hot-spot probability scale-up: multiply the numerator (raw
+        // u64) so the modulo trial stays in the existing integer
+        // domain. Earth area_factor = 1.0 → numerator unchanged.
+        // Floored at 1 so even a near-zero area_factor still has a
+        // (tiny) firing probability rather than overflowing to zero.
+        let factor_x100: u64 = {
+            // Convert area_factor (Real) into u64-hundredths via the
+            // deterministic integer-only path; degenerate negatives
+            // (a test planet with radius below 0) collapse to zero
+            // so the saturating scale below keeps the law well-defined.
+            let scaled: i64 = (area_factor * Real::from_int(100))
+                .raw()
+                .to_num();
+            u64::try_from(scaled.max(0)).unwrap_or(0)
+        };
+        let hs_num_scaled = (HOT_SPOT_PROBABILITY_NUM
+            .saturating_mul(factor_x100)
+            / 100)
+            .max(1);
         Self {
-            boundary_co2_rate: Real::from_ratio(VOLCANIC_CO2_NUM, VOLCANIC_CO2_DEN),
-            boundary_h2o_rate: Real::from_ratio(VOLCANIC_H2O_NUM, VOLCANIC_H2O_DEN),
-            hot_spot_probability_num: HOT_SPOT_PROBABILITY_NUM,
+            boundary_co2_rate: base_co2 * area_factor,
+            boundary_h2o_rate: base_h2o * area_factor,
+            hot_spot_probability_num: hs_num_scaled,
             hot_spot_probability_den: HOT_SPOT_PROBABILITY_DEN,
-            hot_spot_co2: Real::from_ratio(HOT_SPOT_CO2_NUM, HOT_SPOT_CO2_DEN),
-            hot_spot_h2o: Real::from_ratio(HOT_SPOT_H2O_NUM, HOT_SPOT_H2O_DEN),
+            hot_spot_co2: base_hs_co2 * area_factor,
+            hot_spot_h2o: base_hs_h2o * area_factor,
             seed_salt: VOLCANISM_SALT,
         }
     }
