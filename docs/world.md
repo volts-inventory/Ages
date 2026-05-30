@@ -33,6 +33,48 @@ directly — every property feeds either the physics engine, the
 regional substance inventory, or the recognition templates that
 turn physics state into named phenomena.
 
+## Grid is a sampling resolution
+
+A planet has a real physical size set by its sampled `radius` (in
+Earth radii) — surface area scales as `4πR²`, so a 1.4-Earth-radius
+world has roughly twice the area of Earth. The hex grid samples that
+surface at a fixed resolution (default 36 × 30 = 1080 cells) regardless
+of how big the planet actually is.
+
+The per-cell terrain GLYPH is therefore a *regional category*, not a
+single landform. On the default grid one `▲` cell stands for whatever
+peak-class terrain occupies its ~half-million-km² patch — that can be
+a lone summit on a fine grid or an entire mountain range on a coarse
+one. The renderer reads the same patch regardless of physical size.
+
+Dynamics live on the cell fields and evolve per tick: climate,
+hydrology, tectonics, weathering, volcanism, catastrophes. Magnitudes
+and per-tick event rates **scale with planet area where physical**:
+
+- Carrying capacity multiplies by `planet_area_factor = radius²`
+  (cached on `Civ` at founding); a bigger planet hosts more
+  individuals at the same per-cell biome richness.
+- Terrain relief and biosphere density scale linearly with `radius`
+  so taller mountains and deeper basins emerge as the planet grows.
+- Volcanism, tectonic uplift/divergence, and catastrophe cadences
+  (asteroid / solar-flare / ice-age / volcanic) multiply per-tick
+  rates by `radius²` so regions visibly churn proportionally more on
+  larger worlds.
+- Worldgen variety scales with area too: extra continents (up to
+  ~3 at radius 2.0), island chains (up to ~6), and interior lake
+  basins (up to 3 per continent) all open up beyond Earth-radius
+  and stay zero at radius = 1.0.
+
+Earth-radius (factor 1.0) is a no-op everywhere: every coefficient
+collapses to its legacy value, and Earth-radius seeds reproduce
+byte-for-byte across releases.
+
+Cross-link: [`archetype.md`](archetype.md) sketches how an archetype
+(field-and-resonance, photonic, gravitational, nuclear) reads the
+planet through that area-scaled physics — the archetype names *what*
+gets surfaced; the grid-as-sampling layer here governs *how big and
+how often*.
+
 ## Substrate-first sampling
 
 `sample_planet(seed)` picks a `MetabolicSubstrate` first, then

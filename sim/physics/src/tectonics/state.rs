@@ -72,10 +72,29 @@ impl Tectonics {
     /// for the orchestrator's parameter discovery path.
     #[must_use]
     pub fn earth_like() -> Self {
+        Self::for_planet(Real::ONE)
+    }
+
+    /// Planet-scale tectonics calibration. `area_factor = radius²`
+    /// lifts the per-tick uplift / divergence kicks in proportion
+    /// to surface area: a bigger planet has proportionally more
+    /// plate-boundary length and more crust-deformation activity,
+    /// so the per-tick magnitude that drives boundary uplift /
+    /// divergence (and the fluvial-erosion coefficient that
+    /// redistributes the resulting relief) scales with `area`.
+    /// Earth (factor 1.0) leaves every coefficient at the legacy
+    /// `earth_like()` baseline byte-for-byte; the existing
+    /// tectonics tests construct via `earth_like()` and so see no
+    /// change.
+    #[must_use]
+    pub fn for_planet(area_factor: Real) -> Self {
+        let base_conv = Real::from_ratio(1, 1_000);
+        let base_div = Real::from_ratio(1, 1_000);
+        let base_erosion = Real::from_ratio(1, 100_000);
         Self {
-            convergence_rate: Real::from_ratio(1, 1_000),
-            divergence_rate: Real::from_ratio(1, 1_000),
-            erosion_k: Real::from_ratio(1, 100_000),
+            convergence_rate: base_conv * area_factor,
+            divergence_rate: base_div * area_factor,
+            erosion_k: base_erosion * area_factor,
             plates: Vec::new(),
             // Empty until plates land; `integrate` resizes lazily so
             // tests that wire a plate roster after `earth_like()`
@@ -100,11 +119,26 @@ impl Tectonics {
         seed: u64,
         grid: &HexGrid,
     ) -> (Self, Vec<u32>, Vec<Real>) {
+        Self::sample_plates_for_planet(seed, grid, Real::ONE)
+    }
+
+    /// Same as `sample_plates_for_seed` but threads a planet
+    /// `area_factor` (= `radius²`) through to the per-tick rate
+    /// coefficients. Earth (factor 1.0) reduces to the legacy
+    /// `sample_plates_for_seed` path. Real runs reach this
+    /// constructor via `sim_core::setup`; tests stick with the
+    /// `sample_plates_for_seed` shorthand.
+    #[must_use]
+    pub fn sample_plates_for_planet(
+        seed: u64,
+        grid: &HexGrid,
+        area_factor: Real,
+    ) -> (Self, Vec<u32>, Vec<Real>) {
         let (plates, plate_id, crust_thickness) = plates::sample(seed, grid);
         (
             Self {
                 plates,
-                ..Self::earth_like()
+                ..Self::for_planet(area_factor)
             },
             plate_id,
             crust_thickness,

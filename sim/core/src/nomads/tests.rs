@@ -51,6 +51,9 @@ fn ocean_planet(_width: u32, _height: u32) -> sim_world::Planet {
         substrate_perturbation: Real::ZERO,
         terrain_centre_q: 0,
         terrain_centre_r: 0,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         locking_state: sim_world::LockingState::FreeRotator,
         // Modern-Sun analog: G dwarf at ~45% through its 10 Gyr
         // MS lifetime. After P2.4's faint-young-sun correction,

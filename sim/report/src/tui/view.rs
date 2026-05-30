@@ -385,11 +385,18 @@ fn cohesion_bar(pct: i64) -> Line<'static> {
 }
 
 fn draw_legend(f: &mut Frame, area: Rect, model: &Model) {
+    // Glyphs read *regionally* — each cell is a sampling of a real
+    // half-million-km² patch of planet surface, so `▲` covers
+    // anything from a single peak (on a fine grid) up to an entire
+    // mountain range (on a coarse one). Legend phrasing reflects
+    // that regional reading rather than implying single landforms.
     let terrain = match model.phase() {
-        SurfacePhase::Earthlike => "~ sea  ≈ deep  ▲ peak  △ hill  ▒ land  ░ coast  · plain",
-        SurfacePhase::Lava => "* magma  ▲ peak  △ outcrop",
-        SurfacePhase::IceCap => "+ ice  ▲ peak  △ hill  ▒ land  ░ coast  · plain",
-        SurfacePhase::Scorched => "· dry basin  ▲ peak  △ hill  ▒ land  ░ coast",
+        SurfacePhase::Earthlike => {
+            "~ sea  ≈ deep  ▲ mountainous  △ uplands  ▒ land  ░ coast  · plain"
+        }
+        SurfacePhase::Lava => "* magma  ▲ massif  △ outcrop",
+        SurfacePhase::IceCap => "+ ice  ▲ mountainous  △ uplands  ▒ land  ░ coast  · plain",
+        SurfacePhase::Scorched => "· dry basin  ▲ mountainous  △ uplands  ▒ land  ░ coast",
     };
     let lines = vec![
         Line::from("A–Z = capital · 1–9 = % of cell capacity · # = disputed (multi-civ)"),

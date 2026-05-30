@@ -50,11 +50,38 @@ pub(super) fn disease_fires(civ: &Civ, state: &PhysicsState, planet: &Planet, ti
 /// `ASTEROID_COOLDOWN_TICKS` ticks; combined with the cooldown gate
 /// this lands an asteroid every ~5000-10000 ticks on a long-lived
 /// civ. Cheap, deterministic, no per-tick RNG needed.
-pub(super) fn asteroid_fires(tick: u64) -> bool {
+///
+/// Planet-scale realism: the firing period scales inversely with the
+/// planet's surface area (∝ `radius²`) so a bigger planet — with
+/// proportionally more impact-cross-section — sees correspondingly
+/// more century-scale impacts. Earth-radius (factor 1.0) leaves the
+/// period at the legacy `4733 × MONTHS_PER_YEAR` value byte-for-byte.
+pub(super) fn asteroid_fires(planet: &Planet, tick: u64) -> bool {
     // Prime-number period gives a non-aliased firing pattern.
     // ×12 so the year-equivalent recurrence matches the old
     // yearly cadence under 1 tick = 1 month.
-    tick > 0 && tick.is_multiple_of(4733 * protocol::MONTHS_PER_YEAR)
+    let base_period: u64 = 4733 * protocol::MONTHS_PER_YEAR;
+    let period = scale_period_by_area(base_period, planet);
+    tick > 0 && tick.is_multiple_of(period)
+}
+
+/// Scale a base catastrophe period by the planet's surface area
+/// factor (`radius²`), so bigger planets see proportionally more
+/// frequent events. Earth-radius (1.0) is a no-op and returns the
+/// base period unchanged. Floored at 1 so a degenerate test planet
+/// (radius 0) can't produce a divide-by-zero in `is_multiple_of`.
+fn scale_period_by_area(base_period: u64, planet: &Planet) -> u64 {
+    // area_factor (Real) → integer × 100 via the deterministic
+    // path; period_scaled = (base × 100) / factor_x100. For
+    // radius=1.0 factor_x100 = 100 → period_scaled = base.
+    let area_factor = planet.radius * planet.radius;
+    let factor_x100: i64 = (area_factor * Real::from_int(100))
+        .raw()
+        .to_num();
+    let denom: u64 = u64::try_from(factor_x100.max(1)).unwrap_or(100);
+    let numer: u128 = u128::from(base_period) * 100;
+    let scaled: u128 = numer / u128::from(denom);
+    u64::try_from(scaled.max(1)).unwrap_or(base_period).max(1)
 }
 
 /// Solar flare trigger: planet has weak/none magnetosphere AND
@@ -103,12 +130,22 @@ pub(super) fn solar_flare_fires(planet: &Planet, tick: u64) -> bool {
         // A dwarf: 0.1× rate → 10× the base period.
         SpectralType::A => base_period * 10,
     };
+    // Planet-scale realism: divide the spectral-tuned period by the
+    // planet's surface area factor so a bigger world sees
+    // proportionally more atmospheric / civ-grid flare events.
+    // Earth-radius (1.0) leaves the spectral-tuned period unchanged.
+    let period = scale_period_by_area(period.max(1), planet);
     tick > 0 && tick.is_multiple_of(period.max(1))
 }
 
 /// Ice age trigger: planet's mean temperature is below 260 K AND
 /// the civ has been alive long enough for a multi-tick climate
 /// excursion to bite. Probabilistic firing keyed off tick.
+///
+/// Planet-scale realism: the firing period scales inversely with
+/// surface area (∝ `radius²`) so bigger worlds see proportionally
+/// more long-arc cooling excursions; Earth-radius (1.0) byte-
+/// identical.
 pub(super) fn ice_age_fires(planet: &Planet, civ: &Civ, tick: u64) -> bool {
     if planet.mean_temperature > Real::from_int(260) {
         return false;
@@ -116,5 +153,7 @@ pub(super) fn ice_age_fires(planet: &Planet, civ: &Civ, tick: u64) -> bool {
     if tick.saturating_sub(civ.founded_tick) < 1000 * protocol::MONTHS_PER_YEAR {
         return false;
     }
-    tick > 0 && tick.is_multiple_of(2917 * protocol::MONTHS_PER_YEAR)
+    let base_period: u64 = 2917 * protocol::MONTHS_PER_YEAR;
+    let period = scale_period_by_area(base_period, planet);
+    tick > 0 && tick.is_multiple_of(period)
 }

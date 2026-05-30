@@ -6,6 +6,65 @@ use sim_arith::Real;
 use sim_physics::{HexGrid, PhysicsState, Substance};
 
 #[test]
+fn earth_radius_seeds_have_no_extra_continents_islands_or_lakes() {
+    // No-op-at-radius=1.0 invariant: when the sampled radius is
+    // exactly Earth (1.0), the area-driven worldgen draws must
+    // collapse to zero so the byte sequence of every legacy field
+    // stays unchanged. Walk a band of seeds; every planet whose
+    // radius rounds to 1.0 must carry an empty extras / islands /
+    // lakes count, and the `continent_centres` vec must hold only
+    // the primary entry.
+    let mut earth_count = 0;
+    for seed in 0..512u64 {
+        let p = sample_planet(seed);
+        if p.radius != Real::ONE {
+            continue;
+        }
+        earth_count += 1;
+        assert_eq!(
+            p.continent_centres.len(), 1,
+            "seed {} at radius 1.0 should have only the primary continent",
+            seed
+        );
+        assert!(
+            p.islands.is_empty(),
+            "seed {} at radius 1.0 should have no islands; got {}",
+            seed,
+            p.islands.len()
+        );
+        assert!(
+            p.lakes.is_empty(),
+            "seed {} at radius 1.0 should have no lakes; got {}",
+            seed,
+            p.lakes.len()
+        );
+    }
+    // Sanity: at least one Earth-radius seed in 512 (Aqueous /
+    // Silicate / Ammoniacal / Hydrocarbon radius bands all sample
+    // integer-x10 ranges that include 10 = radius 1.0).
+    assert!(earth_count > 0, "no Earth-radius (1.0) seeds in 0..512?");
+}
+
+#[test]
+fn larger_planets_acquire_extra_continents_islands_or_lakes() {
+    // Companion invariant: at least one seed in the same band
+    // produces an Earth-radius-divergent planet with extras —
+    // otherwise the new variety code is dead.
+    let mut any_extras = false;
+    for seed in 0..512u64 {
+        let p = sample_planet(seed);
+        if p.continent_centres.len() > 1 || !p.islands.is_empty() || !p.lakes.is_empty() {
+            any_extras = true;
+            break;
+        }
+    }
+    assert!(
+        any_extras,
+        "no seed in 0..512 produced extras — area-scaled draws are dead?"
+    );
+}
+
+#[test]
 fn sample_planet_is_deterministic() {
     let a = sample_planet(42);
     let b = sample_planet(42);
@@ -257,6 +316,9 @@ fn synthetic_planet(
         terrain_peak,
         terrain_centre_q: 4,
         terrain_centre_r: 4,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         sea_level,
         atmosphere: Atmosphere::Oxidising,
         atmospheric_composition: AtmosphericComposition::vacuum(),
@@ -582,6 +644,9 @@ fn mr_planet(mass: Real, radius: Real, substrate: MetabolicSubstrate) -> Planet 
         terrain_peak: Real::from_int(5_000),
         terrain_centre_q: 0,
         terrain_centre_r: 0,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         sea_level: Real::from_int(1_000),
         atmosphere: Atmosphere::Oxidising,
         atmospheric_composition: AtmosphericComposition::vacuum(),

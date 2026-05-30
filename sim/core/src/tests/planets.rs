@@ -306,6 +306,9 @@ fn titan_analog_run_produces_credible_state() {
         terrain_peak: Real::from_int(3_500),
         terrain_centre_q: 4,
         terrain_centre_r: 4,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         // Hydrocarbon lakes are shallow (Ligeia Mare ~170 m
         // deep); the sea_level here is the abyssal-plain offset,
         // not the lake depth — keep modest.
@@ -577,6 +580,9 @@ fn m_dwarf_hz_planet_fixture(
         terrain_peak: Real::from_int(8000),
         terrain_centre_q: 0,
         terrain_centre_r: 0,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         sea_level: Real::from_int(2000),
         atmosphere: sim_world::Atmosphere::Oxidising,
         atmospheric_composition: AtmosphericComposition::vacuum(),
@@ -837,6 +843,9 @@ fn hot_jupiter_extreme_params_do_not_overflow() {
         terrain_peak: Real::from_int(8_000),
         terrain_centre_q: 0,
         terrain_centre_r: 0,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         sea_level: Real::from_int(2_000),
         // Reducing == thickest enum variant (density × 100 = 6700,
         // ~50× Earth surface, with a 15 km scale height). Pair with
@@ -1313,6 +1322,9 @@ fn ammoniacal_analog_run_produces_credible_state() {
         terrain_peak: Real::from_int(4_000),
         terrain_centre_q: 4,
         terrain_centre_r: 4,
+        continent_centres: Vec::new(),
+        islands: Vec::new(),
+        lakes: Vec::new(),
         sea_level: Real::from_int(1_500),
         // Reducing: matches `atmosphere_compatible(Ammoniacal)` and the
         // sampling distribution's NH3/H2/CH4 reducing-atmosphere

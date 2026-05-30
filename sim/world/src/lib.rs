@@ -56,7 +56,7 @@ pub use habitability::{
     terrain_glyph_at, CLAIM_HABITABILITY_THRESHOLD_DEN, CLAIM_HABITABILITY_THRESHOLD_NUM,
 };
 pub use init::{discharge_threshold_for, init_planet};
-pub use planet::Planet;
+pub use planet::{ContinentSeed, Planet};
 pub use sampling::{
     planet_name_from_seed, sample_planet, sample_planet_with_overrides, PlanetOverrides,
 };
