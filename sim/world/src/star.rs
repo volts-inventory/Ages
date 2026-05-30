@@ -502,22 +502,3 @@ pub fn euv_decay_factor(age_gyr: Real) -> Real {
     let exponent = Real::from_ratio(-3, 2);
     sim_arith::transcendental::pow(arg, exponent)
 }
-
-// Helper trait impl on Real: saturating_div / saturating_add.
-// Real already provides saturating_mul, saturating_add,
-// saturating_sub via inherent impls; `Div` is also implemented
-// via the std `Div` trait. Wrap to give consistent naming used
-// above.
-trait RealOps {
-    fn saturating_div(self, rhs: Self) -> Self;
-}
-
-impl RealOps for Real {
-    fn saturating_div(self, rhs: Real) -> Real {
-        // Real already supports `/` via std::ops::Div. Wrap so
-        // the call sites in this module read uniformly with the
-        // other saturating_* operations on Real. Behaviour:
-        // delegate to the std Div impl.
-        self / rhs
-    }
-}
