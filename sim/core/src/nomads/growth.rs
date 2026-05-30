@@ -4,9 +4,11 @@
 //! Two phases per tick:
 //!
 //! 1. **Logistic growth on populated cells.** Each cell with a
-//!    non-trivial population grows toward its per-cell cap:
-//!    `next = cur + (cap - cur) × NOMAD_GROWTH`. Empty cells stay
-//!    empty.
+//!    non-trivial population grows toward its per-cell cap along a
+//!    Verhulst S-curve: `next = cur + NOMAD_GROWTH × cur × (1 −
+//!    cur/cap)` — growth proportional to the current population, so
+//!    a small founder band ramps slowly before saturating. Empty
+//!    cells stay empty.
 //! 2. **Neighbour diffusion.** Pop flows from higher-density cells
 //!    to lower-density along habitat-matching neighbours, with
 //!    tech-gated wrong-biome transit and per-tier decay.
@@ -77,18 +79,31 @@ pub(crate) fn cell_forager_cap(
     baseline * Real::from_ratio(FORAGER_CAPACITY_FRACTION.0, FORAGER_CAPACITY_FRACTION.1)
 }
 
-/// Logistic growth coefficient. Per tick, a cell's
-/// nomad pop moves this fraction of the gap toward its cap.
-/// 1/200 = 0.5% per tick → ~6%/yr compounded → cells reach 99%
-/// of cap after ~920 ticks. The rate originally bumped 1/200 → 1/100
-/// to outpace the unconditional non-habitat decay that drained
-/// the species before civ-founding density was reached. With
+/// Intrinsic per-capita logistic growth rate `r` (per tick). In
+/// the Verhulst term `dN = r·N·(1 − N/cap)` this is the maximum
+/// per-tick growth fraction, realised when the cell is far below
+/// cap. 1/200 = 0.5%/tick ≈ 6%/yr, a population doubling time of
+/// ~140 ticks at low density — a fast-colonising but still
+/// biological rate (real post-agricultural growth is far slower;
+/// this is the cap on how quickly a near-empty cell can fill).
+///
+/// Because growth is now proportional to `N` (not to the gap
+/// `cap − N`), a near-empty cell fills along a true S-curve:
+/// hundreds of ticks of slow accumulation, a fast middle phase,
+/// then a long taper into cap — rather than the old gap-relaxation
+/// rule that leapt to ~cap/200 in the first tick. A cell crosses
+/// the 80% sustained-saturation founding gate after ~1600 ticks
+/// (~130 sim-years) from a small seed, so first foundings land a
+/// couple of centuries in rather than within decades.
+///
+/// The rate originally (under gap-relaxation) bumped 1/200 → 1/100
+/// to outpace the unconditional non-habitat decay that drained the
+/// species before civ-founding density was reached. With
 /// strict-block tier-0 transit (no decay-leak from pre-tech
 /// species) and per-cell tech bonuses (`thermal_gradient` +10%,
-/// `seasonal_thaw` +10%), the rate has been re-halved back to
-/// 1/200 for more realistic pre-industrial pacing — pre-tech
-/// cells crawl at hunter-gatherer pace; tech-rich cells reach
-/// near-current speeds via the bonuses.
+/// `seasonal_thaw` +10%), it sits at 1/200: pre-tech cells crawl
+/// at hunter-gatherer pace; tech-rich cells fill faster via the
+/// bonuses.
 pub(crate) const NOMAD_GROWTH_NUM: i64 = 1;
 pub(crate) const NOMAD_GROWTH_DEN: i64 = 200;
 
@@ -179,9 +194,11 @@ pub(crate) const GROWTH_SOLVENT_THRESHOLD: u64 = 10;
 /// Two phases per tick:
 ///
 /// 1. **Logistic growth on populated cells.** Each cell with a
-///    non-trivial population grows toward its per-cell cap:
-///    `next = cur + (cap - cur) × NOMAD_GROWTH`. Empty cells stay
-///    empty.
+///    non-trivial population grows toward its per-cell cap along a
+///    Verhulst S-curve: `next = cur + NOMAD_GROWTH × cur × (1 −
+///    cur/cap)`. Growth is proportional to the current population,
+///    so a small founder band ramps slowly before saturating.
+///    Empty cells stay empty.
 /// 2. **Neighbour diffusion.** Each populated cell sheds
 ///    `NOMAD_DIFFUSION_NUM / NOMAD_DIFFUSION_DEN` of its
 ///    population to each habitable neighbour. The neighbour
@@ -264,7 +281,26 @@ pub(crate) fn step_growth(
         let next = if cap > Real::ZERO {
             let growth_bonus = cell_growth_bonus(observations.get(cell));
             let cell_growth = growth * (Real::ONE + growth_bonus);
-            let grown = cur + (cap - cur) * cell_growth;
+            // True Verhulst logistic: dN = r·N·(1 − N/cap). The growth
+            // term is proportional to the *current* population, so a
+            // small founder band grows in proportion to its own size —
+            // a slow cold start that accelerates to a peak near N=cap/2
+            // and tapers as the cell saturates (the classic S-curve).
+            // This is the realistic-biology replacement for the earlier
+            // gap-relaxation rule `cur + (cap − cur)·r`, whose increment
+            // was set by `cap` rather than `N` and so leapt a handful of
+            // founders straight to a fixed fraction of the *planetary*
+            // carrying capacity in a single tick — billions within
+            // decades regardless of how few individuals existed.
+            //
+            // `occupancy = N/cap` is left unclamped so the term goes
+            // negative when a seasonal cap collapse leaves `cur > cap`;
+            // the hard clamp below then sheds the surplus to the trough
+            // immediately (see the phase comment above), preserving the
+            // "slow to grow, instant to shed" behaviour the founding
+            // gate relies on.
+            let occupancy = cur.saturating_div(cap);
+            let grown = cur + cell_growth * cur * (Real::ONE - occupancy);
             if grown > cap {
                 cap
             } else {
