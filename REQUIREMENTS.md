@@ -61,6 +61,56 @@ seeds, and reading a story a machine made up on its own.
 
 ---
 
+## Grounded in real science (the accuracy bar)
+
+A core ambition is that the worlds and their life are **scientifically
+plausible**, not hand-waved. Someone who knows astrophysics, climate science,
+geology, or biology should look at a generated world and find that it largely
+hangs together. The point isn't a physics engine for its own sake — it's that
+the realism is what makes the emergent science meaningful. If the world weren't
+genuinely lawful, there'd be nothing real for its inhabitants to discover.
+
+**Physically, worlds should obey the real rules** — qualitatively, at a
+planetary scale:
+
+- A star's type sets how bright it is, how long it lives, and where its
+  habitable zone falls; that zone moves as the star ages.
+- Planets sit in real orbital relationships — distance, tides, tidal locking,
+  tidal heating from moons — and gravity follows from a world's mass and size.
+- Climate emerges from real drivers: incoming starlight, the greenhouse effect,
+  reflectivity, atmospheric circulation, and seasons from axial tilt. Extreme but
+  real outcomes — a runaway hothouse like Venus, a frozen snowball — should be
+  reachable, not blocked.
+- A world is geologically alive: drifting crust, volcanism, erosion, a
+  long-term climate thermostat, a magnetic field that can weaken and flip, and
+  an atmosphere that can slowly bleed into space.
+- Chemistry is tied to the world's actual makeup — what its "water" is, what its
+  air holds, what can burn and what can't.
+- Nothing conserved should appear from nowhere or vanish into nothing.
+
+**Biologically, life should follow real principles** — again qualitatively:
+
+- Life's chemistry fits its world, drawing on real astrobiology: water-based
+  life, but also credible alternatives (ammonia, hydrocarbon, high-temperature
+  chemistries), each viable only in its own temperature and solvent window.
+- A creature's body and senses follow from its environment — you only get eyes
+  where there's light to see by, sound where there's a medium to carry it, and
+  so on.
+- Populations behave like real populations: age structure, reproductive
+  strategies, carrying capacity, boom and bust under scarcity.
+- The wider ecology obeys real ecology: energy thins as it climbs the food
+  chain, predators and prey track each other, keystone species matter, and matter
+  cycles through the system.
+- Life evolves the way life evolves: heritable variation, selection (sharpened
+  by catastrophe), the branching of new species, and gene-swapping among microbes.
+
+The realism is **qualitative and planetary-scale, deliberately simplified** —
+the goal is plausibility and the right *behavior*, not engineering-grade
+precision. Fine-grained weather, turbulence, and sub-atomic detail are out of
+scope (see below).
+
+---
+
 ## The world
 
 From a seed, Ages conjures a complete planet: its chemistry of life, its
