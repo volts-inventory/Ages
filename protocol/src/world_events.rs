@@ -85,6 +85,20 @@ pub struct PlanetDerived {
     /// Defaults to 0 for legacy event logs that pre-date the field.
     #[serde(default)]
     pub substrate_perturbation_q32: i64,
+    /// Effective surface boil point (K) of the planet's solvent at
+    /// its *actual* surface pressure, with the per-seed substrate
+    /// perturbation applied — i.e. `sim_world::effective_boil_k`, the
+    /// same threshold the simulation uses in `surface_solvent_boiled`
+    /// to decide a cell's liquid has boiled off. Carried on the event
+    /// so the renderer's `SurfacePhase` agrees with the sim: a thin-
+    /// atmosphere world boils well below the 1-atm reference point in
+    /// `RunMetadata::substrate_boil_k`, so without this a scorched,
+    /// boiled-dry world would still paint as a temperate blue ocean
+    /// (and a land species' civ would appear to sit in deep sea).
+    /// Q32.32 raw bits. Defaults to 0 for legacy logs; consumers then
+    /// fall back to `substrate_boil_k[substrate] × (1 + perturbation)`.
+    #[serde(default)]
+    pub effective_boil_k_q32: i64,
     /// Continuous atmospheric composition (mass fractions).
     /// Nine channels — N₂, O₂, CO₂, CH₄, NH₃, H₂O, H₂, Ar, other.
     /// Each Q32.32 raw bits; consumers convert via

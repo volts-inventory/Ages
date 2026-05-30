@@ -131,12 +131,22 @@ fn substrate_range_for(d: &crate::digest::Digest) -> (f64, f64) {
         .get(&p.metabolic_substrate)
         .copied()
         .unwrap_or(0.0);
-    let b = m
-        .substrate_boil_k
-        .get(&p.metabolic_substrate)
-        .copied()
-        .unwrap_or(0.0);
-    (f * (1.0 + perturb), b * (1.0 + perturb))
+    // Prefer the planet's pressure-adjusted effective boil point (what
+    // the sim uses in `surface_solvent_boiled`) so the report's terrain
+    // glyphs / phase match the sim. `substrate_boil_k` is the 1-atm
+    // reference, wrong for non-Earth pressures. Fall back to it for
+    // legacy logs that pre-date `effective_boil_k_q32`.
+    let boil_k = if p.effective_boil_k_q32 != 0 {
+        q32_to_f64(p.effective_boil_k_q32)
+    } else {
+        let b = m
+            .substrate_boil_k
+            .get(&p.metabolic_substrate)
+            .copied()
+            .unwrap_or(0.0);
+        b * (1.0 + perturb)
+    };
+    (f * (1.0 + perturb), boil_k)
 }
 
 /// Coarse surface-physics state used to remap terrain glyphs for
@@ -654,6 +664,7 @@ mod tests {
             orbital_period_months: 12,
             metabolic_substrate: substrate.into(),
             substrate_perturbation_q32: 0,
+            effective_boil_k_q32: 0,
             atmospheric_n2_q32: 0,
             atmospheric_o2_q32: 0,
             atmospheric_co2_q32: 0,

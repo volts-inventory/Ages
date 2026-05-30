@@ -98,6 +98,7 @@ pub(crate) fn planet_to_event(p: &Planet) -> PlanetDerived {
         orbital_period_months: p.orbital_period_months,
         metabolic_substrate: p.metabolic_substrate.tag().to_string(),
         substrate_perturbation_q32: p.substrate_perturbation.raw().to_bits(),
+        effective_boil_k_q32: sim_world::effective_boil_k(p).raw().to_bits(),
         atmospheric_n2_q32: p.atmospheric_composition.n2.raw().to_bits(),
         atmospheric_o2_q32: p.atmospheric_composition.o2.raw().to_bits(),
         atmospheric_co2_q32: p.atmospheric_composition.co2.raw().to_bits(),
