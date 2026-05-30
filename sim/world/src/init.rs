@@ -10,6 +10,7 @@
 use crate::{Atmosphere, BiosphereClass, Composition, Crust, Magnetosphere, Planet};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
+use sim_arith::transcendental::{sin, sqrt, two_pi};
 use sim_arith::Real;
 use sim_physics::{Crust as PhysicsCrust, PhysicsState, Substance};
 
@@ -322,9 +323,13 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
         // other, manifesting as one big mountain blob instead of
         // separate ranges. Re-rolls (up to `max_attempts`)
         // until the candidate sits at least `min_dist` cells from
-        // every already-accepted peak. Distance metric matches the
-        // piecewise-cone falloff (`|dq| + |dr|`) so "spread out
-        // visually" and "spread out numerically" line up.
+        // every already-accepted peak. Placement uses the cheap
+        // axial-sum (`|dq| + |dr|`) metric purely to *space* peaks —
+        // it slightly over-separates along the axes versus the
+        // diagonals, which is harmless for a spacing guard. The
+        // elevation *falloff* below uses a warped Euclidean metric
+        // (see the "Geography shape" block) so the rendered landmass
+        // reads as a rounded, organic blob rather than a diamond.
         //
         // `min_dist` is `max(3, max(w, h) / (num_peaks * 2))`. On a
         // 36×30 grid with 4 peaks total that's 36/8 = 4 cells; with
@@ -464,6 +469,98 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
     // `multi_peak_buffer` so the gentle band straddles the coast.
     let pivot_elev = planet.sea_level + multi_peak_buffer;
 
+    // ------------------------------------------------------------------
+    // Geography shape — warped, torus-wrapped Euclidean falloff.
+    //
+    // Each peak above turns "how far is this cell from the summit" into
+    // an elevation drop. That distance *metric* is what gives a landmass
+    // its silhouette. It used to be the axial-sum (Manhattan) distance
+    // `|dq| + |dr|`, whose iso-distance contours are diamonds — so every
+    // continent and island rendered as a hard rhombus. And because the
+    // metric never wrapped, a peak near an edge had its cone sliced flat
+    // against the map boundary, leaving unnaturally straight coastlines.
+    // Two changes fix both, and make the geography read as far more
+    // dynamic:
+    //
+    //   1. Torus-wrapped *Euclidean* distance `√(dq² + dr²)` (round
+    //      contours instead of diamonds; a landmass now spills across an
+    //      edge and reappears on the far side instead of being clipped).
+    //
+    //   2. A low-frequency domain warp: before measuring distance we
+    //      displace the sample point by a smooth vector field, so a
+    //      circular cone becomes an irregular blob — coastlines grow
+    //      peninsulas and bays instead of reading as geometric primitives.
+    //      The field is a short sum of sinusoids with *integer*
+    //      wavenumbers over the (width, height) torus, so it tiles
+    //      seamlessly across the wrap and stays fully deterministic in
+    //      fixed point.
+    //
+    // The warp draws from its own salted RNG stream, so adding it leaves
+    // the peak-placement sequence (and therefore peak positions)
+    // byte-identical.
+    let two = Real::from_int(2);
+    let w_real = Real::from_int(i64::from(grid.width()));
+    let h_real = Real::from_int(i64::from(grid.height()));
+    let max_dim_real = w_real.max(h_real);
+    // Warp amplitude ≈ grid / 12 (~3 cells on a 36-wide grid), floored at
+    // 2 cells so even the small dev grids get a visible wiggle. The budget
+    // is split evenly across the components so the summed displacement
+    // stays bounded by `warp_amp`.
+    const N_WARP: usize = 4;
+    let warp_salt: u64 = 0x5EA5_0FF5_C0A5_7000;
+    let mut warp_rng = ChaCha20Rng::seed_from_u64(planet.seed ^ warp_salt);
+    let warp_amp = (max_dim_real / Real::from_int(12)).max(two);
+    let comp_amp = warp_amp / Real::from_int(N_WARP as i64);
+    let two_pi = two_pi();
+    // Build a per-axis bank of sinusoids. Each component is
+    // `(wavenumber_q, wavenumber_r, amplitude, phase)`. Integer
+    // wavenumbers in 1..=3 keep the features continental-scale *and* the
+    // field torus-periodic; a random sign tilts each component either way;
+    // the phase decorrelates the two axes so the warp isn't diagonally
+    // striped.
+    let build_bank = |rng: &mut ChaCha20Rng| -> Vec<(Real, Real, Real, Real)> {
+        (0..N_WARP)
+            .map(|_| {
+                let sign_q = if rng.gen::<bool>() { Real::ONE } else { -Real::ONE };
+                let sign_r = if rng.gen::<bool>() { Real::ONE } else { -Real::ONE };
+                let fq = Real::from_int(rng.gen_range(1i64..=3)) * sign_q;
+                let fr = Real::from_int(rng.gen_range(1i64..=3)) * sign_r;
+                // Phase in [0, 2π) at 1/256-turn resolution.
+                let phase = (two_pi * Real::from_int(rng.gen_range(0i64..256)))
+                    / Real::from_int(256);
+                (fq, fr, comp_amp, phase)
+            })
+            .collect()
+    };
+    let warp_x = build_bank(&mut warp_rng);
+    let warp_y = build_bank(&mut warp_rng);
+    // Evaluate one bank at the normalised position (q/W, r/H).
+    let eval_warp = |bank: &[(Real, Real, Real, Real)], qn: Real, rn: Real| -> Real {
+        let mut acc = Real::ZERO;
+        for &(fq, fr, amp, phase) in bank {
+            let ang = two_pi * (fq * qn + fr * rn) + phase;
+            acc = acc + amp * sin(ang);
+        }
+        acc
+    };
+    // Shortest signed offset between two coordinates on a periodic axis,
+    // reduced into `[-period/2, period/2]`. The warp keeps `|d|` well
+    // under one period, so a bounded loop converges immediately.
+    let torus_delta = |d: Real, period: Real| -> Real {
+        let half = period / two;
+        let mut x = d;
+        for _ in 0..3 {
+            if x > half {
+                x = x - period;
+            } else if x < -half {
+                x = x + period;
+            } else {
+                break;
+            }
+        }
+        x
+    };
+
     for (cid, axial) in grid.cells() {
         let i = cid.0 as usize;
 
@@ -493,10 +590,19 @@ pub fn init_planet(state: &mut PhysicsState, planet: &Planet) {
             Real::ZERO
         } else {
             let mut max_elev = Real::ZERO;
+            // Warp this cell's sample point once, then measure the
+            // (torus-wrapped, Euclidean) distance from the warped point to
+            // every peak. Warping the *cell* rather than each peak keeps a
+            // single coherent distortion field across the whole planet, so
+            // neighbouring landmasses bend consistently.
+            let qn = Real::from_int(i64::from(axial.q)) / w_real;
+            let rn = Real::from_int(i64::from(axial.r)) / h_real;
+            let qf = Real::from_int(i64::from(axial.q)) + eval_warp(&warp_x, qn, rn);
+            let rf = Real::from_int(i64::from(axial.r)) + eval_warp(&warp_y, qn, rn);
             for &(pq, pr, peak_height, slope_mult) in &peaks {
-                let dq = (axial.q - pq).abs();
-                let dr = (axial.r - pr).abs();
-                let dist = Real::from_int(i64::from(dq + dr));
+                let dq = torus_delta(qf - Real::from_int(i64::from(pq)), w_real);
+                let dr = torus_delta(rf - Real::from_int(i64::from(pr)), h_real);
+                let dist = sqrt(dq * dq + dr * dr);
                 // Islands carry slope_mult > 1 so their shallow band
                 // is steeper — taper to zero in fewer cells so the
                 // island reads as a discrete dot of land rather than
