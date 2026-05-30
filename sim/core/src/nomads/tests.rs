@@ -210,6 +210,8 @@ fn step_growth_diffuses_to_neighbours() {
         cog,
         soc,
         test_lifespan(),
+        Real::ONE,
+        0,
         &claimed,
     );
     assert!(
@@ -241,6 +243,8 @@ fn step_growth_does_not_spontaneously_populate_empty_cells() {
         cog,
         soc,
         test_lifespan(),
+        Real::ONE,
+        0,
         &claimed,
     );
     assert!(
@@ -276,6 +280,8 @@ fn step_growth_strict_block_at_tier_zero() {
             cog,
             soc,
             test_lifespan(),
+            Real::ONE,
+            0,
             &claimed,
         );
     }
@@ -316,6 +322,8 @@ fn step_growth_airborne_crosses_water_at_zero_tech() {
             cog,
             soc,
             test_lifespan(),
+            Real::ONE,
+            0,
             &claimed,
         );
         for (cell, pop) in &pops {
@@ -368,6 +376,8 @@ fn step_growth_terrestrial_unlocks_transit_with_tech() {
             cog,
             soc,
             test_lifespan(),
+            Real::ONE,
+            0,
             &claimed,
         );
         for (cell, pop) in &pops {
@@ -472,12 +482,10 @@ fn step_growth_growth_bonus_accelerates_filling() {
         cell_obs.insert(GROWTH_SEASONAL_TEMPLATE_ID, GROWTH_SEASONAL_THRESHOLD);
         obs_boosted.insert(*cell, cell_obs);
     }
-    // Run both scenarios for the same number of ticks. With
-    // INITIAL_NOMAD_TOTAL/NOMAD_ORIGIN_CELL_COUNT = 80, origins
-    // start at-or-above per-cell cap (cap is 80×weight,
-    // weight ≤ 1) so origin growth is a no-op or small; the
-    // growth-bonus delta shows up on diffused-into neighbours
-    // that grow logistically toward cap.
+    // Run both scenarios for the same number of ticks. Both runs
+    // grow their cells logistically toward the (biosphere-coupled)
+    // forager cap; the growth-bonus run closes the gap faster, so it
+    // accumulates more total population over the window.
     for _ in 0..50 {
         step_growth(
             &mut pops_baseline,
@@ -488,6 +496,8 @@ fn step_growth_growth_bonus_accelerates_filling() {
             cog,
             soc,
             test_lifespan(),
+            Real::ONE,
+            0,
             &claimed,
         );
         step_growth(
@@ -499,6 +509,8 @@ fn step_growth_growth_bonus_accelerates_filling() {
             cog,
             soc,
             test_lifespan(),
+            Real::ONE,
+            0,
             &claimed,
         );
     }
@@ -577,6 +589,8 @@ fn step_growth_long_lived_species_diffuses_slower() {
             cog,
             soc,
             baseline_lifespan,
+            Real::ONE,
+            0,
             &claimed,
         );
         step_growth(
@@ -588,6 +602,8 @@ fn step_growth_long_lived_species_diffuses_slower() {
             cog,
             soc,
             long_lifespan,
+            Real::ONE,
+            0,
             &claimed,
         );
     }

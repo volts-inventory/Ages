@@ -334,6 +334,8 @@ pub(crate) fn run_tick<E: Emitter>(
         rs.species.cognition,
         rs.species.sociality,
         rs.species.lifespan_years,
+        producer_biomass,
+        tick,
         &claim_union,
     );
     nomads::ambient_emergence(
@@ -352,6 +354,9 @@ pub(crate) fn run_tick<E: Emitter>(
         &rs.state,
         &rs.planet,
         rs.species.habitat,
+        tick,
+        rs.species.cognition,
+        producer_biomass,
     );
     if tick >= rs.last_emergent_tick + nomads::EMERGENT_FOUNDING_COOLDOWN_TICKS {
         emergent_founding_step(rs, cfg, emitter, tick, &claim_union)?;

@@ -16,18 +16,66 @@
 //! spread across continents in real biology rather than
 //! spontaneously appearing everywhere from tick 0.
 
-use super::{cell_weight, is_habitat_match};
+use super::is_habitat_match;
 use sim_arith::Real;
 use sim_species::Habitat;
 use std::collections::BTreeMap;
 
-/// Per-cell carrying-capacity ceiling for nomads. Multiplied
-/// by the cell's habitability multiplier and capped here. A later tuning
-/// bumped from 8 → 80 so densely-populated cells reach the
-/// emergent-civ founding threshold over a few hundred ticks of
-/// growth — the "Sumatra grew until it became a civilisation"
-/// dynamic.
-pub(crate) const NOMAD_PER_CELL_CAP: i64 = 80;
+/// Pre-civilisational forager occupancy as a fraction of a cell's
+/// *baseline civ carrying capacity* (`sim_civ::baseline_cell_capacity`
+/// — biosphere × terrain × area × cognition, with no tech or tools).
+/// The flat `NOMAD_PER_CELL_CAP = 80` this replaces was biosphere-
+/// blind: 80 foragers in a continent-scale cell, while a civ founding
+/// on the same land thinks in thousands-to-billions. Anchoring the
+/// forager cap to a fraction of the settled-baseline capacity makes a
+/// saturated wilderness cell host a realistic population for its area
+/// *and* — critically — keeps it below what the founding civ's cells
+/// can feed, so absorbing the saturated nomads never over-founds.
+///
+/// Set to `1/2`: foragers occupy half the settled-baseline density
+/// (foraging supports fewer people per km² than the agriculture a
+/// fresh civ already has). The logistic growth/diffusion shapes and
+/// emergence thresholds are all relative to this cap, so the
+/// founding-pacing dynamics are unchanged — only the absolute scale
+/// moved up, biosphere-aware, in lockstep with the civ engine.
+pub(crate) const FORAGER_CAPACITY_FRACTION: (i64, i64) = (1, 2);
+
+/// Per-cell forager carrying capacity: `FORAGER_CAPACITY_FRACTION ×
+/// sim_civ::baseline_cell_capacity(...)`. Zero where foragers can't
+/// establish (claimed by a civ, gas band, or wrong habitat — though
+/// callers on the populated set rarely hit those). Shared by the
+/// growth step and the emergence saturation / cluster thresholds so
+/// every "is this cell full?" decision reads the same ceiling.
+///
+/// `producer_biomass` is the live `PlanetEcosystem::tier_biomass(0)`
+/// the civ capacity path also reads, threaded in from the tick loop.
+pub(crate) fn cell_forager_cap(
+    state: &sim_physics::PhysicsState,
+    planet: &sim_world::Planet,
+    cell: u32,
+    tick: u64,
+    species_habitat: Habitat,
+    cognition: Real,
+    producer_biomass: Real,
+) -> Real {
+    let glyph = sim_world::terrain_glyph_at(state, planet, cell);
+    if glyph == '\u{2261}' {
+        return Real::ZERO;
+    }
+    if !is_habitat_match(state, planet, cell, species_habitat) {
+        return Real::ZERO;
+    }
+    let baseline = sim_civ::baseline_cell_capacity(
+        cognition,
+        producer_biomass,
+        state,
+        cell,
+        tick,
+        planet,
+        species_habitat,
+    );
+    baseline * Real::from_ratio(FORAGER_CAPACITY_FRACTION.0, FORAGER_CAPACITY_FRACTION.1)
+}
 
 /// Logistic growth coefficient. Per tick, a cell's
 /// nomad pop moves this fraction of the gap toward its cap.
@@ -158,6 +206,8 @@ pub(crate) fn step_growth(
     cognition: Real,
     sociality: Real,
     lifespan_years: Real,
+    producer_biomass: Real,
+    tick: u64,
     claimed_cells: &std::collections::BTreeSet<u32>,
 ) {
     let growth = Real::from_ratio(NOMAD_GROWTH_NUM, NOMAD_GROWTH_DEN);
@@ -165,44 +215,60 @@ pub(crate) fn step_growth(
         * lifespan_diffusion_scale(lifespan_years);
     let species_t = species_tier(pops, observations, species_habitat, cognition, sociality);
     let decay = decay_for_tier(species_t);
-    let cap_base = Real::from_int(NOMAD_PER_CELL_CAP);
     let grid = state.grid();
 
     // Helper: per-cell carrying capacity. Returns cap in people.
     // Zero for wrong-habitat (where the species can transit but
     // not establish), zero for claimed cells (civs handle their
-    // own pop dynamics), zero for gas band.
+    // own pop dynamics), zero for gas band. The biosphere-coupled
+    // forager cap (`cell_forager_cap`) already returns zero for gas /
+    // wrong-habitat; the claimed-cell guard stays here since the
+    // shared helper is habitat/biosphere-only.
     let cell_cap = |cell: u32| -> Real {
         if claimed_cells.contains(&cell) {
             return Real::ZERO;
         }
-        let glyph = sim_world::terrain_glyph_at(state, planet, cell);
-        if glyph == '\u{2261}' {
-            return Real::ZERO;
-        }
-        if !is_habitat_match(state, planet, cell, species_habitat) {
-            return Real::ZERO;
-        }
-        let weight = cell_weight(state, planet, cell, species_habitat);
         let cap_bonus = cell_cap_bonus(observations.get(&cell));
-        cap_base * weight * (Real::ONE + cap_bonus)
+        cell_forager_cap(
+            state,
+            planet,
+            cell,
+            tick,
+            species_habitat,
+            cognition,
+            producer_biomass,
+        ) * (Real::ONE + cap_bonus)
     };
 
     // Phase 1 — logistic growth in habitat cells, decay in
     // non-habitat cells. The two cases are partitioned by cap:
-    //   cap > 0: pop grows toward cap at logistic rate
-    //   cap = 0: pop decays at NOMAD_NON_HABITAT_DECAY rate
+    //   cap > 0: pop grows toward cap at the logistic rate, but is
+    //            hard-clamped to never exceed the *current* cap. The
+    //            cap is the instantaneous (seasonal) carrying capacity,
+    //            so on a high-tilt world a cell's cap collapses every
+    //            harsh season; clamping sheds the excess immediately
+    //            rather than letting nomads ratchet at the seasonal
+    //            peak. Net effect: pop tracks the seasonal *trough*
+    //            (slow to grow, instant to shed), the same trough that
+    //            limits a civ's sustained population — so the
+    //            sustained-saturation founding gate only fires on
+    //            cells whose cap is *stable*, where the forager pop a
+    //            civ absorbs ≈ what its cells actually feed. Without
+    //            the clamp, nomads pile up at the seasonal maximum and
+    //            a founding civ over-absorbs ~100s× its trough cap.
+    //   cap = 0: pop decays at the non-habitat decay rate.
     let populated: Vec<u32> = pops.keys().copied().collect();
     for cell in &populated {
         let cap = cell_cap(*cell);
         let cur = pops.get(cell).copied().unwrap_or(Real::ZERO);
         let next = if cap > Real::ZERO {
-            if cur >= cap {
-                cur
+            let growth_bonus = cell_growth_bonus(observations.get(cell));
+            let cell_growth = growth * (Real::ONE + growth_bonus);
+            let grown = cur + (cap - cur) * cell_growth;
+            if grown > cap {
+                cap
             } else {
-                let growth_bonus = cell_growth_bonus(observations.get(cell));
-                let cell_growth = growth * (Real::ONE + growth_bonus);
-                cur + (cap - cur) * cell_growth
+                grown
             }
         } else {
             // Non-habitat / claimed / gas: decay.

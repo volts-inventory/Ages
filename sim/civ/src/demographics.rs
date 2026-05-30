@@ -181,6 +181,66 @@ pub fn carrying_capacity_per_unit(cognition: Real, cell_count: u32) -> Real {
     Real::from_int(50_000 * PLANET_CAPACITY_DENSITY_LIFT) * cognition_factor * resolution_factor
 }
 
+/// Per-cell carrying capacity a *baseline* civ — no tools, no tech
+/// multiplier, neutral ecological resilience — would support on a
+/// cell. This is the tech-free floor that
+/// [`Civ::cell_capacity`](crate::Civ::cell_capacity) multiplies up by
+/// `tech_multiplier × tool_capacity_multiplier`: it mirrors that
+/// function's `carrying_capacity_per_unit × (producer_biomass /
+/// cell_count) × temperature_capacity_factor × habitat_glyph_multiplier
+/// × planet_area_factor` core exactly, so the two never disagree on
+/// scale (the temperature factor matters: on a scorching / frozen
+/// world it crushes capacity by orders of magnitude, and omitting it
+/// would over-state the floor ~1000×).
+///
+/// Uses the cell's *instantaneous* seasonal temperature (mean + the
+/// `tick` seasonal offset) so the baseline matches the volatile
+/// capacity `Civ::cell_capacity` sees tick-by-tick — critical on
+/// high-axial-tilt worlds where a cell swings between habitable and
+/// lethal across the year. A season-averaged factor would over-state
+/// the floor by orders of magnitude there and let the forager layer
+/// ratchet far above what the land actually sustains.
+///
+/// The nomad / forager layer scales this by a fraction below 1 (see
+/// `FORAGER_CAPACITY_FRACTION` in `sim_core`) to get pre-civilisational
+/// occupancy. Routing both through the same baseline keeps a wilderness
+/// cell and the civ that founds on it in agreement about how much life
+/// the land supports, so a founding civ never absorbs more saturated
+/// nomads than its own cells can feed.
+///
+/// `producer_biomass` is the live `PlanetEcosystem::tier_biomass(0)`
+/// (the planet-wide producer pool `Civ::cell_capacity` also reads).
+#[must_use]
+pub fn baseline_cell_capacity(
+    cognition: Real,
+    producer_biomass: Real,
+    state: &sim_physics::PhysicsState,
+    cell: u32,
+    tick: u64,
+    planet: &sim_world::Planet,
+    habitat: sim_species::Habitat,
+) -> Real {
+    let total = state.grid().n_cells();
+    let total_i = i64::try_from(total.max(1)).unwrap_or(i64::MAX);
+    let producer_per_cell = producer_biomass / Real::from_int(total_i);
+    let base_temp = state
+        .temperature()
+        .get(cell as usize)
+        .copied()
+        .unwrap_or(Real::ZERO);
+    let offset = sim_world::seasonal_temperature_offset(tick, cell, planet, state.grid());
+    let temp_factor = sim_world::seasonal_capacity_factor(base_temp + offset, planet);
+    let glyph = sim_world::terrain_glyph_at(state, planet, cell);
+    let hab = sim_species::habitat_glyph_multiplier(habitat, glyph);
+    let cell_count = u32::try_from(total).unwrap_or(u32::MAX);
+    carrying_capacity_per_unit(cognition, cell_count)
+        * producer_per_cell
+        * temp_factor
+        * hab
+        * planet_area_factor(planet.radius)
+}
+
+
 /// Substrate-derived migration pressure threshold. Solitary
 /// species flee crowding earlier (0.55); cooperative species
 /// tolerate it longer (0.75). Lowered from the prior 0.75–0.95 band

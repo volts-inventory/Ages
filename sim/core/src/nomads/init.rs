@@ -18,15 +18,17 @@ use std::collections::BTreeMap;
 /// Initial nomad pool: total people in the species' nomadic
 /// presence at run start, split evenly across
 /// `NOMAD_ORIGIN_CELL_COUNT` origin cells. Sized so each origin
-/// starts at roughly its per-cell carrying capacity
-/// (`NOMAD_PER_CELL_CAP × habitability ≈ 80 × 1`) rather than far
-/// over it — earlier the total was 600 (= 200/origin, ~2.5× cap),
-/// which forced origins to bleed people to all 6 neighbours every
-/// tick from tick 0 as a transit flood. With the new total, origins
+/// starts at roughly its per-cell forager carrying capacity (a
+/// fraction of `sim_civ::baseline_cell_capacity` — see
+/// `growth::cell_forager_cap`) rather than far over it: origins
 /// start at-cap and spreading is driven by genuine logistic growth
 /// and density-gradient diffusion at the calibrated rates rather
-/// than by a one-time over-population overflow.
-pub(crate) const INITIAL_NOMAD_TOTAL: i64 = 240;
+/// than a one-time over-population overflow. Scaled up from the old
+/// flat-`80`-cap era (240 total) in lockstep with the biosphere-
+/// coupled forager cap so per-origin share (~`total / 3`) still lands
+/// near a typical saturated cell, keeping founding-time pacing
+/// unchanged while the absolute populations read realistically.
+pub(crate) const INITIAL_NOMAD_TOTAL: i64 = 3500;
 
 /// Origin-cell count: how many *origin* cells receive the
 /// initial population. The species emerges from a small focal
