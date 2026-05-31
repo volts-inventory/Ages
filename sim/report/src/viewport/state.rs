@@ -66,6 +66,18 @@ impl<W: Write> ViewportEmitter<W> {
             Event::PlanetMap(pm) => {
                 self.planet_map = Some(pm.clone());
             }
+            Event::CellBiomass(b) => {
+                // Latest per-cell producer-life snapshot. Converted to
+                // f64 `[0,1]` once here so the per-frame renderer can
+                // tint land by vegetation without re-decoding Q32.32
+                // every cell every frame.
+                use crate::q32::q32_to_f64;
+                self.producer_index = b
+                    .producer_index_q32
+                    .iter()
+                    .map(|&raw| q32_to_f64(raw))
+                    .collect();
+            }
             Event::Planet(p) => {
                 self.planet = Some(p.clone());
             }

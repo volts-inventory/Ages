@@ -572,6 +572,7 @@ pub fn narrate_event(state: &mut NarratorState, event: &Event) -> Option<String>
         Event::Tick(_)
         | Event::Snapshot(_)
         | Event::PlanetMap(_)
+        | Event::CellBiomass(_)
         | Event::SpeciesNomadsChanged(_)
         | Event::CivTerritoryChanged(_)
         | Event::Recognition(_)

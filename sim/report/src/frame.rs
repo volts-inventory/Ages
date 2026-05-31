@@ -60,6 +60,14 @@ pub struct WorldFrame {
     /// pop > `NOMAD_DISPLAY_FLOOR_POP`). Rendered as `0` glyphs
     /// when no civ claim and no centroid override.
     pub nomad_cells: Vec<u32>,
+    /// Per-cell producer-life index in `[0, 1]`, row-major in
+    /// `PlanetMap` cell order (see `protocol::CellBiomass`). Drives
+    /// the coloured renderer's substrate-tinted land palette so a
+    /// cell reads as vegetated only where producers stand. Empty
+    /// when no vegetation data is available (monochrome reports and
+    /// older event logs); the renderer then falls back to the legacy
+    /// elevation-based terrain colours.
+    pub producer_index: Vec<f64>,
 }
 
 /// Style flags for `render_world_frame_styled`. All-false +
@@ -136,6 +144,10 @@ pub fn render_world_frame_styled(
         return s;
     }
     let terrain_peak = planet.map_or(0.0, |p| q32_to_f64(p.terrain_peak_q32));
+    // Metabolic substrate keys the vegetation ramp's life hue
+    // (aqueous green / ammoniacal teal / hydrocarbon violet /
+    // silicate ember). Empty string falls to the green ramp.
+    let substrate = planet.map_or("", |p| p.metabolic_substrate.as_str());
     let w = pm.grid_width as usize;
     let h = pm.grid_height as usize;
 
@@ -362,24 +374,31 @@ pub fn render_world_frame_styled(
                         symbol
                     );
                 } else if nomad_set.contains(&cell) && active_centroid.is_none() {
-                    // Nomadic species presence has no civ identity,
-                    // so it doesn't get a civ palette colour, but it
-                    // also shouldn't fade into the muted terrain
-                    // palette. Render the terrain glyph in bold
-                    // bright white (256-col index 15) so a nomad
-                    // marker reads as "people here, no flag" while
-                    // still showing what landscape they're on.
-                    let _ = write!(line, "\x1b[1;38;5;15m{symbol}\x1b[0m");
-                } else if let Some(tcolor) = terrain_color_code(symbol) {
-                    // Terrain glyphs get their own
-                    // 256-color codes when `use_color` is on,
-                    // so water reads blue, mountains brown, land
-                    // green, etc. The civ overlay (above) keeps
-                    // its existing palette and uses bold so the
-                    // markers pop above the terrain.
-                    let _ = write!(line, "\x1b[38;5;{tcolor}m{symbol}\x1b[0m");
+                    // Nomadic species presence has no civ identity, so
+                    // it doesn't get a civ palette colour. Render the
+                    // terrain glyph in dim neutral gray (256-col 245):
+                    // a nomad marker reads as "people here, no flag,
+                    // transient" — distinct from both the civ palette
+                    // and the vegetation-tinted terrain — while still
+                    // showing what landscape they're roaming.
+                    let _ = write!(line, "\x1b[38;5;245m{symbol}\x1b[0m");
                 } else {
-                    line.push(symbol);
+                    // Unclaimed terrain. When per-cell vegetation data
+                    // is present, land/surface glyphs are tinted by
+                    // producer life (substrate-keyed biome ramp) so a
+                    // baked or barren cell stops reading as green;
+                    // water/peaks/gas/ice keep their fixed colours.
+                    // Without vegetation data (older logs) fall back to
+                    // the flat elevation-based terrain palette.
+                    let tcolor = match frame.producer_index.get(cell as usize).copied() {
+                        Some(veg) => vegetation_color_code(symbol, veg, substrate),
+                        None => terrain_color_code(symbol),
+                    };
+                    if let Some(c) = tcolor {
+                        let _ = write!(line, "\x1b[38;5;{c}m{symbol}\x1b[0m");
+                    } else {
+                        line.push(symbol);
+                    }
                 }
             } else {
                 line.push(symbol);
@@ -436,6 +455,51 @@ pub(crate) fn terrain_color_code(c: char) -> Option<u8> {
         '+' => Some(159),        // ice sheet — light cyan (frozen aqueous)
         _ => None,
     }
+}
+
+/// 256-color code for a land/surface glyph tinted by its producer-
+/// life index `veg` (`[0, 1]`, from `protocol::CellBiomass`). Replaces
+/// the flat elevation-based land colour so a cell reads as vegetated
+/// only where producers actually stand — a baked or barren surface no
+/// longer paints temperate green.
+///
+/// A five-band "biome ramp" runs dead → lush. The two lowest bands
+/// stay neutral rock/earth tones; the upper three carry the
+/// substrate's life hue so non-aqueous worlds read truthfully:
+/// aqueous green, ammoniacal teal, hydrocarbon violet, silicate ember
+/// (whose barren bands darken to basalt rather than soil). Water,
+/// peaks, gas bands and ice sheets are not surface-life cells, so they
+/// keep their fixed `terrain_color_code` colours.
+pub(crate) fn vegetation_color_code(glyph: char, veg: f64, substrate: &str) -> Option<u8> {
+    // ▒ inland · ░ coast · · plain/dry-basin · △ hill · * magma crust.
+    let is_surface = matches!(
+        glyph,
+        '\u{2592}' | '\u{2591}' | '\u{00B7}' | '\u{25B3}' | '*'
+    );
+    if !is_surface {
+        return terrain_color_code(glyph);
+    }
+    // [dead, barren, sparse, healthy, lush]. Aqueous (and any
+    // unrecognised substrate) ramps gray→brown→olive→forest→bright
+    // green; the others swap the upper three for their own hue.
+    let ramp: [u8; 5] = match substrate {
+        "ammoniacal" => [244, 94, 66, 37, 44],
+        "hydrocarbon" => [244, 94, 96, 91, 135],
+        "silicate" => [240, 130, 166, 208, 214],
+        _ => [244, 94, 100, 34, 40],
+    };
+    let band = if veg <= 0.0 {
+        0
+    } else if veg < 0.10 {
+        1
+    } else if veg < 0.35 {
+        2
+    } else if veg < 0.70 {
+        3
+    } else {
+        4
+    };
+    Some(ramp[band])
 }
 
 /// Map a civ id to a stable 256-color palette index. 24 distinct
@@ -620,6 +684,50 @@ pub fn render_density_frame(
 mod tests {
     use super::*;
 
+    #[test]
+    fn vegetation_ramp_runs_dead_to_lush_for_aqueous() {
+        // ▒ inland glyph, aqueous substrate: barren cells read neutral
+        // gray/brown, lush cells read green — never the same colour.
+        let dead = vegetation_color_code('\u{2592}', 0.0, "aqueous");
+        let lush = vegetation_color_code('\u{2592}', 1.0, "aqueous");
+        assert_eq!(dead, Some(244)); // dead → gray
+        assert_eq!(lush, Some(40)); // lush → bright green
+        assert_ne!(dead, lush);
+        // Monotonic up the bands.
+        let sparse = vegetation_color_code('\u{2592}', 0.2, "aqueous");
+        let healthy = vegetation_color_code('\u{2592}', 0.5, "aqueous");
+        assert_eq!(sparse, Some(100));
+        assert_eq!(healthy, Some(34));
+    }
+
+    #[test]
+    fn vegetation_is_substrate_tinted() {
+        // Same lush index, different chemistry → different life hue.
+        let aqueous = vegetation_color_code('\u{2592}', 1.0, "aqueous");
+        let ammoniacal = vegetation_color_code('\u{2592}', 1.0, "ammoniacal");
+        let hydrocarbon = vegetation_color_code('\u{2592}', 1.0, "hydrocarbon");
+        let silicate = vegetation_color_code('\u{2592}', 1.0, "silicate");
+        assert_eq!(aqueous, Some(40)); // green
+        assert_eq!(ammoniacal, Some(44)); // cyan
+        assert_eq!(hydrocarbon, Some(135)); // violet
+        assert_eq!(silicate, Some(214)); // ember
+        // Unknown substrate falls back to the green ramp.
+        assert_eq!(vegetation_color_code('\u{2592}', 1.0, ""), aqueous);
+    }
+
+    #[test]
+    fn vegetation_only_tints_surface_glyphs() {
+        // Water, peaks, gas bands and ice ignore vegetation and keep
+        // their fixed terrain colours regardless of producer index.
+        for g in ['~', '\u{2248}', '\u{25B2}', '\u{2261}', '+'] {
+            assert_eq!(
+                vegetation_color_code(g, 1.0, "aqueous"),
+                terrain_color_code(g),
+                "glyph {g:?} should keep its terrain colour"
+            );
+        }
+    }
+
     fn pm(w: u32, h: u32) -> protocol::PlanetMap {
         let n = (w as usize) * (h as usize);
         protocol::PlanetMap {
@@ -628,6 +736,49 @@ mod tests {
             elevation_q32: vec![0; n],
             water_depth_q32: vec![0; n],
         }
+    }
+
+    /// Land map (positive elevation, no water, no peak) so every cell
+    /// classifies as a vegetation-coloured surface glyph (▒/░).
+    fn land_pm(w: u32, h: u32) -> protocol::PlanetMap {
+        let n = (w as usize) * (h as usize);
+        // 100 m of elevation in Q32.32 (100 << 32), positive land with
+        // no water depth and (with `terrain_peak = 0`) no peak glyph.
+        let elev = 100_i64 << 32;
+        protocol::PlanetMap {
+            grid_width: w,
+            grid_height: h,
+            elevation_q32: vec![elev; n],
+            water_depth_q32: vec![0; n],
+        }
+    }
+
+    #[test]
+    fn colored_land_is_tinted_by_producer_index() {
+        // Cell 0 lush, cell 1 mid, cell 2 barren → distinct green-ramp
+        // codes. Cell 3 is a nomad cell → dim gray, never the old
+        // bright-white marker.
+        let mut producer_index = vec![1.0, 0.5, 0.0];
+        producer_index.resize(12, 0.5);
+        let frame = WorldFrame {
+            tick: 0,
+            civs: vec![],
+            nomad_cells: vec![3],
+            producer_index,
+        };
+        let style = FrameStyle {
+            use_color: true,
+            ..FrameStyle::default()
+        };
+        let s = render_world_frame_styled(&land_pm(4, 3), None, &frame, "", style);
+        assert!(s.contains("38;5;40m"), "lush cell should be bright green");
+        assert!(s.contains("38;5;34m"), "mid cell should be forest green");
+        assert!(s.contains("38;5;244m"), "barren cell should be gray");
+        assert!(s.contains("38;5;245m"), "nomad cell should be dim gray");
+        assert!(
+            !s.contains("1;38;5;15m"),
+            "nomads must no longer render bold bright-white"
+        );
     }
 
     /// Strip the column header + row prefixes so assertions can focus
@@ -655,6 +806,7 @@ mod tests {
             tick: 0,
             civs: vec![],
             nomad_cells: vec![],
+            producer_index: vec![],
         };
         let s = render_world_frame(&pm(4, 3), None, &frame, "");
         assert!(s.contains("```text"));
@@ -675,6 +827,7 @@ mod tests {
                 cell_capacities_q32: BTreeMap::new(),
             }],
             nomad_cells: vec![],
+            producer_index: vec![],
         };
         let s = render_world_frame(&pm(4, 3), None, &frame, "Year 100");
         assert!(s.contains("Year 100"));
@@ -704,6 +857,7 @@ mod tests {
                 },
             ],
             nomad_cells: vec![],
+            producer_index: vec![],
         };
         let s = render_world_frame(&pm(4, 3), None, &frame, "");
         let body = body_cells(&s);
@@ -767,6 +921,7 @@ mod tests {
                 cell_capacities_q32: caps,
             }],
             nomad_cells: vec![],
+            producer_index: vec![],
         };
         let s = render_world_frame_styled(
             &pm(4, 3),
@@ -821,6 +976,7 @@ mod tests {
                 cell_capacities_q32: caps,
             }],
             nomad_cells: vec![],
+            producer_index: vec![],
         };
         let s = render_world_frame_styled(
             &pm(4, 3),
@@ -874,6 +1030,7 @@ mod tests {
                 cell_capacities_q32: BTreeMap::new(),
             }],
             nomad_cells: vec![],
+            producer_index: vec![],
         };
         let s = render_world_frame(&pm(4, 3), None, &frame, "");
         let body = body_cells(&s);

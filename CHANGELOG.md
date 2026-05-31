@@ -7,6 +7,26 @@ sign-off landed.
 
 ## Unreleased
 
+### Live map
+- **Land colour tracks plant life, not elevation.** The coloured
+  viewport map previously painted every inland cell forest-green
+  purely from its landform, so a baked or barren surface still read
+  as temperate green. Land/surface glyphs are now tinted by a new
+  per-cell producer-biomass signal (`CellBiomass` event, emitted at
+  run start and on a yearly cadence) along a five-band biome ramp —
+  dead → barren → sparse → healthy → lush — normalised against the
+  planet's densest cell so the spatial structure of the biosphere
+  shows. A world with no producers reads barren rather than green.
+- **Substrate-tinted vegetation.** The life hue follows the planet's
+  chemistry rather than assuming Earth plants: aqueous green,
+  ammoniacal teal, hydrocarbon violet, silicate ember (with barren
+  bands darkening to basalt). Water, peaks, gas-giant cloud bands and
+  ice sheets keep their fixed terrain colours.
+- **Nomads no longer render bright white.** Pre-civ wandering bands
+  now draw in dim neutral gray, reading as "people here, no flag,
+  transient" without competing with the civ palette or the new
+  vegetation tints.
+
 ### Population spread
 - **Physical wave-of-advance colonisation.** Nomadic spread is no
   longer a flat per-tick gradient bleed (1%/tick) that blanketed a

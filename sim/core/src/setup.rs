@@ -280,6 +280,13 @@ pub(crate) fn setup_run<E: Emitter>(
         elevation_q32,
         water_depth_q32,
     }))?;
+    // Run-start vegetation snapshot so the very first viewport frame
+    // tints land by producer life rather than elevation. Subsequent
+    // updates arrive on the yearly cadence from `run_tick`.
+    emitter.emit(&Event::CellBiomass(protocol::CellBiomass {
+        tick: 0,
+        producer_index_q32: crate::run_tick::cell_producer_index_q32(&ecosystem),
+    }))?;
     let mut laws = build_laws(&planet, cfg.grid_height);
     laws.magnetism.init_field(&mut state);
     // Plate roster sampled with the planet-scale area_factor so its

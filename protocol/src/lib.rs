@@ -83,6 +83,11 @@ pub enum Event {
     Recognition(RecognitionFiring),
     Planet(PlanetDerived),
     PlanetMap(PlanetMap),
+    /// Per-cell producer-life (vegetation) snapshot. Emitted once at
+    /// run start after `PlanetMap`, then on a yearly cadence. Lets the
+    /// live viewport tint land by actual producer biomass instead of
+    /// elevation, so a baked or barren surface stops reading as green.
+    CellBiomass(CellBiomass),
     Species(SpeciesDerived),
     FigureBorn(FigureBorn),
     TechUnlocked(TechUnlocked),
