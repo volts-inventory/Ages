@@ -206,12 +206,11 @@ fn test_biology() -> sim_species::PopulationBiology {
     }
 }
 
-/// Lifespan used by `step_growth` tests. Pinned at the
-/// diffusion baseline so the rescale factor is exactly 1.0
-/// — tests targeting other knobs stay independent of the
-/// per-species diffusion rescale.
+/// Lifespan (years) used by `step_growth` tests. An 80-yr
+/// Earth-vertebrate reference — keeps the mechanic tests
+/// independent of any particular species sampling.
 fn test_lifespan() -> Real {
-    Real::from_int(NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS)
+    Real::from_int(80)
 }
 
 /// `step_growth` diffuses population to neighbouring
@@ -219,29 +218,40 @@ fn test_lifespan() -> Real {
 /// cells carry non-zero nomadic pop.
 #[test]
 fn step_growth_diffuses_to_neighbours() {
-    let planet = ocean_planet(8, 6);
-    let state = populated_state(&planet, 8, 6);
+    // Production-scale grid at Earth radius: cells span a few hundred
+    // thousand km² (not the ~10M km² of a coarse 8×6 grid), so the
+    // physically-derived per-tick migration fraction clears the
+    // presence epsilon and the wave of advance reaches adjacent cells
+    // within the loop budget. (Earth-radius keeps carrying capacities
+    // normal — `baseline_cell_capacity` scales with planet area, so
+    // shrinking the radius instead would collapse the caps.)
+    let planet = ocean_planet(36, 30);
+    let state = populated_state(&planet, 36, 30);
     let claimed = BTreeSet::new();
     let mut pops = init_pops(&state, &planet, Habitat::Aquatic, &claimed);
     let initial_count = pops.len();
     assert!(initial_count <= NOMAD_ORIGIN_CELL_COUNT);
     let observations = BTreeMap::new();
     let (cog, soc) = test_traits();
-    step_growth(
-        &mut pops,
-        &state,
-        &planet,
-        Habitat::Aquatic,
-        &observations,
-        &test_biology(),
-        cog,
-        soc,
-        test_lifespan(),
-        Real::ONE,
-        Real::ONE,
-        0,
-        &claimed,
-    );
+    // Several generations of the physical wave: enough for the leading
+    // edge to accumulate past the presence epsilon in adjacent cells.
+    for _ in 0..200 {
+        step_growth(
+            &mut pops,
+            &state,
+            &planet,
+            Habitat::Aquatic,
+            &observations,
+            &test_biology(),
+            cog,
+            soc,
+            test_lifespan(),
+            Real::ONE,
+            Real::ONE,
+            0,
+            &claimed,
+        );
+    }
     assert!(
         pops.len() > initial_count,
         "step_growth should spread nomads to neighbours; \
@@ -326,25 +336,84 @@ fn step_growth_strict_block_at_tier_zero() {
     }
 }
 
-/// Airborne species have innate +1 base tier from flight, so
-/// even at zero tech they can transit through wrong-biome
-/// (water) cells. Verifies the flight bonus path.
+/// Find a land "islet": a habitat-matching cell whose every passable
+/// neighbour is wrong-biome (no habitat-matching neighbour). Transit
+/// only fires from such tips — a cell with any habitat neighbour
+/// keeps its pop on home turf — so it's the deterministic way to
+/// exercise the wrong-biome crossing path without waiting for the
+/// (now physically slow) wave of advance to traverse land to a coast.
+fn find_islet(
+    state: &sim_physics::PhysicsState,
+    planet: &sim_world::Planet,
+    habitat: Habitat,
+) -> Option<u32> {
+    let grid = state.grid();
+    for cell in 0..grid.width() * grid.height() {
+        if !is_habitat_match(state, planet, cell, habitat) {
+            continue;
+        }
+        let axial = grid.axial_of(sim_physics::CellId(cell));
+        let neighbours: Vec<u32> = grid.neighbours(axial).iter().map(|c| c.0).collect();
+        // Passable (non-gas) neighbours, partitioned by habitat match.
+        let mut has_wrong_biome = false;
+        let mut has_habitat = false;
+        for n in neighbours {
+            if sim_world::terrain_glyph_at(state, planet, n) == '\u{2261}' {
+                continue;
+            }
+            if is_habitat_match(state, planet, n, habitat) {
+                has_habitat = true;
+            } else {
+                has_wrong_biome = true;
+            }
+        }
+        if has_wrong_biome && !has_habitat {
+            return Some(cell);
+        }
+    }
+    None
+}
+
+/// Airborne species have innate +1 base tier from flight, so even at
+/// zero tech they can transit through wrong-biome (water) cells.
+/// Seeds a populated islet (only-water neighbours) and verifies the
+/// flight-transit path moves pop across the boundary.
 #[test]
 fn step_growth_airborne_crosses_water_at_zero_tech() {
-    let planet = ocean_planet(8, 6);
-    let state = populated_state(&planet, 8, 6);
-    let claimed = BTreeSet::new();
-    // Airborne lives on land, like terrestrial.
-    let mut pops = init_pops(&state, &planet, Habitat::Airborne, &claimed);
-    if pops.is_empty() {
-        // Tiny ocean grid may have no land origin; skip.
+    let planet = ocean_planet(36, 30);
+    let state = populated_state(&planet, 36, 30);
+    let Some(islet) = find_islet(&state, &planet, Habitat::Airborne) else {
+        // No only-water-bordered land cell on this terrain; skip.
         return;
-    }
+    };
+    let claimed = BTreeSet::new();
     let observations = BTreeMap::new();
     let (cog, soc) = test_traits();
-    // Run ticks to let flight-transit fire.
+    // Seed the islet at its own carrying capacity so the logistic step
+    // holds it (over-seeding above cap would drive the step negative
+    // and prune the cell) and it has the maximum gradient to push.
+    // A productive cell (high biomass) so the carrying capacity — and
+    // thus the cross-boundary gradient — is large enough that the
+    // (physically small) wrong-biome flow clears the presence epsilon
+    // and the transit mechanic is observable in a short window.
+    let producer_biomass = Real::from_int(1000);
+    let cap = super::growth::cell_forager_cap(
+        &state,
+        &planet,
+        islet,
+        0,
+        Habitat::Airborne,
+        cog,
+        producer_biomass,
+        Real::ONE,
+    );
+    if cap <= Real::ZERO {
+        return;
+    }
+    let mut pops: BTreeMap<u32, Real> = BTreeMap::new();
+    pops.insert(islet, cap);
     let mut saw_water_pop = false;
-    for _ in 0..200 {
+    for _ in 0..30 {
         step_growth(
             &mut pops,
             &state,
@@ -355,20 +424,16 @@ fn step_growth_airborne_crosses_water_at_zero_tech() {
             cog,
             soc,
             test_lifespan(),
-            Real::ONE,
+            producer_biomass,
             Real::ONE,
             0,
             &claimed,
         );
-        for (cell, pop) in &pops {
-            if !is_habitat_match(&state, &planet, *cell, Habitat::Airborne)
+        if pops.iter().any(|(cell, pop)| {
+            !is_habitat_match(&state, &planet, *cell, Habitat::Airborne)
                 && *pop > Real::from_ratio(1, 10)
-            {
-                saw_water_pop = true;
-                break;
-            }
-        }
-        if saw_water_pop {
+        }) {
+            saw_water_pop = true;
             break;
         }
     }
@@ -379,28 +444,41 @@ fn step_growth_airborne_crosses_water_at_zero_tech() {
     );
 }
 
-/// Terrestrial species with tech-tier ≥ 1 (≥10 tech score)
-/// unlocks wrong-biome transit. Mirror of the airborne test
-/// but via learned tech rather than innate ability.
+/// Terrestrial species with tech-tier ≥ 1 (≥10 tech score) unlocks
+/// wrong-biome transit. Mirror of the airborne test but via learned
+/// tech rather than innate ability.
 #[test]
 fn step_growth_terrestrial_unlocks_transit_with_tech() {
-    let planet = ocean_planet(8, 6);
-    let state = populated_state(&planet, 8, 6);
+    let planet = ocean_planet(36, 30);
+    let state = populated_state(&planet, 36, 30);
+    let Some(islet) = find_islet(&state, &planet, Habitat::Terrestrial) else {
+        return;
+    };
     let claimed = BTreeSet::new();
-    let mut pops = init_pops(&state, &planet, Habitat::Terrestrial, &claimed);
-    if pops.is_empty() {
+    let (cog, soc) = test_traits();
+    // Inject enough observations into the islet to push tech_score
+    // above TRANSIT_TIER_1_TECH (= 10). tech_score = cog × soc × Σ
+    // counts; (0.5)(0.6) = 0.30, so Σ counts ≥ 34 gives score ≥ 10.
+    let mut observations: BTreeMap<u32, BTreeMap<u32, u64>> = BTreeMap::new();
+    observations.entry(islet).or_default().insert(0, 50);
+    let producer_biomass = Real::from_int(1000);
+    let cap = super::growth::cell_forager_cap(
+        &state,
+        &planet,
+        islet,
+        0,
+        Habitat::Terrestrial,
+        cog,
+        producer_biomass,
+        Real::ONE,
+    );
+    if cap <= Real::ZERO {
         return;
     }
-    // Inject enough observations into one populated cell to
-    // push tech_score above TRANSIT_TIER_1_TECH (= 10).
-    // tech_score = cog × soc × Σ counts; (0.5)(0.6) = 0.30, so
-    // need Σ counts ≥ 34 for score ≥ 10.
-    let (cog, soc) = test_traits();
-    let mut observations: BTreeMap<u32, BTreeMap<u32, u64>> = BTreeMap::new();
-    let seed_cell = *pops.keys().next().unwrap();
-    observations.entry(seed_cell).or_default().insert(0, 50);
+    let mut pops: BTreeMap<u32, Real> = BTreeMap::new();
+    pops.insert(islet, cap);
     let mut saw_water_pop = false;
-    for _ in 0..200 {
+    for _ in 0..30 {
         step_growth(
             &mut pops,
             &state,
@@ -411,20 +489,16 @@ fn step_growth_terrestrial_unlocks_transit_with_tech() {
             cog,
             soc,
             test_lifespan(),
-            Real::ONE,
+            producer_biomass,
             Real::ONE,
             0,
             &claimed,
         );
-        for (cell, pop) in &pops {
-            if !is_habitat_match(&state, &planet, *cell, Habitat::Terrestrial)
+        if pops.iter().any(|(cell, pop)| {
+            !is_habitat_match(&state, &planet, *cell, Habitat::Terrestrial)
                 && *pop > Real::from_ratio(1, 10)
-            {
-                saw_water_pop = true;
-                break;
-            }
-        }
-        if saw_water_pop {
+        }) {
+            saw_water_pop = true;
             break;
         }
     }
@@ -571,33 +645,55 @@ fn step_growth_growth_bonus_accelerates_filling() {
     );
 }
 
-/// Lifespan diffusion rescale: 1.0 at the baseline lifespan,
-/// >1 for shorter-lived species (capped at 4×), <1 for longer-
-/// lived (floored at 0.25×). Pinned so the seed-495 Ylithar
-/// case (177-yr lifespan) lands clearly below 1× rather than
-/// at the historic flat-rate behaviour.
+/// Dispersal distance per generation scales by locomotion: flight
+/// ranges farthest, swimming/amphibious beat walking, burrowers crawl.
 #[test]
-fn lifespan_diffusion_scale_brackets() {
-    let baseline = super::growth::lifespan_diffusion_scale(Real::from_int(
-        NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS,
-    ));
-    assert_eq!(baseline, Real::ONE, "baseline lifespan should map to 1.0×");
-    let r_strategist = super::growth::lifespan_diffusion_scale(Real::from_int(4));
-    assert_eq!(
-        r_strategist,
-        Real::from_int(4),
-        "4-yr species should hit the 4× upper cap"
+fn dispersal_distance_scales_by_locomotion() {
+    use super::growth::dispersal_km_per_generation;
+    let air = dispersal_km_per_generation(Habitat::Airborne);
+    let aqua = dispersal_km_per_generation(Habitat::Aquatic);
+    let land = dispersal_km_per_generation(Habitat::Terrestrial);
+    let burrow = dispersal_km_per_generation(Habitat::Subterranean);
+    assert!(air > aqua, "flight should out-range swimming: {air:?} {aqua:?}");
+    assert!(aqua > land, "swimming should out-range walking: {aqua:?} {land:?}");
+    assert!(burrow < land, "burrowing should trail walking: {burrow:?} {land:?}");
+}
+
+/// The physical wave-of-advance diffusion fraction is (a) tiny —
+/// orders of magnitude below the old flat 1%/tick — and (b)
+/// slower for a long-lived (slow-maturing) species than a short-
+/// lived one under identical planet + locomotion inputs. Anchors
+/// the seed-495 fix: a 177-yr species can no longer blanket a
+/// planet in decades.
+#[test]
+fn dispersal_fraction_is_small_and_lifespan_sensitive() {
+    let planet = ocean_planet(36, 30);
+    let state = populated_state(&planet, 36, 30);
+    let grid = state.grid();
+    let short = super::growth::dispersal_fraction(
+        &planet,
+        grid,
+        Habitat::Terrestrial,
+        &test_biology(),
+        Real::from_int(20),
     );
-    let k_strategist = super::growth::lifespan_diffusion_scale(Real::from_int(400));
-    assert_eq!(
-        k_strategist,
-        Real::percent(25),
-        "400-yr species should hit the 0.25× lower cap"
+    let long = super::growth::dispersal_fraction(
+        &planet,
+        grid,
+        Habitat::Terrestrial,
+        &test_biology(),
+        Real::from_int(200),
     );
-    let ylithar = super::growth::lifespan_diffusion_scale(Real::from_int(177));
+    // Far below the historic flat 1%/tick gradient closure.
     assert!(
-        ylithar < Real::ONE && ylithar > Real::percent(25),
-        "177-yr species should land between the lower cap and 1.0×; got {ylithar:?}"
+        short < Real::from_ratio(1, 1_000),
+        "physical dispersal fraction should be ≪ 1%/tick; got {short:?}"
+    );
+    assert!(short > Real::ZERO, "dispersal fraction must be positive: {short:?}");
+    assert!(
+        long < short,
+        "longer-lived (slower-maturing) species should diffuse slower; \
+         short={short:?} long={long:?}"
     );
 }
 

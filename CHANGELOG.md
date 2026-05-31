@@ -7,6 +7,29 @@ sign-off landed.
 
 ## Unreleased
 
+### Population spread
+- **Physical wave-of-advance colonisation.** Nomadic spread is no
+  longer a flat per-tick gradient bleed (1%/tick) that blanketed a
+  whole planet in a few sim-decades. Diffusion is now derived per
+  species and per planet: a band's descendants resettle a
+  characteristic distance each generation (an ecological dispersal
+  coefficient `D = L²/4·T_gen`, with `L` set by locomotion — flight >
+  swimming > walking > burrowing), and the per-tick, per-neighbour
+  migration fraction is `D·Δt / cell_area`, where the grid cell's
+  physical area comes from the planet's *real* radius. Per-pair
+  terrain friction (slope + marginal-biome / transit cost) shapes the
+  front. The result is a Fisher–Skellam wave whose speed
+  (`v = 2√(rD)`) emerges from biology and planet geometry — a
+  continent fills over millennia, the way real demic diffusion spread
+  hominins across Earth, instead of in ~30 years.
+- **Generation-bounded growth.** The intrinsic logistic rate's ceiling
+  is now a realistic per-*generation* multiple (age-at-first-
+  reproduction), not a flat 10%/month cap. A long-lived, slow-maturing
+  species fills habitat over centuries; a fast-maturing r-strategist
+  still races. Removes the "billions across the whole planet by year
+  ~350" outcome — coverage and population now ramp on a believable
+  timescale, with civs founding from genuinely-filled local regions.
+
 ### Civilizational archetypes
 - **Open developmental-path framework.** A run's developmental path
   is no longer implicitly a combustion (fire → industry) story with
