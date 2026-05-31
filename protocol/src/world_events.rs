@@ -168,6 +168,28 @@ pub struct PlanetMap {
     pub water_depth_q32: Vec<i64>,
 }
 
+/// Per-cell producer-life (vegetation) snapshot. Emitted once at run
+/// start (alongside `PlanetMap`) and then on a yearly cadence so the
+/// live viewport can colour land by whether anything actually grows
+/// there rather than by elevation alone — a baked, lifeless basin
+/// stops reading as temperate green.
+///
+/// Each entry is the cell's tier-0 (producer) biomass expressed as a
+/// `0..1` index against the cell's fair share of the planet's total
+/// producer carrying capacity (`producer_capacity / n_cells`),
+/// clamped to `[0, 1]`. `0` ≈ barren, `1` ≈ a cell carrying at least
+/// its full share of planetary producer biomass. Cell ordering
+/// matches `PlanetMap` (row-major, index = `r * grid_width + q`).
+///
+/// `Q32.32` raw bits; divide by `2^32` to recover the index. An
+/// empty `producer_index_q32` means the planet carries no producer
+/// capacity (consumers then fall back to the legacy terrain palette).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CellBiomass {
+    pub tick: u64,
+    pub producer_index_q32: Vec<i64>,
+}
+
 /// Species-derivation event — emitted once at run start after the
 /// physics warm-up and the recognition library are in place. Carries
 /// the derived traits for the run's persistent species.

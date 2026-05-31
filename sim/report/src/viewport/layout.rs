@@ -25,6 +25,7 @@ impl<W: Write> ViewportEmitter<W> {
             tick: self.current_tick,
             civs: self.civs.values().cloned().collect(),
             nomad_cells: self.nomad_cells.iter().copied().collect(),
+            producer_index: self.producer_index.clone(),
         };
         let active = frame.civs.len();
         // Tick is in months; display year + month-in-year.

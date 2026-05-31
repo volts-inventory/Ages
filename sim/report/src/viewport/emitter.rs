@@ -54,6 +54,12 @@ pub struct ViewportEmitter<W: Write> {
     /// Mirrored from `SpeciesNomadsChanged` events. Rendered as
     /// `0` glyphs in the viewport map.
     pub(super) nomad_cells: BTreeSet<u32>,
+    /// Per-cell producer-life index in `[0, 1]`, mirrored from the
+    /// latest `CellBiomass` event (row-major, `PlanetMap` cell order).
+    /// Passed into each `WorldFrame` so the coloured map tints land by
+    /// vegetation rather than elevation. Empty until the first
+    /// `CellBiomass` arrives.
+    pub(super) producer_index: Vec<f64>,
     /// Per-civ sidebar / log state — name, founding year, cosmology
     /// + religion snapshots, tech tier, tools, cohesion, life
     /// expectancy, last unlocked tool. All entries cleared together
@@ -155,6 +161,7 @@ impl<W: Write> ViewportEmitter<W> {
             metadata: None,
             civs: BTreeMap::new(),
             nomad_cells: BTreeSet::new(),
+            producer_index: Vec::new(),
             nomad_total_pop: 0.0,
             civ_state: BTreeMap::new(),
             current_tick: 0,

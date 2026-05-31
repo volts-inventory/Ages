@@ -98,6 +98,9 @@ impl Digest {
                 tick,
                 civs,
                 nomad_cells: Vec::new(),
+                // The markdown report is monochrome (no ANSI), so it
+                // doesn't render vegetation colour; leave empty.
+                producer_index: Vec::new(),
             });
             if tick >= last_tick {
                 break;
@@ -544,6 +547,9 @@ impl Digest {
             }
             Event::Tick(_)
             | Event::Snapshot(_)
+            // Per-cell vegetation is a viewport-only colour signal; the
+            // monochrome markdown report doesn't consume it.
+            | Event::CellBiomass(_)
             | Event::MeasurementConfirmed(_)
             | Event::SpeciesNomadsChanged(_)
             | Event::SpeciesCosmologyBias(_)

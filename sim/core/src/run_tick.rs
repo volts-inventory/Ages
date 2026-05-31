@@ -34,6 +34,55 @@ use sim_recognition::RecognitionLibrary;
 use sim_species::SpeciesId;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Cadence for the per-cell vegetation (`CellBiomass`) snapshot:
+/// once per sim-year on the 1-tick = 1-month clock. Matches the
+/// territory / culture-flip yearly beat and keeps the full-grid
+/// producer array out of every tick's NDJSON line.
+const VEGETATION_EMIT_TICKS: u64 = 12;
+
+/// Per-cell tier-0 (producer) biomass as a `0..1` index, returned as
+/// `Q32.32` raw bits in `PlanetMap` cell order. Drives the viewport's
+/// substrate-tinted vegetation colours so land reads as alive only
+/// where producers actually stand.
+///
+/// Normalised against the *densest* producer cell on the planet so
+/// the map shows the spatial structure of life — where the biosphere
+/// concentrates vs. where it thins to barren — rather than washing the
+/// whole grid to one shade. (Normalising against the planet's own mean
+/// producer capacity is what we *don't* do: producer biomass tracks
+/// that capacity, so it pins almost every cell to the ceiling and
+/// erases the gradient.) A planet with no extant producers returns an
+/// all-zero index so a dead world reads barren rather than green;
+/// `n_cells == 0` returns empty (legacy-palette fallback).
+pub(crate) fn cell_producer_index_q32(eco: &PlanetEcosystem) -> Vec<i64> {
+    let n = eco.n_cells;
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut per_cell = vec![Real::ZERO; n];
+    for s in eco.species.values() {
+        if !s.is_extant || s.role.tier() != Some(0) {
+            continue;
+        }
+        for (cell, biomass) in s.cell_biomass.iter().enumerate().take(n) {
+            per_cell[cell] = per_cell[cell] + *biomass;
+        }
+    }
+    let peak = per_cell
+        .iter()
+        .copied()
+        .fold(Real::ZERO, |a, b| if b > a { b } else { a });
+    if peak <= Real::ZERO {
+        // No producer biomass anywhere — emit explicit zeros so the
+        // renderer paints barren, not the legacy elevation green.
+        return vec![0; n];
+    }
+    per_cell
+        .into_iter()
+        .map(|p| (p / peak).clamp01().raw().to_bits())
+        .collect()
+}
+
 /// Per-run mutable state threaded across ticks. Built once by
 /// `setup::setup_run`, mutated in place by `run_tick`, and finalised
 /// by `run()` after the tick loop. Field naming and types match the
@@ -256,6 +305,19 @@ pub(crate) fn run_tick<E: Emitter>(
         // closes naturally after `POST_EXTINCTION_BOOST_TICKS`.
         rs.speciation_tracker.register_extinction_event(tick);
         emitter.emit(&Event::SpeciesExtinct(ev))?;
+    }
+    // Per-cell vegetation snapshot for the live viewport's
+    // substrate-tinted land colouring. Emitted on a yearly cadence
+    // (12 ticks = 1 sim-year) — slow enough to keep the NDJSON log
+    // from ballooning with a full-grid array every tick, fast enough
+    // that the map tracks a biosphere expanding into newly habitable
+    // cells or dying back off a baking surface. The run-start
+    // snapshot is emitted from `setup` alongside `PlanetMap`.
+    if tick % VEGETATION_EMIT_TICKS == 0 {
+        emitter.emit(&Event::CellBiomass(protocol::CellBiomass {
+            tick,
+            producer_index_q32: cell_producer_index_q32(&rs.ecosystem),
+        }))?;
     }
     // Speciation + HGT. See `lib.rs` original for full rationale.
     let cosmic_mult = rs.state.cosmic_ray_ground_flux();
