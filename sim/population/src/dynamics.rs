@@ -22,13 +22,32 @@ use crate::cohort::Cohort;
 /// it slowly growing rather than declining its way to extinction
 /// before any civ can emerge.
 pub const GROWTH_R_MIN: (i64, i64) = (1, 4000);
-/// Upper clamp on the intrinsic logistic growth rate (per tick). A
-/// 5000-egg broadcast spawner derives a very large per-capita rate;
-/// capping at 1/10 = 10%/tick (doubling ~7 ticks) keeps the explicit
-/// logistic step `cur + r·cur·(1 − cur/cap)` comfortably inside the
-/// stable `r < 1` regime while still letting r-strategists fill empty
-/// habitat in years rather than centuries.
+/// Absolute upper clamp on the intrinsic logistic growth rate (per
+/// tick), purely a *numerical-stability* ceiling: capping at 1/10 =
+/// 10%/tick keeps the explicit logistic step `cur + r·cur·(1 − N/cap)`
+/// comfortably inside the stable `r < 1` regime. Realistic pacing is
+/// no longer set by this constant but by the per-generation cap below
+/// — `GROWTH_R_MAX` only catches the pathological case where the
+/// generation-relative cap would itself exceed the stable regime (a
+/// sub-monthly-generation broadcast spawner).
 pub const GROWTH_R_MAX: (i64, i64) = (1, 10);
+
+/// Per-generation growth ceiling, expressed as the natural log of the
+/// maximum multiple a population may grow by over one generation
+/// (age-at-first-reproduction). `2` ⇒ at most e² ≈ 7.4× per
+/// generation at low density. This is the physically-grounded pacing
+/// knob: a population cannot out-grow its own reproductive turnover,
+/// so a long-lived, slow-maturing species fills habitat over many
+/// centuries while a fast-maturing r-strategist fills it in a few
+/// years — *without* a privileged per-month constant. Converted to a
+/// per-tick ceiling via the species' generation length in ticks
+/// (`r_max_tick ≈ GROWTH_MAX_LN_PER_GEN / generation_ticks`).
+pub const GROWTH_MAX_LN_PER_GEN: (i64, i64) = (2, 1);
+
+/// Floor on the derived generation length (years) so a degenerate
+/// near-zero maturation fraction can't drive the per-generation cap
+/// to an unstable value.
+const MIN_GENERATION_YEARS: (i64, i64) = (1, 2);
 
 /// Per-tick transition + survival rates for a 4-bracket step,
 /// derived from `PopulationBiology` + `lifespan_years`. Replaces
@@ -274,8 +293,35 @@ impl PopulationDynamics {
         let recruitment = biology.fertile_fraction() * d.birth_rate * pre_fertile_survival;
         let adult_mortality = Real::ONE - d.fertile_survival_per_tick;
         let r = recruitment - adult_mortality;
+        // Generation-relative ceiling: a population cannot grow by more
+        // than e^(GROWTH_MAX_LN_PER_GEN) over one generation (the
+        // age-at-first-reproduction window). This ties fill speed to
+        // reproductive turnover rather than to a flat per-month cap, so
+        // a 177-yr species crawls and a 2-yr r-strategist races, with no
+        // privileged constant. `r_max_tick = ln_cap / generation_ticks`
+        // (the small-rate linearisation of `e^(ln_cap/T) − 1`).
+        let generation_ticks = Self::generation_ticks(biology, lifespan_years);
+        let per_gen_cap =
+            Real::from_ratio(GROWTH_MAX_LN_PER_GEN.0, GROWTH_MAX_LN_PER_GEN.1) / generation_ticks;
         r.max(Real::from_ratio(GROWTH_R_MIN.0, GROWTH_R_MIN.1))
+            .min(per_gen_cap)
             .min(Real::from_ratio(GROWTH_R_MAX.0, GROWTH_R_MAX.1))
+    }
+
+    /// Generation length in ticks — age at first reproduction, i.e.
+    /// the infant + juvenile (pre-fertile) span of the lifespan,
+    /// expressed on the `BASELINE_MONTHS_PER_YEAR` tick calibration.
+    /// Floored at `MIN_GENERATION_YEARS` so a degenerate maturation
+    /// fraction can't collapse the generation-relative growth cap.
+    /// Shared by the nomadic dispersal model so a species' fill speed
+    /// and spread speed both key off one notion of "a generation".
+    pub fn generation_ticks(biology: &PopulationBiology, lifespan_years: Real) -> Real {
+        let pre_fertile_fraction = biology.infant_fraction + biology.maturity_fraction;
+        let generation_years = (lifespan_years * pre_fertile_fraction)
+            .max(Real::from_ratio(MIN_GENERATION_YEARS.0, MIN_GENERATION_YEARS.1));
+        let months_per_year =
+            Real::from_int(i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12));
+        generation_years * months_per_year
     }
 
     /// Test-only neutral defaults. A cohort with these rates and

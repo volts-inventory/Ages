@@ -1,22 +1,30 @@
-//! Per-tick logistic growth + density-gradient diffusion for the
-//! nomadic species pool.
+//! Per-tick logistic growth + physical wave-of-advance diffusion for
+//! the nomadic species pool.
 //!
 //! Two phases per tick:
 //!
 //! 1. **Logistic growth on populated cells.** Each cell with a
 //!    non-trivial population grows toward its per-cell cap along a
-//!    Verhulst S-curve: `next = cur + NOMAD_GROWTH × cur × (1 −
-//!    cur/cap)` — growth proportional to the current population, so
-//!    a small founder band ramps slowly before saturating. Empty
-//!    cells stay empty.
-//! 2. **Neighbour diffusion.** Pop flows from higher-density cells
-//!    to lower-density along habitat-matching neighbours, with
-//!    tech-gated wrong-biome transit and per-tier decay.
+//!    Verhulst S-curve: `next = cur + r·cur·(1 − cur/cap)`, with `r`
+//!    derived per-species from reproductive biology and bounded to a
+//!    realistic *per-generation* multiple — so a small founder band
+//!    ramps slowly before saturating and a long-lived, slow-maturing
+//!    species fills habitat over centuries, not decades. Empty cells
+//!    stay empty.
+//! 2. **Neighbour diffusion.** Pop flows down density gradients to
+//!    habitat-matching neighbours at a *physically-derived* rate: a
+//!    band's descendants resettle a characteristic distance each
+//!    generation (an ecological dispersal coefficient `D = L²/4T_gen`),
+//!    which — divided by the planet's real per-cell area — gives the
+//!    per-tick migration fraction. Per-pair terrain friction (slope,
+//!    marginal biome) slows the front; tech-gated wrong-biome transit
+//!    and per-tier decay still govern crossings.
 //!
-//! Net result: nomads radiate outward from the origin cell(s)
-//! over the first few hundred ticks, mimicking the way populations
-//! spread across continents in real biology rather than
-//! spontaneously appearing everywhere from tick 0.
+//! Net result: nomads radiate outward from the origin cell(s) as a
+//! Fisher–Skellam wave of advance whose speed (`v = 2√(rD)`) emerges
+//! from species biology and planet geometry — a continent fills over
+//! millennia, the way real demic diffusion spread hominins across
+//! Earth, rather than blanketing the planet in a few sim-decades.
 
 use super::is_habitat_match;
 use sim_arith::Real;
@@ -104,40 +112,49 @@ pub(crate) fn cell_forager_cap(
 // (`thermal_gradient`, `seasonal_thaw`) still multiply it via
 // `cell_growth_bonus`.
 
-/// Density-gradient diffusion rate at the baseline lifespan. The
-/// fraction of the pop *gap* between source and neighbour that
-/// transfers each tick. At 1/100 = 1% gradient closure per tick
-/// for an 80-yr species:
-///
-/// - Cells at cap don't shed to cells at cap (no gradient).
-/// - Cells well above cap (transit) shed strongly to lower-pop
-///   neighbours.
-/// - Cells well below cap receive from higher-pop neighbours.
-///
-/// This is *real* density-equalising flow rather than
-/// constant-fraction diffusion — populations naturally
-/// concentrate in habitat-rich cells, overflow to neighbours
-/// when they hit cap, and migrate from over-pressured to
-/// under-pressured cells.
-///
-/// The baseline rate is rescaled per-species via
-/// `lifespan_diffusion_scale` — a species' generational turnover
-/// drives band-fission / emigration cadence. Short-lived
-/// r-strategists diffuse faster (more generations per sim-year =
-/// more fission events); long-lived K-strategists diffuse slower
-/// (a 200-yr species reorganises its range across centuries, not
-/// decades).
-pub(crate) const NOMAD_DIFFUSION_NUM: i64 = 1;
-pub(crate) const NOMAD_DIFFUSION_DEN: i64 = 100;
+// Diffusion is no longer a flat per-tick gradient-closure constant.
+// It is derived per-species, per-planet as a physical *wave of
+// advance*: a band's descendants resettle a characteristic distance
+// each generation, giving an ecological dispersal coefficient
+// `D = L²/(4·T_gen)` (km²/yr); the per-tick, per-neighbour migration
+// fraction is then `D·Δt / cell_area`, where the grid cell's physical
+// area comes from the planet's actual radius. See `dispersal_fraction`.
 
-/// Baseline lifespan (years) used for the diffusion rescale. A
-/// species at this lifespan diffuses at `NOMAD_DIFFUSION_NUM/DEN`
-/// per tick exactly; shorter lifespans scale up, longer scale
-/// down. Anchored at 80 to match the same Earth-vertebrate
-/// reference implicit in the rest of the demographics tuning
-/// (e.g. the elder-bracket survival baselines in
-/// `PopulationDynamics::for_species`).
-pub(crate) const NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS: i64 = 80;
+/// Earth's mean radius in km. Anchors the physical size of a grid
+/// cell, which converts a species' ecological dispersal coefficient
+/// (km²/yr) into the per-tick, per-neighbour migration fraction the
+/// diffusion phase applies. (`sim_world` keeps the metre value
+/// privately for escape-velocity; the diffusion model only needs km.)
+pub(crate) const EARTH_RADIUS_KM: i64 = 6_371;
+
+/// RMS distance (km) a *terrestrial walker's* descendants resettle
+/// over one generation — the physical anchor for spread speed. Chosen
+/// so the emergent Fisher–Skellam wave of advance (`v = 2√(rD)`, with
+/// `D = L²/4T_gen`) for a median species lands near the ~1 km/yr
+/// demic-diffusion speed measured for real hominin and Neolithic-
+/// farming expansions: a continent (tens of hundreds-of-km-wide cells)
+/// fills over ~10–50k years rather than the decades the old flat
+/// 1%/tick gradient bleed produced. Other locomotion modes scale off
+/// this baseline in `dispersal_km_per_generation`.
+pub(crate) const DISPERSAL_KM_PER_GEN_BASELINE: i64 = 30;
+
+/// Elevation-difference friction scale (metres). A neighbour
+/// `ELEV_FRICTION_HALF_M` higher or lower than the source receives
+/// half the migration flow it would across flat ground:
+/// `friction = scale / (scale + |Δelevation|)`. Mountains and rifts
+/// slow the colonisation front without hard-blocking it.
+pub(crate) const ELEV_FRICTION_HALF_M: i64 = 1_000;
+
+/// Minimum population (people) for a cell to count as present.
+/// Below this the cell is pruned from the pool. Set far below the
+/// 150-person `NOMAD_DISPLAY_FLOOR_POP` render threshold so the
+/// leading edge of a wave of advance *accumulates* its (initially
+/// fractional) migrants tick over tick instead of being deleted each
+/// step — a cell only renders as occupied once it has genuinely
+/// grown past the display floor, which under the physical diffusion
+/// rate takes centuries, not the single tick the old 0.1 threshold
+/// + 1%/tick flow produced.
+const NOMAD_PRESENCE_EPSILON: (i64, i64) = (1, 1_000);
 
 /// Tech-gated transit thresholds (in `tech_score` units, the same
 /// per-cell observation pressure that gates civ founding via
@@ -192,21 +209,22 @@ pub(crate) const GROWTH_SOLVENT_THRESHOLD: u64 = 10;
 ///
 /// 1. **Logistic growth on populated cells.** Each cell with a
 ///    non-trivial population grows toward its per-cell cap along a
-///    Verhulst S-curve: `next = cur + NOMAD_GROWTH × cur × (1 −
-///    cur/cap)`. Growth is proportional to the current population,
-///    so a small founder band ramps slowly before saturating.
-///    Empty cells stay empty.
+///    Verhulst S-curve: `next = cur + r·cur·(1 − cur/cap)`, where
+///    `r` is the species' biology-derived intrinsic rate, bounded to
+///    a realistic per-generation growth multiple. A small founder
+///    band ramps slowly before saturating; empty cells stay empty.
 /// 2. **Neighbour diffusion.** Each populated cell sheds
-///    `NOMAD_DIFFUSION_NUM / NOMAD_DIFFUSION_DEN` of its
-///    population to each habitable neighbour. The neighbour
-///    receives the share; the source cell loses it. Diffusion
-///    capped so a cell can't lose more than half its pop in a
-///    single tick (regardless of neighbour count).
+///    `gap · dispersal_fraction · terrain_friction` of the density
+///    gap to each habitat-matching neighbour, where
+///    `dispersal_fraction` is the physically-derived per-tick
+///    migration fraction (`D·Δt / cell_area`). The neighbour
+///    receives the share; the source cell loses it. Still capped so
+///    a cell can't shed more than half its pop in a single tick.
 ///
-/// Net result: nomads radiate outward from the origin cell(s)
-/// over the first few hundred ticks, mimicking the way
-/// populations spread across continents in real biology rather
-/// than spontaneously appearing everywhere from tick 0.
+/// Net result: nomads radiate outward from the origin cell(s) as a
+/// wave of advance whose speed emerges from the species' reproductive
+/// rate and dispersal distance and the planet's real cell size —
+/// filling a continent over millennia rather than sim-decades.
 ///
 /// Cells claimed by civs stay untouched (civ-claim absorption is
 /// `absorb_into_civ`'s job).
@@ -237,8 +255,17 @@ pub(crate) fn step_growth(
         cognition,
         sociality,
     );
-    let diffuse = Real::from_ratio(NOMAD_DIFFUSION_NUM, NOMAD_DIFFUSION_DEN)
-        * lifespan_diffusion_scale(lifespan_years);
+    // Physically-derived per-tick, per-neighbour migration fraction:
+    // a wave of advance keyed to the species' dispersal distance per
+    // generation and the planet's actual cell size, not a flat
+    // constant. Friction (terrain / habitat) is applied per-pair below.
+    let diffuse = dispersal_fraction(
+        planet,
+        state.grid(),
+        species_habitat,
+        biology,
+        lifespan_years,
+    );
     let species_t = species_tier(pops, observations, species_habitat, cognition, sociality);
     let decay = decay_for_tier(species_t);
     let grid = state.grid();
@@ -320,7 +347,7 @@ pub(crate) fn step_growth(
             // Non-habitat / claimed / gas: decay.
             cur * (Real::ONE - decay)
         };
-        if next > Real::from_ratio(1, 10) {
+        if next > Real::from_ratio(NOMAD_PRESENCE_EPSILON.0, NOMAD_PRESENCE_EPSILON.1) {
             pops.insert(*cell, next);
         } else {
             pops.remove(cell);
@@ -358,7 +385,7 @@ pub(crate) fn step_growth(
         glyph != '\u{2261}'
     };
     for (source, source_pop) in &snapshot {
-        if *source_pop <= Real::from_ratio(1, 10) {
+        if *source_pop <= Real::from_ratio(NOMAD_PRESENCE_EPSILON.0, NOMAD_PRESENCE_EPSILON.1) {
             continue;
         }
         let source_axial = grid.axial_of(sim_physics::CellId(*source));
@@ -401,7 +428,12 @@ pub(crate) fn step_growth(
                 continue;
             }
             let gap = *source_pop - neigh_pop;
-            let amount = gap * diffuse * half;
+            // Per-pair friction: habitat suitability of the destination
+            // glyph × an elevation-difference penalty. A climb into
+            // mountains or a push into marginal biome flows slower than
+            // a step across equivalent flat habitat.
+            let friction = terrain_friction(state, planet, *source, n_cell, species_habitat);
+            let amount = gap * diffuse * friction;
             total_out = total_out + amount;
             candidates.push((n_cell, amount));
         }
@@ -422,7 +454,7 @@ pub(crate) fn step_growth(
     for (cell, delta) in transfers {
         let cur = pops.get(&cell).copied().unwrap_or(Real::ZERO);
         let next = (cur + delta).max(Real::ZERO);
-        if next > Real::from_ratio(1, 10) {
+        if next > Real::from_ratio(NOMAD_PRESENCE_EPSILON.0, NOMAD_PRESENCE_EPSILON.1) {
             pops.insert(cell, next);
         } else {
             pops.remove(&cell);
@@ -566,19 +598,106 @@ fn decay_for_tier(tier: u32) -> Real {
     }
 }
 
-/// Per-species multiplier on the baseline diffusion rate. A
-/// species' generational turnover sets how often bands fission
-/// and emigrate to a neighbouring cell, so diffusion scales as
-/// `BASELINE_LIFESPAN / lifespan_years`. Clamped `[0.25, 4.0]` so
-/// pathological short / long lifespans don't blow up the per-tick
-/// budget. A 4-yr r-strategist hits the upper cap at 4×; a 200-yr
-/// K-strategist lands at 0.4× and crawls; an 80-yr baseline
-/// species runs at 1.0×.
-pub(super) fn lifespan_diffusion_scale(lifespan_years: Real) -> Real {
-    let baseline = Real::from_int(NOMAD_DIFFUSION_BASELINE_LIFESPAN_YEARS);
-    let lifespan = lifespan_years.max(Real::ONE);
-    let raw = baseline / lifespan;
-    let lo = Real::percent(25);
-    let hi = Real::from_int(4);
-    raw.max(lo).min(hi)
+/// Characteristic dispersal distance (km) a band's descendants
+/// resettle over one generation, by locomotion mode. Scales off the
+/// terrestrial-walker baseline: flight ranges farthest, open-water
+/// swimming and amphibious movement reach further than walking, and
+/// burrowers / endoliths creep. This `L` feeds the dispersal
+/// coefficient `D = L²/(4·T_gen)`.
+pub(super) fn dispersal_km_per_generation(habitat: Habitat) -> Real {
+    let base = Real::from_int(DISPERSAL_KM_PER_GEN_BASELINE);
+    let scale = match habitat {
+        Habitat::Airborne => Real::from_int(4),
+        Habitat::Aquatic => Real::from_int(2),
+        Habitat::Amphibious => Real::from_ratio(3, 2),
+        Habitat::Terrestrial => Real::ONE,
+        // Burrowers / rock-borers advance through the substrate, not
+        // across it — far slower than a surface walker.
+        Habitat::Subterranean | Habitat::Endolithic => Real::from_ratio(1, 4),
+    };
+    base * scale
+}
+
+/// Per-tick, per-neighbour migration fraction — the physical wave of
+/// advance. A species' descendants resettle `L =
+/// dispersal_km_per_generation` over one generation `T_gen`, giving
+/// an ecological diffusion coefficient `D = L²/(4·T_gen)` (km²/yr). On
+/// a grid whose cells span `cell_area` km² (derived from the planet's
+/// real radius), the explicit-diffusion fraction crossing one cell
+/// boundary per tick is `D·Δt / cell_area`, with `Δt = 1/12 yr` (one
+/// month). The result is tiny (≈10⁻⁶) compared with the old flat
+/// 1%/tick, so a continent fills over millennia and long-lived,
+/// slow-maturing or coarse-cell species crawl while fast-maturing
+/// r-strategists on small worlds spread quickly — all emergent, no
+/// privileged constant.
+pub(super) fn dispersal_fraction(
+    planet: &sim_world::Planet,
+    grid: &sim_physics::HexGrid,
+    habitat: Habitat,
+    biology: &sim_species::PopulationBiology,
+    lifespan_years: Real,
+) -> Real {
+    let months_per_year =
+        Real::from_int(i64::try_from(protocol::BASELINE_MONTHS_PER_YEAR).unwrap_or(12));
+    let generation_ticks =
+        sim_population::PopulationDynamics::generation_ticks(biology, lifespan_years);
+    let generation_years = generation_ticks / months_per_year;
+    let l = dispersal_km_per_generation(habitat);
+    // D = L² / (4 · T_gen)  [km²/yr]
+    let d = (l * l) / (Real::from_int(4) * generation_years);
+    // cell_area = 4π R² / num_cells   [km²]
+    let r_km = planet.radius * Real::from_int(EARTH_RADIUS_KM);
+    let four_pi = Real::from_ratio(12_566, 1_000);
+    let surface = four_pi * r_km * r_km;
+    let num_cells = Real::from_int(i64::from(grid.width()) * i64::from(grid.height())).max(Real::ONE);
+    let cell_area = surface / num_cells;
+    // dt = one tick = 1/months_per_year of a year.
+    let dt = Real::ONE / months_per_year;
+    (d * dt) / cell_area.max(Real::ONE)
+}
+
+/// Fraction of the nominal flow that crosses into a *wrong-biome*
+/// (transit) neighbour, before the elevation penalty. Crossing
+/// inhospitable terrain — open water for a walker, land for a swimmer
+/// — is slow and costly but not impossible for a transit-capable
+/// (tier ≥ 1 / innately-flighted) species; the caller already gates
+/// *whether* transit is allowed, and per-tier decay attrits the pop
+/// mid-crossing. This is deliberately *not* the destination's habitat
+/// suitability (which is ~0 for deep ocean) — that would conflate
+/// "can't settle here" with "can't cross here" and block boats /
+/// flight entirely.
+pub(crate) const TRANSIT_FRICTION: (i64, i64) = (1, 10);
+
+/// Per-source→neighbour migration friction in `(0, 1]`: the fraction
+/// of the nominal flow that actually crosses this boundary, combining
+/// terrain attractiveness with an elevation-difference penalty (a
+/// steep climb or drop slows the front). For a *habitat-matching*
+/// neighbour the attractiveness is the destination glyph's habitat
+/// suitability (coast richest, peaks marginal); for a *wrong-biome*
+/// neighbour it's the flat `TRANSIT_FRICTION` crossing cost. Flat,
+/// in-habitat steps run at ~1.0.
+pub(super) fn terrain_friction(
+    state: &sim_physics::PhysicsState,
+    planet: &sim_world::Planet,
+    source: u32,
+    neighbour: u32,
+    habitat: Habitat,
+) -> Real {
+    let attractiveness = if is_habitat_match(state, planet, neighbour, habitat) {
+        let glyph = sim_world::terrain_glyph_at(state, planet, neighbour);
+        sim_species::habitat_glyph_multiplier(habitat, glyph)
+    } else {
+        Real::from_ratio(TRANSIT_FRICTION.0, TRANSIT_FRICTION.1)
+    };
+    let elevation = state.elevation();
+    let (src_idx, ngh_idx) = (source as usize, neighbour as usize);
+    let elev_factor = match (elevation.get(src_idx), elevation.get(ngh_idx)) {
+        (Some(&a), Some(&b)) => {
+            let delta = if a >= b { a - b } else { b - a };
+            let scale = Real::from_int(ELEV_FRICTION_HALF_M);
+            scale / (scale + delta)
+        }
+        _ => Real::ONE,
+    };
+    attractiveness * elev_factor
 }
