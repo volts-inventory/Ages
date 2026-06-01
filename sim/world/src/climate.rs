@@ -158,20 +158,34 @@ pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
     // equatorial vs polar cells on planets with narrow gradients.
     let (low_k_i, high_k_i) = planet.metabolic_substrate.temperature_range();
     let low_k = Real::from_int(low_k_i);
-    let high_k = Real::from_int(high_k_i);
+    // Cap the hot end at the solvent's *pressure-adjusted* boil point.
+    // The broad biochemical band (e.g. aqueous 250-400 K) assumes the
+    // solvent is liquid, but on a thin-atmosphere world water can boil
+    // at, say, 337 K — above that there is no liquid medium for the
+    // chemistry at all, so the band's nominal hot end (400 K) wildly
+    // overstates viability. The true ceiling is whichever is lower.
+    let boil = crate::habitability::effective_boil_k(planet);
+    let high_k = Real::from_int(high_k_i).min(boil);
     if temperature_k >= low_k && temperature_k <= high_k {
         return Real::ONE;
     }
-    // Outside the substrate band: decay linearly over the same
-    // band-width again before hitting the floor. So a substrate
-    // with a 150 K band tolerates ~150 K of overshoot before
-    // capacity drops to the 0.30 floor.
     let band = (high_k - low_k).max(Real::from_int(10));
-    let overshoot = if temperature_k < low_k {
-        low_k - temperature_k
-    } else {
-        temperature_k - high_k
-    };
+    if temperature_k > high_k {
+        // Hotter than the liquid ceiling. Past the boil point the
+        // solvent has boiled off, so capacity collapses to zero over a
+        // narrow margin — and unlike the cold side there is *no* 0.30
+        // survival floor, because a baked, solvent-free surface
+        // supports essentially no life of this chemistry. (This is what
+        // makes a scorched, boiled-dry world read barren rather than
+        // sustaining a thriving biosphere at lethal temperatures.)
+        let margin = (band / Real::from_int(4)).max(Real::from_int(8));
+        let overshoot = temperature_k - high_k;
+        return (Real::ONE - overshoot / margin).clamp01();
+    }
+    // Colder than the band: decay linearly over the band-width toward
+    // the 0.30 survival floor (a frozen world still has sheltered
+    // liquid niches, so the cold side keeps the floor).
+    let overshoot = low_k - temperature_k;
     let floor = Real::from_ratio(3, 10);
     let span = Real::ONE - floor;
     let normalised = (overshoot / band).clamp01();

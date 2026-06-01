@@ -45,16 +45,30 @@ const VEGETATION_EMIT_TICKS: u64 = 12;
 /// substrate-tinted vegetation colours so land reads as alive only
 /// where producers actually stand.
 ///
-/// Normalised against the *densest* producer cell on the planet so
-/// the map shows the spatial structure of life — where the biosphere
-/// concentrates vs. where it thins to barren — rather than washing the
-/// whole grid to one shade. (Normalising against the planet's own mean
-/// producer capacity is what we *don't* do: producer biomass tracks
-/// that capacity, so it pins almost every cell to the ceiling and
-/// erases the gradient.) A planet with no extant producers returns an
-/// all-zero index so a dead world reads barren rather than green;
-/// `n_cells == 0` returns empty (legacy-palette fallback).
-pub(crate) fn cell_producer_index_q32(eco: &PlanetEcosystem) -> Vec<i64> {
+/// Two factors combine:
+/// 1. **Spatial structure** — biomass normalised against the *densest*
+///    producer cell, so the map shows where the biosphere concentrates
+///    vs. thins. (Normalising against the planet's own mean producer
+///    capacity is what we *don't* do: producer biomass tracks that
+///    capacity, so it pins almost every cell to the ceiling and erases
+///    the gradient.)
+/// 2. **Thermal/solvent viability** — multiplied by the cell's
+///    `seasonal_capacity_factor` (boil-capped, hot side → 0). A
+///    scorched, boiled-dry world has high producer biomass in the raw
+///    ecosystem (the biomass step doesn't model lethal heat), but no
+///    *standing* surface life — so the gate forces those cells barren
+///    even when biomass fell back to a uniform spread. This is what
+///    makes a 378 K world with its oceans boiled off read as baked
+///    rock rather than temperate green.
+///
+/// A planet with no extant producers returns an all-zero index so a
+/// dead world reads barren; `n_cells == 0` returns empty (legacy-
+/// palette fallback).
+pub(crate) fn cell_producer_index_q32(
+    eco: &PlanetEcosystem,
+    state: &PhysicsState,
+    planet: &sim_world::Planet,
+) -> Vec<i64> {
     let n = eco.n_cells;
     if n == 0 {
         return Vec::new();
@@ -77,10 +91,29 @@ pub(crate) fn cell_producer_index_q32(eco: &PlanetEcosystem) -> Vec<i64> {
         // renderer paints barren, not the legacy elevation green.
         return vec![0; n];
     }
-    per_cell
-        .into_iter()
-        .map(|p| (p / peak).clamp01().raw().to_bits())
+    let temps = state.temperature();
+    (0..n)
+        .map(|cell| {
+            let structure = (per_cell[cell] / peak).clamp01();
+            let cell_temp = temps.get(cell).copied().unwrap_or(planet.mean_temperature);
+            let thermal = sim_world::seasonal_capacity_factor(cell_temp, planet);
+            (structure.saturating_mul(thermal)).raw().to_bits()
+        })
         .collect()
+}
+
+/// Live area-mean of the planet's surface-temperature field. Simple
+/// cell mean (hex cells are near-equal-area on the torus grid) — the
+/// value the viewport shows as the world's *current* temperature, as
+/// distinct from the sampled `Planet` mean it drifts away from.
+pub(crate) fn mean_surface_temperature(state: &PhysicsState) -> Real {
+    let temps = state.temperature();
+    let n = temps.len();
+    if n == 0 {
+        return Real::ZERO;
+    }
+    let sum = temps.iter().copied().fold(Real::ZERO, |a, b| a + b);
+    sum / Real::from_int(n as i64)
 }
 
 /// Per-run mutable state threaded across ticks. Built once by
@@ -316,7 +349,11 @@ pub(crate) fn run_tick<E: Emitter>(
     if tick % VEGETATION_EMIT_TICKS == 0 {
         emitter.emit(&Event::CellBiomass(protocol::CellBiomass {
             tick,
-            producer_index_q32: cell_producer_index_q32(&rs.ecosystem),
+            producer_index_q32: cell_producer_index_q32(&rs.ecosystem, &rs.state, &rs.planet),
+        }))?;
+        emitter.emit(&Event::ClimateSample(protocol::ClimateSample {
+            tick,
+            mean_temperature_q32: mean_surface_temperature(&rs.state).raw().to_bits(),
         }))?;
     }
     // Speciation + HGT. See `lib.rs` original for full rationale.

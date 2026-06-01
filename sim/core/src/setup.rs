@@ -285,7 +285,13 @@ pub(crate) fn setup_run<E: Emitter>(
     // updates arrive on the yearly cadence from `run_tick`.
     emitter.emit(&Event::CellBiomass(protocol::CellBiomass {
         tick: 0,
-        producer_index_q32: crate::run_tick::cell_producer_index_q32(&ecosystem),
+        producer_index_q32: crate::run_tick::cell_producer_index_q32(&ecosystem, &state, &planet),
+    }))?;
+    emitter.emit(&Event::ClimateSample(protocol::ClimateSample {
+        tick: 0,
+        mean_temperature_q32: crate::run_tick::mean_surface_temperature(&state)
+            .raw()
+            .to_bits(),
     }))?;
     let mut laws = build_laws(&planet, cfg.grid_height);
     laws.magnetism.init_field(&mut state);

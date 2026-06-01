@@ -78,6 +78,12 @@ impl<W: Write> ViewportEmitter<W> {
                     .map(|&raw| q32_to_f64(raw))
                     .collect();
             }
+            Event::ClimateSample(c) => {
+                // Live area-mean surface temperature; drives the card,
+                // badge, and surface phase so a drifting world shows its
+                // current climate rather than its sampled mean.
+                self.live_mean_temperature_k = Some(crate::q32::q32_to_f64(c.mean_temperature_q32));
+            }
             Event::Planet(p) => {
                 self.planet = Some(p.clone());
             }

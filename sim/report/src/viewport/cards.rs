@@ -51,12 +51,30 @@ impl<W: Write> ViewportEmitter<W> {
         (f * (1.0 + perturb), boil_k)
     }
 
+    /// The planet's *current* mean surface temperature (Kelvin): the
+    /// live `ClimateSample` value once one has arrived, else the sampled
+    /// `Planet` mean. Everything climate-facing on the card (badge,
+    /// archetype, displayed temperature, surface phase) reads this so a
+    /// world that has cooled or warmed away from its sampled mean shows
+    /// its real, current state.
+    pub(super) fn current_mean_t_k(&self) -> Option<f64> {
+        use crate::q32::q32_to_f64;
+        self.live_mean_temperature_k
+            .or_else(|| self.planet.as_ref().map(|p| q32_to_f64(p.mean_temperature_q32)))
+    }
+
     /// Coarse surface-physics state for the active planet — used by
     /// `layout::render` to pick the right terrain glyph set
-    /// (Earthlike / Lava / IceCap).
+    /// (Earthlike / Lava / IceCap / Scorched). Keyed on the *live*
+    /// temperature so a cooled world's basins recondense and a heated
+    /// one bakes, rather than being pinned to the sampled mean.
     pub(super) fn surface_phase(&self) -> SurfacePhase {
         let (freeze_k, boil_k) = self.substrate_range_k();
-        crate::render::surface_phase(self.planet.as_ref(), freeze_k, boil_k)
+        let Some(p) = self.planet.as_ref() else {
+            return SurfacePhase::default();
+        };
+        let t = self.current_mean_t_k().unwrap_or(0.0);
+        crate::render::surface_phase_at(t, p.metabolic_substrate.as_str(), freeze_k, boil_k)
     }
 
     /// Format the planet card for the top of the viewport. Two
@@ -74,7 +92,13 @@ impl<W: Write> ViewportEmitter<W> {
         // species section (see `species_card()`). The planet card
         // covers only the *world* — type, climate, orbital
         // mechanics.
-        let mean_t_k = q32_to_f64(p.mean_temperature_q32);
+        // Live mean temperature (drifts from the sampled `Planet` mean
+        // as the physics evolves) drives the badge, archetype, and
+        // displayed climate. `sampled_t_k` is kept only to show a drift
+        // arrow so a reader can see the world warming or cooling away
+        // from where it started.
+        let sampled_t_k = q32_to_f64(p.mean_temperature_q32);
+        let mean_t_k = self.current_mean_t_k().unwrap_or(sampled_t_k);
         // Substrate freeze/boil come from the captured
         // `RunMetadata` event (sourced upstream from
         // `sim_physics::chemistry::substrate_properties`).
@@ -126,6 +150,17 @@ impl<W: Write> ViewportEmitter<W> {
         // (reads better than "none mag").
         let mean_t_display = self.cfg.temperature_unit.from_kelvin(mean_t_k);
         let temp_suffix = self.cfg.temperature_unit.suffix();
+        // Drift arrow: has the live climate moved off the sampled mean?
+        // `↓` cooling (e.g. a thin-atmosphere world bleeding heat),
+        // `↑` warming, blank within ±2 K. Lets the "scorched at birth,
+        // cools into habitability" arc read at a glance.
+        let temp_trend = if mean_t_k < sampled_t_k - 2.0 {
+            "↓"
+        } else if mean_t_k > sampled_t_k + 2.0 {
+            "↑"
+        } else {
+            ""
+        };
         let mag_label = if p.magnetosphere == "none" {
             "no"
         } else {
@@ -134,7 +169,7 @@ impl<W: Write> ViewportEmitter<W> {
         let atm_desc = atmosphere_descriptor(p.atmosphere.as_str());
         let _ = writeln!(
             s,
-            "{atm_desc} · {mean_t_display:.0}{temp_suffix} · {mag_label} mag",
+            "{atm_desc} · {mean_t_display:.0}{temp_suffix}{temp_trend} · {mag_label} mag",
         );
         // Atmospheric composition — top three channels by
         // mass fraction, e.g. `78%N₂ 21%O₂ 1%Ar`. Skipped on

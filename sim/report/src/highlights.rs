@@ -159,6 +159,7 @@ fn score(ev: &Event, digest: &Digest) -> Option<f64> {
         | Event::Planet(_)
         | Event::PlanetMap(_)
         | Event::CellBiomass(_)
+        | Event::ClimateSample(_)
         | Event::Species(_)
         | Event::RunStart(_)
         | Event::RunEnd { .. }

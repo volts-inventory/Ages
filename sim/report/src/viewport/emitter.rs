@@ -60,6 +60,13 @@ pub struct ViewportEmitter<W: Write> {
     /// vegetation rather than elevation. Empty until the first
     /// `CellBiomass` arrives.
     pub(super) producer_index: Vec<f64>,
+    /// Live area-mean surface temperature (Kelvin), mirrored from the
+    /// latest `ClimateSample`. The planet card, scorched/habitable
+    /// badge, and surface-phase rendering read this so a world that has
+    /// drifted from its sampled mean shows its *current* climate.
+    /// `None` until the first sample (then the card falls back to the
+    /// sampled `Planet` mean).
+    pub(super) live_mean_temperature_k: Option<f64>,
     /// Per-civ sidebar / log state — name, founding year, cosmology
     /// + religion snapshots, tech tier, tools, cohesion, life
     /// expectancy, last unlocked tool. All entries cleared together
@@ -162,6 +169,7 @@ impl<W: Write> ViewportEmitter<W> {
             civs: BTreeMap::new(),
             nomad_cells: BTreeSet::new(),
             producer_index: Vec::new(),
+            live_mean_temperature_k: None,
             nomad_total_pop: 0.0,
             civ_state: BTreeMap::new(),
             current_tick: 0,

@@ -159,6 +159,7 @@ impl Emitter for CountingEmitter {
             Event::Planet(_) => "planet",
             Event::PlanetMap(_) => "planet_map",
             Event::CellBiomass(_) => "cell_biomass",
+            Event::ClimateSample(_) => "climate_sample",
             Event::Species(_) => "species",
             Event::FigureBorn(_) => "figure_born",
             Event::TechUnlocked(_) => "tech_unlocked",
