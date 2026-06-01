@@ -112,15 +112,27 @@ impl Law for VerticalConvection {
         }
         let mut surface_next = surface.clone();
         for i in 0..n {
-            // Convective heat exchange: closes the gap each tick.
+            // Convective heat exchange warms the upper layer toward the
+            // surface. NOTE: this no longer *cools the surface*. The
+            // surface energy budget is owned by `Radiation`, whose
+            // per-cell equilibrium `t_eq` already balances absorbed
+            // shortwave against emitted longwave (including the
+            // convective + radiative losses implicit in the greenhouse
+            // offset). Subtracting a convective/radiative-to-space sink
+            // here too double-counted the surface's heat loss, pulling
+            // every world tens of K below its radiative equilibrium and
+            // tipping otherwise-temperate planets into a permanent
+            // snowball. VerticalConvection now only *diagnoses* the
+            // upper layer (the lapse rate clouds/cirrus read) and the
+            // vertical-velocity proxy — it redistributes into the upper
+            // layer and radiates that to space, but the surface relaxes
+            // to `t_eq` under Radiation alone.
             let gap = surface[i] - upper_next[i];
             let xfer = exchange * gap;
-            surface_next[i] = surface_next[i] - xfer;
             upper_next[i] = upper_next[i] + xfer;
-            // Radiative loss of the upper layer toward space.
-            // Drives the steady-state lapse rate by pulling
-            // upper-T below surface-T even after convective
-            // equilibration.
+            // Radiative loss of the upper layer toward space. Drives the
+            // steady-state lapse rate by pulling upper-T below surface-T
+            // even after convective equilibration.
             let space_gap = upper_next[i] - space_t;
             upper_next[i] = upper_next[i] - radiative * space_gap;
         }
