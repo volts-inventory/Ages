@@ -20,6 +20,15 @@ use sim_arith::Real;
 /// than an entry in the linear draw order.
 const LOCKING_SALT: u64 = 0x4C6F_636B_696E_6721; // "Locking!" ASCII
 
+/// Grid height used when deriving a planet's `mean_temperature` from
+/// the radiative-equilibrium table at build time. Mirrors the
+/// `SimConfig` default (`grid_height = 8`) so the planet's stated mean
+/// matches the temperature the runtime field settles toward. The
+/// area-and-season mean of the equilibrium table is nearly
+/// resolution-independent (it averages a cosine-latitude profile), so
+/// runs at a non-default height drift only negligibly.
+const NOMINAL_GRID_HEIGHT: u32 = 8;
+
 /// Sample a deterministic Planet from a seed. Same seed → identical
 /// Planet bit-for-bit. All quantities are in SI units.
 ///
@@ -192,7 +201,7 @@ fn apply_overrides(planet: &mut Planet, seed: u64, o: &PlanetOverrides) {
 /// Consumes no RNG — applied between temperature sampling and the
 /// composition-keyed terrain draws — so only genuinely-inconsistent
 /// seeds shift; every other seed's planet is byte-identical.
-fn reconcile_composition_with_temperature(
+pub(crate) fn reconcile_composition_with_temperature(
     composition: Composition,
     substrate: MetabolicSubstrate,
     mean_temperature: Real,
@@ -280,29 +289,104 @@ pub fn sample_planet(seed: u64) -> Planet {
         MetabolicSubstrate::Silicate => Composition::Rocky,
     };
 
-    // Mean surface temperature in K, constrained by the substrate's
-    // liquid-phase window. The substrate's `temperature_range()` is
-    // the source of truth; sampling within it guarantees the
-    // chemistry is biochemically viable on this planet.
-    let (t_lo_k, t_hi_k) = metabolic_substrate.temperature_range();
-    let mean_temperature = Real::from_int(rng.gen_range(t_lo_k..=t_hi_k));
+    // ---- Stellar irradiance, atmosphere, and the radiative
+    // equilibrium temperature it produces -------------------------
+    //
+    // Atmosphere (albedo + greenhouse), axial tilt, orbital
+    // eccentricity, and stellar irradiance are sampled up-front here
+    // because the planet's mean surface temperature is no longer drawn
+    // independently — it is *derived* from the same radiative balance
+    // the per-tick `Radiation` law integrates
+    // (`sim_physics::equilibrium_mean_k`). That keeps the stated mean
+    // and the physics in lockstep: the surface field no longer drifts
+    // away from a temperature that was sampled with no regard for how
+    // much sunlight the world actually receives.
 
-    // Reconcile the planet type with the just-sampled temperature so
-    // terrain and climate agree (e.g. a hothouse "sub-surface ocean").
-    // Done before the composition-keyed sea_level / terrain_peak draws
-    // so the corrected type drives the terrain ranges; consumes no RNG
-    // so unaffected seeds stay byte-identical.
+    // Atmosphere class — sets albedo + greenhouse, biased per substrate.
+    let atmosphere = match metabolic_substrate {
+        MetabolicSubstrate::Aqueous => match rng.gen_range(0..20) {
+            0..=2 => Atmosphere::Thin,
+            3..=9 => Atmosphere::Oxidising,
+            10..=14 => Atmosphere::Reducing,
+            _ => Atmosphere::Hazy,
+        },
+        MetabolicSubstrate::Ammoniacal => match rng.gen_range(0..10) {
+            0..=6 => Atmosphere::Reducing,
+            _ => Atmosphere::Thin,
+        },
+        MetabolicSubstrate::Hydrocarbon => match rng.gen_range(0..10) {
+            0..=4 => Atmosphere::Reducing,
+            5..=7 => Atmosphere::Hazy,
+            _ => Atmosphere::Thin,
+        },
+        MetabolicSubstrate::Silicate => match rng.gen_range(0..10) {
+            0..=2 => Atmosphere::None,
+            3..=5 => Atmosphere::Thin,
+            6..=7 => Atmosphere::Oxidising,
+            _ => Atmosphere::Hazy,
+        },
+    };
+
+    // Axial tilt (degrees, 0-45). Also feeds the equator-to-pole
+    // gradient bracket below; kept integer for the deterministic path.
+    let axial_tilt_pre_int: i64 = rng.gen_range(0..=45);
+
+    // Orbital eccentricity ×100. Most worlds near-circular; a tail of
+    // eccentric orbits swings the perihelion/aphelion insolation.
+    //   - 70%: e ∈ [0, 0.05]   (Earth-like)
+    //   - 25%: e ∈ [0.05, 0.30] (Mars/Mercury-like)
+    //   - 5%:  e ∈ [0.30, 0.60] (highly eccentric)
+    let orbital_eccentricity_x100 = match rng.gen_range(0..100) {
+        0..=69 => rng.gen_range(0..=5),
+        70..=94 => rng.gen_range(5..=30),
+        _ => rng.gen_range(30..=60),
+    };
+
+    // Stellar irradiance at the planet, W/m² (Earth ≈ 1361). Sampled
+    // per substrate so the *derived* equilibrium lands near — but not
+    // rigidly inside — that chemistry's liquid band: most worlds come
+    // out habitable, a minority too hot (Venus-like, born scorched) or
+    // too cold (frozen), as in reality. Silicate worlds sit on tight,
+    // fiercely-irradiated orbits (lava worlds need ~10^5–10^6 W/m² to
+    // reach 800-1500 K); hydrocarbon worlds on cold, distant ones
+    // (Titan-like, tens of W/m²).
+    // Bands are tuned against each solvent's *actual* liquid window
+    // (e.g. methane is liquid only ~91-112 K, far narrower than the
+    // hydrocarbon substrate's nominal 90-180 K range), measured by the
+    // `examples/sweep` habitability probe.
+    let stellar_luminosity = Real::from_int(match metabolic_substrate {
+        // Targets are the solvent's *true* liquid window (water 273-373,
+        // ammonia 195-240, methane 91-112, molten silicate 1687-3538 K),
+        // not the substrate's looser nominal band.
+        MetabolicSubstrate::Aqueous => rng.gen_range(1_200..=4_500),
+        MetabolicSubstrate::Ammoniacal => rng.gen_range(400..=850),
+        MetabolicSubstrate::Hydrocarbon => rng.gen_range(8..=18),
+        MetabolicSubstrate::Silicate => rng.gen_range(4_000_000..=15_000_000),
+    });
+
+    // Mean surface temperature, *derived* from the radiative balance
+    // (irradiance × (1 − albedo) + greenhouse) via the same table the
+    // `Radiation` law integrates — not sampled independently. Uses the
+    // default sim grid height so the planet-build mean matches the
+    // runtime field's settling point.
+    let albedo_x100 = crate::atmosphere_albedo_x100(atmosphere);
+    let greenhouse_k = crate::atmosphere_greenhouse_k(atmosphere);
+    let mean_temperature = sim_physics::equilibrium_mean_k(
+        NOMINAL_GRID_HEIGHT,
+        stellar_luminosity,
+        albedo_x100,
+        greenhouse_k,
+        axial_tilt_pre_int,
+        orbital_eccentricity_x100,
+    );
+
+    // Reconcile the planet type with the derived temperature so terrain
+    // and climate agree (e.g. a boiled-dry "sub-surface ocean" becomes
+    // Rocky). Done before the composition-keyed sea_level / terrain_peak
+    // draws so the corrected type drives the terrain ranges; consumes no
+    // RNG.
     let composition =
         reconcile_composition_with_temperature(composition, metabolic_substrate, mean_temperature);
-
-    // Equator-to-pole temperature spread in K, weakly
-    // correlated with axial tilt. High-tilt worlds have wider
-    // gradients (solar irradiance concentrates at the sub-solar
-    // latitude band); low-tilt worlds get a narrower gradient.
-    // Pre-sample tilt in i64 so the gradient bracket can derive
-    // from it without f64 round-trip (the deterministic path
-    // stays integer / Q32.32-only).
-    let axial_tilt_pre_int: i64 = rng.gen_range(0..=45);
     // Linear interpolation: at tilt=0 → [5,25]; at tilt=45 → [20,50].
     // Computed integer-only: bracket_lo = 5 + (15 * tilt / 45),
     // bracket_hi = 25 + (25 * tilt / 45).
@@ -370,35 +454,9 @@ pub fn sample_planet(seed: u64) -> Planet {
     let terrain_centre_q = rng.gen_range(0..32);
     let terrain_centre_r = rng.gen_range(0..32);
 
-    // Atmosphere is sampled within the substrate's compatibility
-    // window so the substrate-first contract holds. Aqueous picks
-    // any-non-None; Ammoniacal picks Reducing/Thin; Hydrocarbon
-    // picks Reducing/Hazy/Thin; Silicate is the only substrate
-    // that admits Atmosphere::None (silicon-substrate life doesn't
-    // need a fluid solvent atmosphere).
-    let atmosphere = match metabolic_substrate {
-        MetabolicSubstrate::Aqueous => match rng.gen_range(0..20) {
-            0..=2 => Atmosphere::Thin,
-            3..=9 => Atmosphere::Oxidising,
-            10..=14 => Atmosphere::Reducing,
-            _ => Atmosphere::Hazy,
-        },
-        MetabolicSubstrate::Ammoniacal => match rng.gen_range(0..10) {
-            0..=6 => Atmosphere::Reducing,
-            _ => Atmosphere::Thin,
-        },
-        MetabolicSubstrate::Hydrocarbon => match rng.gen_range(0..10) {
-            0..=4 => Atmosphere::Reducing,
-            5..=7 => Atmosphere::Hazy,
-            _ => Atmosphere::Thin,
-        },
-        MetabolicSubstrate::Silicate => match rng.gen_range(0..10) {
-            0..=2 => Atmosphere::None,
-            3..=5 => Atmosphere::Thin,
-            6..=7 => Atmosphere::Oxidising,
-            _ => Atmosphere::Hazy,
-        },
-    };
+    // Atmosphere, axial tilt, eccentricity and stellar irradiance were
+    // sampled up-front (they drive the derived mean temperature); see
+    // the radiative-equilibrium block near the top of `sample_planet`.
 
     // Biosphere — never None now. The substrate guarantees the
     // chemistry is viable in the sampled (atmosphere, temperature)
@@ -417,17 +475,8 @@ pub fn sample_planet(seed: u64) -> Planet {
     // small Earth-system-inspired set) and a randomly varied
     // mass. Multi-moon planets get genuinely interfering tides;
     // the seed-driven `gen_range` keeps this deterministic.
-    // Orbital eccentricity. Most worldgen samples produce
-    // near-circular orbits (Earth-like); ~10% of planets get a
-    // moderately-eccentric orbit (e ≤ 0.30). Ranges:
-    //   - 70%: e ∈ [0, 0.05] (Earth-like + low-eccentricity)
-    //   - 25%: e ∈ [0.05, 0.30] (Mars-Mercury-like)
-    //   - 5%:  e ∈ [0.30, 0.60] (highly eccentric exoplanet)
-    let orbital_eccentricity_x100 = match rng.gen_range(0..100) {
-        0..=69 => rng.gen_range(0..=5),
-        70..=94 => rng.gen_range(5..=30),
-        _ => rng.gen_range(30..=60),
-    };
+    // (Orbital eccentricity was sampled up-front with the other
+    // radiative-equilibrium inputs.)
     let moons: Vec<Moon> = (0..moon_count)
         .map(|i| {
             let period = match i {
@@ -486,8 +535,8 @@ pub fn sample_planet(seed: u64) -> Planet {
         _ => Magnetosphere::Strong,
     };
 
-    // Stellar irradiance in W/m² at the planet (Earth ≈ 1361).
-    let stellar_luminosity = Real::from_int(rng.gen_range(200..=3_000));
+    // (Stellar irradiance `stellar_luminosity` was sampled up-front
+    // with the other radiative-equilibrium inputs.)
 
     // Planet orbital distance in AU (Earth = 1.0). Sampled per
     // substrate as a small AU band: aqueous worlds cluster near
@@ -812,7 +861,8 @@ pub fn sample_planet(seed: u64) -> Planet {
     // world far past the outer edge) starts at a degraded biosphere
     // tier. The per-tick `cell_habitability` scalar then continues
     // to drift as the star ages and the HZ edges migrate.
-    let biosphere = apply_hz_biosphere_drift(biosphere, &star, orbital_distance_au);
+    let biosphere =
+        apply_hz_biosphere_drift(biosphere, &star, orbital_distance_au, metabolic_substrate);
 
     Planet {
         seed,
@@ -878,8 +928,16 @@ pub(crate) fn apply_hz_biosphere_drift(
     biosphere: crate::BiosphereClass,
     star: &crate::Star,
     orbital_distance_au: Real,
+    substrate: MetabolicSubstrate,
 ) -> crate::BiosphereClass {
     use crate::BiosphereClass;
+    // Only liquid-water life is bounded by the classic HZ; non-aqueous
+    // chemistries are kept honest by the substrate-relative temperature
+    // check in `cell_habitability`, not the water HZ. (See the matching
+    // gate there.)
+    if substrate != MetabolicSubstrate::Aqueous {
+        return biosphere;
+    }
     let factor = crate::habitability::hz_factor(star, orbital_distance_au);
     if factor >= Real::from_ratio(5, 10) {
         return biosphere;

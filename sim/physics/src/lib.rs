@@ -71,7 +71,7 @@ pub use lorentz::Lorentz;
 pub use magnetism::{DipoleState, MagneticReversal, Magnetism};
 pub use mechanics::Mechanics;
 pub use orchestration::{integrate_civ_step, OrchestrationConfig, OrchestratorState};
-pub use radiation::{LockingMode, Radiation};
+pub use radiation::{equilibrium_mean_k, LockingMode, Radiation};
 pub use insolation::SolarInsolation;
 pub use resonance::ResonanceField;
 pub use surface_radiation::SurfaceRadiation;

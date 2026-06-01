@@ -45,7 +45,10 @@ mod star;
 mod tidal_locking;
 mod types;
 
-pub use climate::{seasonal_capacity_factor, seasonal_temperature_offset};
+pub use climate::{
+    atmosphere_albedo_x100, atmosphere_greenhouse_k, seasonal_capacity_factor,
+    seasonal_temperature_offset,
+};
 pub use hemisphere::{
     hemisphere_for_row, hemisphere_for_row_climate_legacy, Hemisphere,
 };

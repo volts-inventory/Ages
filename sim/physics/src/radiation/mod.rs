@@ -100,6 +100,7 @@ use greenhouse::{
 };
 use locking::{synchronous_day_factor, SubStellarTrig};
 
+pub use equilibrium::equilibrium_mean_k;
 pub use greenhouse::greenhouse_cap_scaled;
 pub use locking::LockingMode;
 

@@ -26,6 +26,7 @@
 //! inline `row_signed.signum()` call.
 
 use crate::hemisphere::{hemisphere_for_row_climate_legacy, Hemisphere};
+use crate::types::Atmosphere;
 use crate::Planet;
 use sim_arith::Real;
 
@@ -144,6 +145,38 @@ pub fn seasonal_temperature_offset(
 /// gets *narrow* productive zones — that planet's species is
 /// more thermally fragile, just as on Earth tropical species die
 /// faster outside their narrow comfort range than alpine species.
+/// Planet-wide albedo (×100, 0–100) implied by the atmosphere class.
+/// Single source of truth shared by world-gen (which derives the
+/// planet's mean temperature from the radiative balance) and the
+/// `sim_core` radiation law (which integrates that same balance each
+/// tick) — keeping them in lockstep so the stated mean and the
+/// physics agree. Earth's Bond albedo ≈ 0.30 → the Oxidising case.
+#[must_use]
+pub fn atmosphere_albedo_x100(atmosphere: Atmosphere) -> i64 {
+    match atmosphere {
+        Atmosphere::None => 10,
+        Atmosphere::Thin => 20,
+        Atmosphere::Oxidising => 30,
+        Atmosphere::Reducing => 35,
+        Atmosphere::Hazy => 50,
+    }
+}
+
+/// Additive greenhouse offset (K) implied by the atmosphere class —
+/// the planet-wide baseline warming folded into the radiative
+/// equilibrium before per-cell composition forcing. Shared with the
+/// `sim_core` radiation law for the same lockstep reason as
+/// [`atmosphere_albedo_x100`].
+#[must_use]
+pub fn atmosphere_greenhouse_k(atmosphere: Atmosphere) -> Real {
+    match atmosphere {
+        Atmosphere::None => Real::ZERO,
+        Atmosphere::Thin => Real::from_int(10),
+        Atmosphere::Oxidising | Atmosphere::Reducing => Real::from_int(35),
+        Atmosphere::Hazy => Real::from_int(60),
+    }
+}
+
 #[must_use]
 pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
     // Comfort band: the substrate's biochemistry-supporting
