@@ -102,18 +102,42 @@ pub(crate) fn cell_producer_index_q32(
         .collect()
 }
 
-/// Live area-mean of the planet's surface-temperature field. Simple
-/// cell mean (hex cells are near-equal-area on the torus grid) — the
-/// value the viewport shows as the world's *current* temperature, as
-/// distinct from the sampled `Planet` mean it drifts away from.
-pub(crate) fn mean_surface_temperature(state: &PhysicsState) -> Real {
+/// Surface-temperature summary for the climate card: `(mean, min, max,
+/// liveable_fraction)`. `min`/`max` are the pole/equator extremes (the
+/// honest range for an ice-capped world); `liveable_fraction` is the
+/// share of cells whose temperature sits in the substrate's liquid
+/// window `[freeze, effective_boil]` — the figure that tracks the
+/// biosphere as caps grow, where the cap-skewed mean misleads.
+pub(crate) fn surface_temperature_stats(
+    state: &PhysicsState,
+    planet: &sim_world::Planet,
+) -> (Real, Real, Real, Real) {
     let temps = state.temperature();
     let n = temps.len();
     if n == 0 {
-        return Real::ZERO;
+        return (Real::ZERO, Real::ZERO, Real::ZERO, Real::ZERO);
     }
-    let sum = temps.iter().copied().fold(Real::ZERO, |a, b| a + b);
-    sum / Real::from_int(n as i64)
+    let (freeze, _boil_base) =
+        sim_physics::chemistry::substrate_phase_thresholds(planet.metabolic_substrate.tag());
+    let boil = sim_world::effective_boil_k(planet);
+    let mut sum = Real::ZERO;
+    let mut mn = temps[0];
+    let mut mx = temps[0];
+    let mut liveable: i64 = 0;
+    for t in temps {
+        sum = sum + *t;
+        if *t < mn {
+            mn = *t;
+        }
+        if *t > mx {
+            mx = *t;
+        }
+        if *t >= freeze && *t <= boil {
+            liveable += 1;
+        }
+    }
+    let n_real = Real::from_int(n as i64);
+    (sum / n_real, mn, mx, Real::from_int(liveable) / n_real)
 }
 
 /// Per-run mutable state threaded across ticks. Built once by
@@ -351,9 +375,14 @@ pub(crate) fn run_tick<E: Emitter>(
             tick,
             producer_index_q32: cell_producer_index_q32(&rs.ecosystem, &rs.state, &rs.planet),
         }))?;
+        let (mean_t, min_t, max_t, liveable_frac) =
+            surface_temperature_stats(&rs.state, &rs.planet);
         emitter.emit(&Event::ClimateSample(protocol::ClimateSample {
             tick,
-            mean_temperature_q32: mean_surface_temperature(&rs.state).raw().to_bits(),
+            mean_temperature_q32: mean_t.raw().to_bits(),
+            min_temperature_q32: min_t.raw().to_bits(),
+            max_temperature_q32: max_t.raw().to_bits(),
+            liveable_fraction_q32: liveable_frac.raw().to_bits(),
         }))?;
     }
     // Speciation + HGT. See `lib.rs` original for full rationale.

@@ -110,7 +110,9 @@ impl Law for VerticalConvection {
                 upper_next[i] = surface_buf[i] - Real::from_int(30);
             }
         }
-        let mut surface_next = surface.clone();
+        // Surface is no longer modified here (Radiation owns it); kept as
+        // a read-only buffer for the post-step vertical-velocity gap.
+        let surface_next = surface.clone();
         for i in 0..n {
             // Convective heat exchange warms the upper layer toward the
             // surface. NOTE: this no longer *cools the surface*. The

@@ -67,6 +67,14 @@ pub struct ViewportEmitter<W: Write> {
     /// `None` until the first sample (then the card falls back to the
     /// sampled `Planet` mean).
     pub(super) live_mean_temperature_k: Option<f64>,
+    /// Live coldest/warmest cell temperatures (Kelvin) — the pole→equator
+    /// range — and the liveable surface fraction (`0..1`), mirrored from
+    /// the latest `ClimateSample`. The card shows the range + liveable %
+    /// so an ice-capped world (cold mean, warm equator) reads truthfully
+    /// rather than as uniformly frozen. `None` until the first sample.
+    pub(super) live_min_temperature_k: Option<f64>,
+    pub(super) live_max_temperature_k: Option<f64>,
+    pub(super) live_liveable_fraction: Option<f64>,
     /// Per-civ sidebar / log state — name, founding year, cosmology
     /// + religion snapshots, tech tier, tools, cohesion, life
     /// expectancy, last unlocked tool. All entries cleared together
@@ -170,6 +178,9 @@ impl<W: Write> ViewportEmitter<W> {
             nomad_cells: BTreeSet::new(),
             producer_index: Vec::new(),
             live_mean_temperature_k: None,
+            live_min_temperature_k: None,
+            live_max_temperature_k: None,
+            live_liveable_fraction: None,
             nomad_total_pop: 0.0,
             civ_state: BTreeMap::new(),
             current_tick: 0,

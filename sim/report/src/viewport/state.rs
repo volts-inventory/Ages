@@ -83,6 +83,10 @@ impl<W: Write> ViewportEmitter<W> {
                 // badge, and surface phase so a drifting world shows its
                 // current climate rather than its sampled mean.
                 self.live_mean_temperature_k = Some(crate::q32::q32_to_f64(c.mean_temperature_q32));
+                self.live_min_temperature_k = Some(crate::q32::q32_to_f64(c.min_temperature_q32));
+                self.live_max_temperature_k = Some(crate::q32::q32_to_f64(c.max_temperature_q32));
+                self.live_liveable_fraction =
+                    Some(crate::q32::q32_to_f64(c.liveable_fraction_q32));
             }
             Event::Planet(p) => {
                 self.planet = Some(p.clone());

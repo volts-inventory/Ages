@@ -207,6 +207,18 @@ pub struct CellBiomass {
 pub struct ClimateSample {
     pub tick: u64,
     pub mean_temperature_q32: i64,
+    /// Coldest cell (pole) surface temperature, `Q32.32` Kelvin. With
+    /// `max_temperature_q32` this is the planet's pole→equator range —
+    /// the honest summary of a world with ice caps, where the bare mean
+    /// reads "frozen" for a planet that's balmy at the equator.
+    pub min_temperature_q32: i64,
+    /// Warmest cell (equator) surface temperature, `Q32.32` Kelvin.
+    pub max_temperature_q32: i64,
+    /// Fraction of the surface (`0..1`, `Q32.32`) where the solvent is
+    /// liquid — temperature within `[freeze, effective_boil]` for the
+    /// planet's substrate. The number that actually tracks the biosphere
+    /// as polar ice caps grow, independent of the (cap-skewed) mean.
+    pub liveable_fraction_q32: i64,
 }
 
 /// Species-derivation event — emitted once at run start after the

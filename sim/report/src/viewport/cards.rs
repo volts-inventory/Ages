@@ -143,7 +143,16 @@ impl<W: Write> ViewportEmitter<W> {
         // surface-aware archetype (`ocean world` only when there
         // really is one) and follows with a one-word habitability
         // descriptor (e.g. `desert world · scorching`).
-        let _ = writeln!(s, "{ptype} · {badge_friendly}");
+        // Liveable surface fraction — the share of cells where the
+        // solvent is liquid. Sits next to the habitability badge because
+        // it's the quantitative companion to it: an ice-capped world
+        // reads "62% liveable" rather than letting the cap-skewed mean
+        // imply the whole planet is frozen.
+        let liveable_str = self
+            .live_liveable_fraction
+            .map(|f| format!(" · {:.0}% liveable", (f * 100.0).clamp(0.0, 100.0)))
+            .unwrap_or_default();
+        let _ = writeln!(s, "{ptype} · {badge_friendly}{liveable_str}");
         // Line 2 (climate): atmosphere · temperature ·
         // magnetosphere — the three "what's the air / sky like"
         // fields. `none` magnetosphere collapses to `no`
@@ -167,10 +176,21 @@ impl<W: Write> ViewportEmitter<W> {
             p.magnetosphere.as_str()
         };
         let atm_desc = atmosphere_descriptor(p.atmosphere.as_str());
-        let _ = writeln!(
-            s,
-            "{atm_desc} · {mean_t_display:.0}{temp_suffix}{temp_trend} · {mag_label} mag",
-        );
+        // Temperature reads as the pole→equator *range* once live field
+        // data has arrived — the honest summary of a world with ice caps,
+        // where a single mean reads "frozen" for a planet that's balmy at
+        // the equator. The trend arrow rides the warm end (the liveable
+        // band's fate). Falls back to the single mean for legacy logs
+        // that predate the min/max fields.
+        let temp_display = match (self.live_min_temperature_k, self.live_max_temperature_k) {
+            (Some(mn), Some(mx)) => {
+                let mn_d = self.cfg.temperature_unit.from_kelvin(mn);
+                let mx_d = self.cfg.temperature_unit.from_kelvin(mx);
+                format!("{mn_d:.0}–{mx_d:.0}{temp_suffix}{temp_trend}")
+            }
+            _ => format!("{mean_t_display:.0}{temp_suffix}{temp_trend}"),
+        };
+        let _ = writeln!(s, "{atm_desc} · {temp_display} · {mag_label} mag");
         // Atmospheric composition — top three channels by
         // mass fraction, e.g. `78%N₂ 21%O₂ 1%Ar`. Skipped on
         // vacuum (sum ≈ 0). Older event logs default all
