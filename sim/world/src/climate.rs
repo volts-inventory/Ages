@@ -166,21 +166,30 @@ pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
     // overstates viability. The true ceiling is whichever is lower.
     let boil = crate::habitability::effective_boil_k(planet);
     let high_k = Real::from_int(high_k_i).min(boil);
-    if temperature_k >= low_k && temperature_k <= high_k {
-        return Real::ONE;
-    }
     let band = (high_k - low_k).max(Real::from_int(10));
     if temperature_k > high_k {
-        // Hotter than the liquid ceiling. Past the boil point the
-        // solvent has boiled off, so capacity collapses to zero over a
-        // narrow margin — and unlike the cold side there is *no* 0.30
-        // survival floor, because a baked, solvent-free surface
-        // supports essentially no life of this chemistry. (This is what
-        // makes a scorched, boiled-dry world read barren rather than
-        // sustaining a thriving biosphere at lethal temperatures.)
-        let margin = (band / Real::from_int(4)).max(Real::from_int(8));
-        let overshoot = temperature_k - high_k;
-        return (Real::ONE - overshoot / margin).clamp01();
+        // Hotter than the liquid ceiling. At and above the solvent's
+        // (pressure-adjusted) boil point the solvent has boiled off, so
+        // there is *no* liquid medium for the chemistry and capacity is
+        // exactly zero — no grace margin, no survival floor. A cell only
+        // hotter than its boil point cannot host life of this substrate,
+        // whatever the planetary mean. This is what makes a scorched,
+        // boiled-dry world read barren — and what keeps life from
+        // "clinging on" above boiling until the surface actually cools
+        // below the boil point.
+        return Real::ZERO;
+    }
+    // Heat-stress ramp approaching the boil point *from below*: the last
+    // slice of the comfort band tapers to zero exactly at `high_k`, so a
+    // cell hovering just under boiling is already losing capacity rather
+    // than running flat-out right up to the phase transition.
+    let ceiling_margin = (band / Real::from_int(8)).max(Real::from_int(5));
+    if temperature_k > high_k - ceiling_margin {
+        let approach = high_k - temperature_k; // 0 at boil, `margin` below it
+        return (approach / ceiling_margin).clamp01();
+    }
+    if temperature_k >= low_k {
+        return Real::ONE;
     }
     // Colder than the band: decay linearly over the band-width toward
     // the 0.30 survival floor (a frozen world still has sheltered
