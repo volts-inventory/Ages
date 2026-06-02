@@ -547,9 +547,11 @@ impl Digest {
             }
             Event::Tick(_)
             | Event::Snapshot(_)
-            // Per-cell vegetation is a viewport-only colour signal; the
-            // monochrome markdown report doesn't consume it.
+            // Per-cell vegetation + live climate are viewport-only
+            // signals; the monochrome markdown report doesn't consume
+            // them.
             | Event::CellBiomass(_)
+            | Event::ClimateSample(_)
             | Event::MeasurementConfirmed(_)
             | Event::SpeciesNomadsChanged(_)
             | Event::SpeciesCosmologyBias(_)

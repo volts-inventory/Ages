@@ -146,10 +146,14 @@ fn sampled_planets_lie_in_si_ranges() {
         let g = p.gravity();
         assert!(g >= Real::ONE);
         assert!(g <= Real::from_int(60));
-        // Temperature spans every substrate's window:
-        // Hydrocarbon 90 K floor, Silicate 1500 K ceiling.
-        assert!(p.mean_temperature >= Real::from_int(90));
-        assert!(p.mean_temperature <= Real::from_int(1500));
+        // Mean temperature is now *derived* from the radiative balance
+        // (irradiance × albedo + greenhouse), so it spans from cold
+        // methane worlds (~80 K) up to molten-silicate lava worlds
+        // (the silicate solvent boils at 3538 K). Worlds are no longer
+        // pinned inside a substrate band — some come out scorched or
+        // frozen, as in reality.
+        assert!(p.mean_temperature >= Real::from_int(60));
+        assert!(p.mean_temperature <= Real::from_int(4_000));
         // Every seed produces a substrate-compatible atmosphere
         // via the substrate-first sampler. The biosphere class can
         // be downgraded to None by P1.4's HZ-migration drift (a
@@ -163,9 +167,12 @@ fn sampled_planets_lie_in_si_ranges() {
         // Pressure 0 to 300_000 Pa.
         assert!(p.surface_pressure >= Real::ZERO);
         assert!(p.surface_pressure <= Real::from_int(300_000));
-        // Stellar irradiance 200 to 3000 W/m².
-        assert!(p.stellar_luminosity >= Real::from_int(200));
-        assert!(p.stellar_luminosity <= Real::from_int(3_000));
+        // Stellar irradiance is now sampled per substrate to place the
+        // derived equilibrium near each solvent's liquid window: from a
+        // few tens of W/m² (cold hydrocarbon worlds) up to millions
+        // (silicate lava worlds need ~10^6–10^7 W/m² to reach >1700 K).
+        assert!(p.stellar_luminosity >= Real::from_int(8));
+        assert!(p.stellar_luminosity <= Real::from_int(25_000_000));
         // Terrain 0 to 15_000 m at Earth radius, scaled by the planet's
         // radius for planet-scale relief (see `sampling.rs`). The
         // largest sampled radius is 1.6 (Ammoniacal), so the radius-
@@ -227,35 +234,51 @@ fn composition_never_contradicts_temperature() {
 }
 
 #[test]
-fn seed_495_reconciles_to_a_rocky_land_world() {
-    // Seed 495 samples aqueous at ~378 K — above water's boil point —
-    // and previously rolled `SubSurfaceOcean` (all-water, dead). The
-    // composition↔temperature coupling now resolves it to a dry Rocky
-    // world that actually has land relief above its waterline.
-    let p = sample_planet(495);
+fn hot_solvent_world_reconciles_ocean_to_rocky() {
+    // The composition↔temperature coupling resolves a would-be all-water
+    // world (OceanWorld / SubSurfaceOcean) whose mean temperature is
+    // above the solvent's boil point into a dry Rocky world — the water
+    // has boiled off, so the planet can't be an ocean world. Tested on
+    // the reconcile function directly so it stays robust to how any one
+    // seed's *derived* temperature happens to land. (Seed 495, the
+    // historical example, now samples a temperate 286 K aqueous world.)
+    use crate::sampling::reconcile_composition_with_temperature;
+    let sub = MetabolicSubstrate::Aqueous;
+    let (freeze, boil) = sim_physics::chemistry::substrate_phase_thresholds(sub.tag());
+    let above_boil = boil + Real::from_int(20);
+    let temperate = (freeze + boil) / Real::from_int(2);
+    // Above boil: ocean compositions collapse to Rocky.
     assert_eq!(
-        p.composition,
+        reconcile_composition_with_temperature(Composition::OceanWorld, sub, above_boil),
         Composition::Rocky,
-        "hot aqueous seed 495 should reconcile to a rocky world"
+        "a boiled-dry ocean world should reconcile to Rocky"
     );
-    assert!(
-        p.terrain_peak > p.sea_level,
-        "rocky world should have peaks above the waterline (real land)"
+    assert_eq!(
+        reconcile_composition_with_temperature(Composition::SubSurfaceOcean, sub, above_boil),
+        Composition::Rocky,
+        "a boiled-dry sub-surface ocean should reconcile to Rocky"
+    );
+    // Temperate: an ocean world stays an ocean world.
+    assert_eq!(
+        reconcile_composition_with_temperature(Composition::OceanWorld, sub, temperate),
+        Composition::OceanWorld,
+        "a temperate ocean world keeps its ocean"
     );
 }
 
 #[test]
 fn scorching_ocean_world_is_dry_and_habitable() {
-    // Seed 495 samples a sub-surface-ocean world at ~378 K — above
-    // water's boil point — so its grid floods to kilometres of "sea"
-    // that, physically, has boiled off. The boil-aware classifier must
-    // treat those cells as dry land (habitable) rather than
-    // uninhabitable deep ocean (`≈`, multiplier 0.0), or the world
-    // produces zero population for its land-evolved species.
-    let mut planet = sample_planet(495);
+    // Seed 2455 samples an aqueous OceanWorld whose *derived* mean
+    // temperature (~328 K) sits above its pressure-adjusted boil point
+    // (~318 K), so its grid floods to kilometres of "sea" that,
+    // physically, has boiled off. The boil-aware classifier must treat
+    // those cells as dry land (habitable) rather than uninhabitable deep
+    // ocean (`≈`, multiplier 0.0), or the world produces zero population
+    // for its land-evolved species.
+    let mut planet = sample_planet(2455);
     assert!(
         surface_solvent_boiled(&planet),
-        "seed 495 (~378 K) should be above its solvent boil point"
+        "seed 2455 should be above its solvent boil point"
     );
     // The composition↔temperature coupling now keeps seed 495 itself
     // from flooding (it resolves to a rocky land world), so synthesise
@@ -283,7 +306,7 @@ fn scorching_ocean_world_is_dry_and_habitable() {
             }
         }
     }
-    assert!(flooded > 0, "seed 495 should flood its basins");
+    assert!(flooded > 0, "the flooded synthetic grid should have sea cells");
     assert!(
         habitable > 0,
         "boiled-dry basins should be habitable land, not dead sea"

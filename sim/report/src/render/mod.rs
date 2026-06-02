@@ -28,7 +28,7 @@ mod timelines;
 
 use civ::render_civ_chapter;
 use figures::{render_memorable_figures, render_species_canon};
-pub use planet::{surface_phase, SurfacePhase};
+pub use planet::{surface_phase_at, SurfacePhase};
 pub(crate) use planet::{render_planet, surface_phase_for_digest, terrain_symbol};
 use timelines::{render_migration_patterns, render_population_timeline, render_world_keyframes};
 

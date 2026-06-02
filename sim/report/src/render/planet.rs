@@ -191,7 +191,28 @@ pub fn surface_phase(
     let Some(p) = planet else {
         return SurfacePhase::Earthlike;
     };
-    let t = q32_to_f64(p.mean_temperature_q32);
+    surface_phase_at(
+        q32_to_f64(p.mean_temperature_q32),
+        p.metabolic_substrate.as_str(),
+        substrate_freeze_k,
+        substrate_boil_k,
+    )
+}
+
+/// Surface phase for an explicit temperature (Kelvin) and substrate.
+/// The temperature-agnostic core of [`surface_phase`]: callers that
+/// track the planet's *live* (evolving) mean temperature — the
+/// viewport — pass it here so a world that has cooled below its boil
+/// point stops reading as scorched and its basins recondense, instead
+/// of being pinned to the sampled `Planet` mean forever.
+#[must_use]
+pub fn surface_phase_at(
+    temperature_k: f64,
+    substrate: &str,
+    substrate_freeze_k: f64,
+    substrate_boil_k: f64,
+) -> SurfacePhase {
+    let t = temperature_k;
     // Above the solvent boil point the liquid has boiled off — no
     // oceans, whatever the substrate. Checked before the per-substrate
     // arms so a scorching world renders as a dry, baked surface rather
@@ -200,7 +221,7 @@ pub fn surface_phase(
     if substrate_boil_k > 0.0 && t > substrate_boil_k {
         return SurfacePhase::Scorched;
     }
-    match p.metabolic_substrate.as_str() {
+    match substrate {
         "silicate"
             if substrate_freeze_k > 0.0
                 && t >= substrate_freeze_k

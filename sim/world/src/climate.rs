@@ -26,6 +26,7 @@
 //! inline `row_signed.signum()` call.
 
 use crate::hemisphere::{hemisphere_for_row_climate_legacy, Hemisphere};
+use crate::types::Atmosphere;
 use crate::Planet;
 use sim_arith::Real;
 
@@ -144,6 +145,38 @@ pub fn seasonal_temperature_offset(
 /// gets *narrow* productive zones — that planet's species is
 /// more thermally fragile, just as on Earth tropical species die
 /// faster outside their narrow comfort range than alpine species.
+/// Planet-wide albedo (×100, 0–100) implied by the atmosphere class.
+/// Single source of truth shared by world-gen (which derives the
+/// planet's mean temperature from the radiative balance) and the
+/// `sim_core` radiation law (which integrates that same balance each
+/// tick) — keeping them in lockstep so the stated mean and the
+/// physics agree. Earth's Bond albedo ≈ 0.30 → the Oxidising case.
+#[must_use]
+pub fn atmosphere_albedo_x100(atmosphere: Atmosphere) -> i64 {
+    match atmosphere {
+        Atmosphere::None => 10,
+        Atmosphere::Thin => 20,
+        Atmosphere::Oxidising => 30,
+        Atmosphere::Reducing => 35,
+        Atmosphere::Hazy => 50,
+    }
+}
+
+/// Additive greenhouse offset (K) implied by the atmosphere class —
+/// the planet-wide baseline warming folded into the radiative
+/// equilibrium before per-cell composition forcing. Shared with the
+/// `sim_core` radiation law for the same lockstep reason as
+/// [`atmosphere_albedo_x100`].
+#[must_use]
+pub fn atmosphere_greenhouse_k(atmosphere: Atmosphere) -> Real {
+    match atmosphere {
+        Atmosphere::None => Real::ZERO,
+        Atmosphere::Thin => Real::from_int(10),
+        Atmosphere::Oxidising | Atmosphere::Reducing => Real::from_int(35),
+        Atmosphere::Hazy => Real::from_int(60),
+    }
+}
+
 #[must_use]
 pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
     // Comfort band: the substrate's biochemistry-supporting
@@ -158,20 +191,43 @@ pub fn seasonal_capacity_factor(temperature_k: Real, planet: &Planet) -> Real {
     // equatorial vs polar cells on planets with narrow gradients.
     let (low_k_i, high_k_i) = planet.metabolic_substrate.temperature_range();
     let low_k = Real::from_int(low_k_i);
-    let high_k = Real::from_int(high_k_i);
-    if temperature_k >= low_k && temperature_k <= high_k {
+    // Cap the hot end at the solvent's *pressure-adjusted* boil point.
+    // The broad biochemical band (e.g. aqueous 250-400 K) assumes the
+    // solvent is liquid, but on a thin-atmosphere world water can boil
+    // at, say, 337 K — above that there is no liquid medium for the
+    // chemistry at all, so the band's nominal hot end (400 K) wildly
+    // overstates viability. The true ceiling is whichever is lower.
+    let boil = crate::habitability::effective_boil_k(planet);
+    let high_k = Real::from_int(high_k_i).min(boil);
+    let band = (high_k - low_k).max(Real::from_int(10));
+    if temperature_k > high_k {
+        // Hotter than the liquid ceiling. At and above the solvent's
+        // (pressure-adjusted) boil point the solvent has boiled off, so
+        // there is *no* liquid medium for the chemistry and capacity is
+        // exactly zero — no grace margin, no survival floor. A cell only
+        // hotter than its boil point cannot host life of this substrate,
+        // whatever the planetary mean. This is what makes a scorched,
+        // boiled-dry world read barren — and what keeps life from
+        // "clinging on" above boiling until the surface actually cools
+        // below the boil point.
+        return Real::ZERO;
+    }
+    // Heat-stress ramp approaching the boil point *from below*: the last
+    // slice of the comfort band tapers to zero exactly at `high_k`, so a
+    // cell hovering just under boiling is already losing capacity rather
+    // than running flat-out right up to the phase transition.
+    let ceiling_margin = (band / Real::from_int(8)).max(Real::from_int(5));
+    if temperature_k > high_k - ceiling_margin {
+        let approach = high_k - temperature_k; // 0 at boil, `margin` below it
+        return (approach / ceiling_margin).clamp01();
+    }
+    if temperature_k >= low_k {
         return Real::ONE;
     }
-    // Outside the substrate band: decay linearly over the same
-    // band-width again before hitting the floor. So a substrate
-    // with a 150 K band tolerates ~150 K of overshoot before
-    // capacity drops to the 0.30 floor.
-    let band = (high_k - low_k).max(Real::from_int(10));
-    let overshoot = if temperature_k < low_k {
-        low_k - temperature_k
-    } else {
-        temperature_k - high_k
-    };
+    // Colder than the band: decay linearly over the band-width toward
+    // the 0.30 survival floor (a frozen world still has sheltered
+    // liquid niches, so the cold side keeps the floor).
+    let overshoot = low_k - temperature_k;
     let floor = Real::from_ratio(3, 10);
     let span = Real::ONE - floor;
     let normalised = (overshoot / band).clamp01();

@@ -190,6 +190,37 @@ pub struct CellBiomass {
     pub producer_index_q32: Vec<i64>,
 }
 
+/// Live climate sample — the area-mean of the planet's evolving
+/// surface-temperature field, emitted once at run start and then on a
+/// yearly cadence. The `Planet` event's `mean_temperature_q32` is the
+/// value *sampled* at world creation; the physics then evolves the
+/// field away from it (a thin-atmosphere world radiatively cools, an
+/// active greenhouse warms), so a long-lived run can drift tens of
+/// kelvin from its sampled mean. Carrying the live mean lets the
+/// viewport show the *current* temperature, flip the scorched /
+/// habitable badge as the world crosses its solvent's boil point, and
+/// re-render boiled-dry basins as oceans when they cool and recondense
+/// — instead of advertising the frozen sampled value forever.
+///
+/// `Q32.32` raw bits (Kelvin); divide by `2^32` to recover.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ClimateSample {
+    pub tick: u64,
+    pub mean_temperature_q32: i64,
+    /// Coldest cell (pole) surface temperature, `Q32.32` Kelvin. With
+    /// `max_temperature_q32` this is the planet's pole→equator range —
+    /// the honest summary of a world with ice caps, where the bare mean
+    /// reads "frozen" for a planet that's balmy at the equator.
+    pub min_temperature_q32: i64,
+    /// Warmest cell (equator) surface temperature, `Q32.32` Kelvin.
+    pub max_temperature_q32: i64,
+    /// Fraction of the surface (`0..1`, `Q32.32`) where the solvent is
+    /// liquid — temperature within `[freeze, effective_boil]` for the
+    /// planet's substrate. The number that actually tracks the biosphere
+    /// as polar ice caps grow, independent of the (cap-skewed) mean.
+    pub liveable_fraction_q32: i64,
+}
+
 /// Species-derivation event — emitted once at run start after the
 /// physics warm-up and the recognition library are in place. Carries
 /// the derived traits for the run's persistent species.

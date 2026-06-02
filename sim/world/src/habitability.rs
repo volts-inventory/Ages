@@ -230,8 +230,32 @@ pub fn hz_factor(star: &Star, orbital_distance_au: Real) -> Real {
 #[must_use]
 pub fn cell_habitability(state: &PhysicsState, planet: &Planet, cell: u32) -> Real {
     let terrain = habitability_multiplier(terrain_glyph_at(state, planet, cell));
-    let hz = hz_factor(&planet.star, planet.orbital_distance_au);
-    terrain.saturating_mul(hz)
+    // The classic habitable zone is the *liquid-water* zone, so it only
+    // bounds water-solvent life. Ammoniacal / hydrocarbon / silicate
+    // chemistries have their own solvent liquid-zones at colder or far
+    // hotter temperatures; their viability is enforced per-cell by the
+    // boil-capped `thermal` factor below (which keys off each substrate's
+    // own phase band), so applying the water HZ to them would wrongly
+    // brand a perfectly-habitable lava or methane world uninhabitable.
+    let hz = if planet.metabolic_substrate == crate::MetabolicSubstrate::Aqueous {
+        hz_factor(&planet.star, planet.orbital_distance_au)
+    } else {
+        Real::ONE
+    };
+    // Per-cell thermal/solvent viability. A cell hotter than its
+    // solvent's (pressure-adjusted) boil point holds no liquid medium,
+    // so the chemistry can't run there regardless of how inviting the
+    // landform is — without this, producer biomass, nomad presence and
+    // civ territory all spread across baked, boiled-dry land as if it
+    // were temperate. Reuses the boil-capped seasonal capacity curve
+    // (hot side → 0, cold side → 0.30 floor).
+    let cell_temp = state
+        .temperature()
+        .get(cell as usize)
+        .copied()
+        .unwrap_or(planet.mean_temperature);
+    let thermal = crate::seasonal_capacity_factor(cell_temp, planet);
+    terrain.saturating_mul(hz).saturating_mul(thermal)
 }
 
 /// `true` if `glyph` represents a water cell (deep ocean,

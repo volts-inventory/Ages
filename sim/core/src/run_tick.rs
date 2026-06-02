@@ -45,16 +45,30 @@ const VEGETATION_EMIT_TICKS: u64 = 12;
 /// substrate-tinted vegetation colours so land reads as alive only
 /// where producers actually stand.
 ///
-/// Normalised against the *densest* producer cell on the planet so
-/// the map shows the spatial structure of life — where the biosphere
-/// concentrates vs. where it thins to barren — rather than washing the
-/// whole grid to one shade. (Normalising against the planet's own mean
-/// producer capacity is what we *don't* do: producer biomass tracks
-/// that capacity, so it pins almost every cell to the ceiling and
-/// erases the gradient.) A planet with no extant producers returns an
-/// all-zero index so a dead world reads barren rather than green;
-/// `n_cells == 0` returns empty (legacy-palette fallback).
-pub(crate) fn cell_producer_index_q32(eco: &PlanetEcosystem) -> Vec<i64> {
+/// Two factors combine:
+/// 1. **Spatial structure** — biomass normalised against the *densest*
+///    producer cell, so the map shows where the biosphere concentrates
+///    vs. thins. (Normalising against the planet's own mean producer
+///    capacity is what we *don't* do: producer biomass tracks that
+///    capacity, so it pins almost every cell to the ceiling and erases
+///    the gradient.)
+/// 2. **Thermal/solvent viability** — multiplied by the cell's
+///    `seasonal_capacity_factor` (boil-capped, hot side → 0). A
+///    scorched, boiled-dry world has high producer biomass in the raw
+///    ecosystem (the biomass step doesn't model lethal heat), but no
+///    *standing* surface life — so the gate forces those cells barren
+///    even when biomass fell back to a uniform spread. This is what
+///    makes a 378 K world with its oceans boiled off read as baked
+///    rock rather than temperate green.
+///
+/// A planet with no extant producers returns an all-zero index so a
+/// dead world reads barren; `n_cells == 0` returns empty (legacy-
+/// palette fallback).
+pub(crate) fn cell_producer_index_q32(
+    eco: &PlanetEcosystem,
+    state: &PhysicsState,
+    planet: &sim_world::Planet,
+) -> Vec<i64> {
     let n = eco.n_cells;
     if n == 0 {
         return Vec::new();
@@ -77,10 +91,53 @@ pub(crate) fn cell_producer_index_q32(eco: &PlanetEcosystem) -> Vec<i64> {
         // renderer paints barren, not the legacy elevation green.
         return vec![0; n];
     }
-    per_cell
-        .into_iter()
-        .map(|p| (p / peak).clamp01().raw().to_bits())
+    let temps = state.temperature();
+    (0..n)
+        .map(|cell| {
+            let structure = (per_cell[cell] / peak).clamp01();
+            let cell_temp = temps.get(cell).copied().unwrap_or(planet.mean_temperature);
+            let thermal = sim_world::seasonal_capacity_factor(cell_temp, planet);
+            (structure.saturating_mul(thermal)).raw().to_bits()
+        })
         .collect()
+}
+
+/// Surface-temperature summary for the climate card: `(mean, min, max,
+/// liveable_fraction)`. `min`/`max` are the pole/equator extremes (the
+/// honest range for an ice-capped world); `liveable_fraction` is the
+/// share of cells whose temperature sits in the substrate's liquid
+/// window `[freeze, effective_boil]` — the figure that tracks the
+/// biosphere as caps grow, where the cap-skewed mean misleads.
+pub(crate) fn surface_temperature_stats(
+    state: &PhysicsState,
+    planet: &sim_world::Planet,
+) -> (Real, Real, Real, Real) {
+    let temps = state.temperature();
+    let n = temps.len();
+    if n == 0 {
+        return (Real::ZERO, Real::ZERO, Real::ZERO, Real::ZERO);
+    }
+    let (freeze, _boil_base) =
+        sim_physics::chemistry::substrate_phase_thresholds(planet.metabolic_substrate.tag());
+    let boil = sim_world::effective_boil_k(planet);
+    let mut sum = Real::ZERO;
+    let mut mn = temps[0];
+    let mut mx = temps[0];
+    let mut liveable: i64 = 0;
+    for t in temps {
+        sum = sum + *t;
+        if *t < mn {
+            mn = *t;
+        }
+        if *t > mx {
+            mx = *t;
+        }
+        if *t >= freeze && *t <= boil {
+            liveable += 1;
+        }
+    }
+    let n_real = Real::from_int(n as i64);
+    (sum / n_real, mn, mx, Real::from_int(liveable) / n_real)
 }
 
 /// Per-run mutable state threaded across ticks. Built once by
@@ -316,7 +373,16 @@ pub(crate) fn run_tick<E: Emitter>(
     if tick % VEGETATION_EMIT_TICKS == 0 {
         emitter.emit(&Event::CellBiomass(protocol::CellBiomass {
             tick,
-            producer_index_q32: cell_producer_index_q32(&rs.ecosystem),
+            producer_index_q32: cell_producer_index_q32(&rs.ecosystem, &rs.state, &rs.planet),
+        }))?;
+        let (mean_t, min_t, max_t, liveable_frac) =
+            surface_temperature_stats(&rs.state, &rs.planet);
+        emitter.emit(&Event::ClimateSample(protocol::ClimateSample {
+            tick,
+            mean_temperature_q32: mean_t.raw().to_bits(),
+            min_temperature_q32: min_t.raw().to_bits(),
+            max_temperature_q32: max_t.raw().to_bits(),
+            liveable_fraction_q32: liveable_frac.raw().to_bits(),
         }))?;
     }
     // Speciation + HGT. See `lib.rs` original for full rationale.

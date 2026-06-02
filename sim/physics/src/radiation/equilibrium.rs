@@ -163,6 +163,47 @@ pub(super) fn compute_t_eq_table(
     t_eq_per_row_per_season
 }
 
+/// Area-and-season mean of the radiative-equilibrium table — the
+/// single temperature a freshly-built planet's surface field relaxes
+/// toward, absent dynamic ice-albedo / composition-greenhouse
+/// feedbacks. World-gen calls this to set `planet.mean_temperature`
+/// from the *same* radiative balance the per-tick [`super::Radiation`]
+/// law integrates, so the planet's stated mean and its physics no
+/// longer disagree (the old independent temperature draw drifted as
+/// the field settled to its true equilibrium). Inputs mirror
+/// [`compute_t_eq_table`]; the greenhouse baseline is folded in.
+#[must_use]
+pub fn equilibrium_mean_k(
+    grid_height: u32,
+    stellar_w_per_m2: Real,
+    albedo_x100: i64,
+    greenhouse_k: Real,
+    axial_tilt_deg: i64,
+    eccentricity_x100: i64,
+) -> Real {
+    let table = compute_t_eq_table(
+        grid_height,
+        stellar_w_per_m2,
+        albedo_x100,
+        greenhouse_k,
+        axial_tilt_deg,
+        eccentricity_x100,
+    );
+    let mut sum = Real::ZERO;
+    let mut n: i64 = 0;
+    for row in &table {
+        for v in row {
+            sum = sum + *v;
+            n += 1;
+        }
+    }
+    if n > 0 {
+        sum / Real::from_int(n)
+    } else {
+        Real::ZERO
+    }
+}
+
 /// Map day length in hours to diurnal modulation amplitude
 /// `∈ [0, 1]`. Earth-like (24 h → 1 macro-step) → 0 (fast rotator,
 /// diurnal cycle washes out at macro-step resolution); tidally-

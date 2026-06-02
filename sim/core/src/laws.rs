@@ -159,19 +159,10 @@ pub(crate) fn build_laws(planet: &sim_world::Planet, grid_height: u32) -> Laws {
     // greenhouse offset. Each tick relaxes cell temps toward
     // their row's T_eq; runs alongside HeatConduction so radiation
     // sources the gradient and diffusion smooths it.
-    let albedo_x100 = match planet.atmosphere {
-        Atmosphere::None => 10,
-        Atmosphere::Thin => 20,
-        Atmosphere::Oxidising => 30,
-        Atmosphere::Reducing => 35,
-        Atmosphere::Hazy => 50,
-    };
-    let greenhouse_k = match planet.atmosphere {
-        Atmosphere::None => Real::ZERO,
-        Atmosphere::Thin => Real::from_int(10),
-        Atmosphere::Oxidising | Atmosphere::Reducing => Real::from_int(35),
-        Atmosphere::Hazy => Real::from_int(60),
-    };
+    // Shared with world-gen's `mean_temperature` derivation so the
+    // stated planet mean and the integrated radiative balance agree.
+    let albedo_x100 = sim_world::atmosphere_albedo_x100(planet.atmosphere);
+    let greenhouse_k = sim_world::atmosphere_greenhouse_k(planet.atmosphere);
     // Thread axial tilt + orbital period into Radiation so
     // it can pre-compute a per-(row, season) table and the
     // seasonal swing emerges instead of being a constant

@@ -88,6 +88,12 @@ pub enum Event {
     /// live viewport tint land by actual producer biomass instead of
     /// elevation, so a baked or barren surface stops reading as green.
     CellBiomass(CellBiomass),
+    /// Live area-mean surface temperature, emitted at run start and on
+    /// a yearly cadence. Lets the viewport track the world's *current*
+    /// temperature (which drifts from the sampled `Planet` mean as the
+    /// physics evolves) for the planet card, the scorched/habitable
+    /// badge, and boiled-vs-liquid surface rendering.
+    ClimateSample(ClimateSample),
     Species(SpeciesDerived),
     FigureBorn(FigureBorn),
     TechUnlocked(TechUnlocked),
